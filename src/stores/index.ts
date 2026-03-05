@@ -33,6 +33,10 @@ type AppSettings = {
     follow_mouse_y_anchor: "top" | "center" | "bottom";
 };
 
+type AutostartServiceStatus = {
+    installed: boolean;
+};
+
 export enum enumContextMenuType {
     Categorie = "categorie",
     CategorieView = "categorie-view",
@@ -56,6 +60,9 @@ export const Store = defineStore(
         const toggleShortcut = ref<string>("alt+space");
         const followMouseOnShow = ref<boolean>(false);
         const followMouseYAnchor = ref<"top" | "center" | "bottom">("center");
+        const autostartServiceEnabled = ref<boolean>(false);
+        const autostartServiceLoading = ref<boolean>(false);
+        const autostartServiceError = ref<string>("");
         const editingCategoryId = ref<string | null>(null);
         const editingCategoryName = ref<string>("");
         const isEditingCategory = computed(() => editingCategoryId.value !== null);
@@ -161,6 +168,47 @@ export const Store = defineStore(
                 followMouseYAnchor.value = anchor;
             } catch (e) {
                 console.error(e);
+            }
+        }
+
+        /**
+         * 刷新“开机自启服务”的真实安装状态并同步到本地状态。
+         */
+        async function refreshAutostartServiceStatus() {
+            autostartServiceError.value = "";
+            try {
+                const status = await invoke<AutostartServiceStatus>(
+                    "get_autostart_service_status"
+                );
+                autostartServiceEnabled.value = !!status?.installed;
+            } catch (e) {
+                autostartServiceError.value = "无法获取开机自启状态";
+                console.error(e);
+            }
+        }
+
+        /**
+         * 启用/关闭“开机自启（服务方式）”。
+         */
+        async function setAutostartServiceEnabled(enabled: boolean) {
+            const desired = !!enabled;
+            autostartServiceLoading.value = true;
+            autostartServiceError.value = "";
+            try {
+                await invoke("set_autostart_service_enabled", { enabled: desired });
+                await refreshAutostartServiceStatus();
+            } catch (e: any) {
+                const message =
+                    typeof e === "string"
+                        ? e
+                        : e?.message
+                          ? String(e.message)
+                          : "开机自启设置失败";
+                autostartServiceError.value = message;
+                console.error(e);
+                await refreshAutostartServiceStatus();
+            } finally {
+                autostartServiceLoading.value = false;
             }
         }
 
@@ -348,6 +396,9 @@ export const Store = defineStore(
             toggleShortcut,
             followMouseOnShow,
             followMouseYAnchor,
+            autostartServiceEnabled,
+            autostartServiceLoading,
+            autostartServiceError,
             openContextMenu,
             closeContextMenu,
             setCategoryCols,
@@ -356,6 +407,8 @@ export const Store = defineStore(
             setToggleShortcut,
             setFollowMouseOnShow,
             setFollowMouseYAnchor,
+            refreshAutostartServiceStatus,
+            setAutostartServiceEnabled,
             categories,
             currentCategoryId,
             launcherItemsByCategoryId,
@@ -387,6 +440,7 @@ export const Store = defineStore(
                 "toggleShortcut",
                 "followMouseOnShow",
                 "followMouseYAnchor",
+                "autostartServiceEnabled",
             ],
         },
     }

@@ -133,6 +133,25 @@
             </div>
 
             <div class="section">
+                <div class="section-title">启动</div>
+                <label class="check">
+                    <input
+                        v-model="autostartDraft"
+                        type="checkbox"
+                        :disabled="autostartServiceLoading"
+                        @change="onApplyAutostartService"
+                    />
+                    <span>开机自启（服务方式）</span>
+                </label>
+                <div class="hint">
+                    开启/关闭可能需要管理员权限，默认仅驻留托盘不弹窗。
+                </div>
+                <div v-if="autostartServiceError" class="hint error">
+                    {{ autostartServiceError }}
+                </div>
+            </div>
+
+            <div class="section">
                 <div class="section-title">说明</div>
                 <div class="note">启动台隐藏后可通过系统托盘左键唤醒窗口。</div>
             </div>
@@ -142,23 +161,37 @@
 
 <script setup lang="ts">
 import { storeToRefs } from "pinia";
-import { onBeforeUnmount, ref, watchEffect } from "vue";
+import { onBeforeUnmount, onMounted, ref, watchEffect } from "vue";
 import { useRouter } from "vue-router";
 import { Store } from "../stores";
 
 const router = useRouter();
 const store = Store();
-const { categoryCols, launcherCols, toggleShortcut, followMouseOnShow, followMouseYAnchor } =
-    storeToRefs(store);
+const {
+    categoryCols,
+    launcherCols,
+    toggleShortcut,
+    followMouseOnShow,
+    followMouseYAnchor,
+    autostartServiceEnabled,
+    autostartServiceLoading,
+    autostartServiceError,
+} = storeToRefs(store);
 const shortcutDraft = ref<string>("");
 const followMouseDraft = ref<boolean>(false);
 const followMouseAnchorDraft = ref<"top" | "center" | "bottom">("center");
+const autostartDraft = ref<boolean>(false);
 const recording = ref<boolean>(false);
 
 watchEffect(() => {
     shortcutDraft.value = toggleShortcut.value;
     followMouseDraft.value = followMouseOnShow.value;
     followMouseAnchorDraft.value = followMouseYAnchor.value;
+    autostartDraft.value = autostartServiceEnabled.value;
+});
+
+onMounted(() => {
+    store.refreshAutostartServiceStatus();
 });
 
 /**
@@ -196,6 +229,12 @@ async function onSetFollowMouseAnchor(anchor: "top" | "center" | "bottom") {
     await store.setFollowMouseYAnchor(anchor);
 }
 
+/**
+ * 应用“开机自启（服务方式）”的变更。
+ */
+async function onApplyAutostartService() {
+    await store.setAutostartServiceEnabled(!!autostartDraft.value);
+}
 
 function isModifierKey(key: string) {
     return (
@@ -285,6 +324,13 @@ onBeforeUnmount(() => {
     display: flex;
     flex-direction: column;
     gap: 14px;
+    height: calc(100vh - 52px - 32px);
+    overflow-y: scroll; /* 或 auto */
+    -ms-overflow-style: none; /* IE 和 Edge */
+    /* 隐藏滚动条 */
+    &::-webkit-scrollbar {
+        display: none;
+    }
 }
 
 .section {
@@ -362,6 +408,10 @@ onBeforeUnmount(() => {
     font-size: 12px;
     color: rgba(0, 0, 0, 0.56);
     -webkit-app-region: no-drag;
+}
+
+.hint.error {
+    color: rgba(220, 0, 0, 0.78);
 }
 
 .check {

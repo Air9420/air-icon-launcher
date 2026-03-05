@@ -80,6 +80,7 @@ pub fn show_main_window(app: &AppHandle, follow_mouse_on_show: bool, anchor: Fol
     let _ = window.set_focus();
 }
 
+/// 切换主窗口显示：已可见且已聚焦则隐藏；已可见但未聚焦则前置并聚焦；不可见则显示并聚焦。
 pub fn toggle_main_window(app: &AppHandle, follow_mouse_on_show: bool, anchor: FollowMouseYAnchor) {
     let Some(window) = app.get_webview_window("main") else {
         return;
@@ -87,7 +88,12 @@ pub fn toggle_main_window(app: &AppHandle, follow_mouse_on_show: bool, anchor: F
 
     let visible = window.is_visible().unwrap_or(true);
     if visible {
-        let _ = window.hide();
+        let focused = window.is_focused().unwrap_or(true);
+        if focused {
+            let _ = window.hide();
+        } else {
+            show_main_window(app, follow_mouse_on_show, anchor);
+        }
     } else {
         show_main_window(app, follow_mouse_on_show, anchor);
     }

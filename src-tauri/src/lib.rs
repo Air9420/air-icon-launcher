@@ -1,6 +1,7 @@
 mod tray;
 mod drag;
 mod app_settings;
+mod autostart_service;
 use tauri::tray::TrayIcon;
 use tauri::Manager;
 
@@ -26,6 +27,11 @@ pub fn run() {
             let _tray = tray::create_tray(&handle);
             app.manage(TrayState { _tray });
             drag::setup_drag_drop(&handle);
+            if autostart_service::is_autostart_launch() {
+                if let Some(window) = handle.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
             {
                 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
                 let _ = handle.global_shortcut().on_shortcut("alt+space", |app, _s, e| {
@@ -50,7 +56,9 @@ pub fn run() {
             app_settings::get_app_settings,
             app_settings::set_follow_mouse_on_show,
             app_settings::set_follow_mouse_y_anchor,
-            app_settings::set_toggle_shortcut
+            app_settings::set_toggle_shortcut,
+            autostart_service::get_autostart_service_status,
+            autostart_service::set_autostart_service_enabled
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

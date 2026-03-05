@@ -227,6 +227,13 @@ function getFallbackText(name: string) {
     gap: var(--gap);
     align-content: flex-start;
     grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+    height: calc(100vh - 52px - 32px);
+    overflow-y: scroll; /* 或 auto */
+    -ms-overflow-style: none; /* IE 和 Edge */
+    /* 隐藏滚动条 */
+    &::-webkit-scrollbar {
+        display: none;
+    }
 }
 
 .icon-item {

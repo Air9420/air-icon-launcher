@@ -260,6 +260,7 @@ async function onHideWindow() {
 
 onMounted(async () => {
     await store.hydrateAppSettings();
+    await store.refreshAutostartServiceStatus();
     window.addEventListener("keydown", preventRefreshShortcuts, true);
     const onContextMenu = (ev: MouseEvent) => {
         ev.preventDefault();
