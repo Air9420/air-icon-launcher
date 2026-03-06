@@ -17,6 +17,7 @@ type ContextMenuState =
 export type Category = {
     id: string;
     name: string;
+    customIconBase64: string | null;
 };
 
 export type LauncherItem = {
@@ -25,6 +26,15 @@ export type LauncherItem = {
     path: string;
     isDirectory: boolean;
     iconBase64: string | null;
+    originalIconBase64?: string | null;
+    isFavorite?: boolean;
+    lastUsedAt?: number;
+};
+
+export type GlobalSearchResult = {
+    item: LauncherItem;
+    categoryId: string;
+    categoryName: string;
 };
 
 type AppSettings = {
@@ -44,7 +54,20 @@ export enum enumContextMenuType {
     IconItem = "icon-item",
 }
 
+export type ThemeMode = "light" | "dark" | "system" | "transparent";
 
+export type ClipboardRecord = {
+    id: string;
+    content: string;
+    type: "text" | "image";
+    timestamp: number;
+};
+
+export type RecentUsedItem = {
+    categoryId: string;
+    itemId: string;
+    usedAt: number;
+};
 
 export const Store = defineStore(
     "All",
@@ -58,6 +81,7 @@ export const Store = defineStore(
         const categoryCols = ref<number>(5);
         const launcherCols = ref<number>(5);
         const toggleShortcut = ref<string>("alt+space");
+        const clipboardShortcut = ref<string>("alt+v");
         const followMouseOnShow = ref<boolean>(false);
         const followMouseYAnchor = ref<"top" | "center" | "bottom">("center");
         const autostartServiceEnabled = ref<boolean>(false);
@@ -67,12 +91,18 @@ export const Store = defineStore(
         const editingCategoryName = ref<string>("");
         const isEditingCategory = computed(() => editingCategoryId.value !== null);
         const currentCategoryId = ref<string | null>(null);
+        const theme = ref<ThemeMode>("system");
+        const searchKeyword = ref<string>("");
+        const clipboardHistory = ref<ClipboardRecord[]>([]);
+        const clipboardHistoryEnabled = ref<boolean>(true);
+        const favoriteItemIds = ref<string[]>([]);
+        const recentUsedItems = ref<RecentUsedItem[]>([]);
 
         const categories = ref<Category[]>([
-            { id: "cat-1", name: "游戏" },
-            { id: "cat-2", name: "工具" },
-            { id: "cat-3", name: "系统" },
-            { id: "cat-4", name: "其他" },
+            { id: "cat-1", name: "游戏", customIconBase64: null },
+            { id: "cat-2", name: "工具", customIconBase64: null },
+            { id: "cat-3", name: "系统", customIconBase64: null },
+            { id: "cat-4", name: "其他", customIconBase64: null },
         ]);
 
         const launcherItemsByCategoryId = ref<Record<string, LauncherItem[]>>({});
@@ -150,6 +180,18 @@ export const Store = defineStore(
                 toggleShortcut.value = next;
             } catch (e) {
                 console.error(e);
+            }
+        }
+
+        async function setClipboardShortcut(shortcut: string) {
+            const next = shortcut.trim();
+            if (!next) return;
+            try {
+                await invoke("set_clipboard_shortcut", { shortcut: next });
+                clipboardShortcut.value = next;
+            } catch (e) {
+                console.error(e);
+                throw e;
             }
         }
 
@@ -330,6 +372,7 @@ export const Store = defineStore(
                     path,
                     isDirectory: directorySet.has(path),
                     iconBase64,
+                    originalIconBase64: iconBase64,
                 };
             });
 
@@ -340,7 +383,7 @@ export const Store = defineStore(
          * 开始添加类目并进入编辑状态。
          */
         function beginAddCategory() {
-            const newCategory = { id: createCategoryId(), name: "" };
+            const newCategory = { id: createCategoryId(), name: "", customIconBase64: null };
             categories.value.push(newCategory);
             editingCategoryId.value = newCategory.id;
             editingCategoryName.value = "";
@@ -388,6 +431,185 @@ export const Store = defineStore(
             launcherItemsByCategoryId.value = next;
         }
 
+        function setCategoryIcon(categoryId: string, iconBase64: string) {
+            const target = categories.value.find((item) => item.id === categoryId);
+            if (target) {
+                target.customIconBase64 = iconBase64;
+            }
+        }
+
+        function setLauncherItemIcon(categoryId: string, itemId: string, iconBase64: string) {
+            const list = getLauncherItemsByCategoryId(categoryId);
+            const index = list.findIndex((x) => x.id === itemId);
+            if (index === -1) return;
+            const next = [...list];
+            next[index] = { ...next[index], iconBase64 };
+            setLauncherItemsByCategoryId(categoryId, next);
+        }
+
+        function resetCategoryIcon(categoryId: string) {
+            const target = categories.value.find((item) => item.id === categoryId);
+            if (target) {
+                target.customIconBase64 = null;
+            }
+        }
+
+        function resetLauncherItemIcon(categoryId: string, itemId: string) {
+            const list = getLauncherItemsByCategoryId(categoryId);
+            const index = list.findIndex((x) => x.id === itemId);
+            if (index === -1) return;
+            const next = [...list];
+            next[index] = { 
+                ...next[index], 
+                iconBase64: next[index].originalIconBase64 ?? null 
+            };
+            setLauncherItemsByCategoryId(categoryId, next);
+        }
+
+        function hasCustomIcon(categoryId: string, itemId: string): boolean {
+            const item = getLauncherItemById(categoryId, itemId);
+            if (!item) return false;
+            return item.iconBase64 !== item.originalIconBase64;
+        }
+
+        function setTheme(newTheme: ThemeMode) {
+            theme.value = newTheme;
+        }
+
+        function addClipboardRecord(record: ClipboardRecord) {
+            const exists = clipboardHistory.value.some(r => r.content === record.content);
+            if (!exists) {
+                clipboardHistory.value.unshift(record);
+                if (clipboardHistory.value.length > 50) {
+                    clipboardHistory.value = clipboardHistory.value.slice(0, 50);
+                }
+            }
+        }
+
+        function removeClipboardRecord(id: string) {
+            const index = clipboardHistory.value.findIndex(r => r.id === id);
+            if (index !== -1) {
+                clipboardHistory.value.splice(index, 1);
+            }
+        }
+
+        function clearClipboardHistory() {
+            clipboardHistory.value = [];
+        }
+
+        function setClipboardHistoryEnabled(enabled: boolean) {
+            clipboardHistoryEnabled.value = enabled;
+        }
+
+        function fuzzyMatch(text: string, keyword: string): boolean {
+            const lowerText = text.toLowerCase();
+            const lowerKeyword = keyword.toLowerCase();
+            if (lowerText.includes(lowerKeyword)) return true;
+            let keywordIndex = 0;
+            for (let i = 0; i < lowerText.length && keywordIndex < lowerKeyword.length; i++) {
+                if (lowerText[i] === lowerKeyword[keywordIndex]) {
+                    keywordIndex++;
+                }
+            }
+            return keywordIndex === lowerKeyword.length;
+        }
+
+        const filteredCategories = computed<Category[]>(() => {
+            const keyword = searchKeyword.value.trim();
+            if (!keyword) return categories.value;
+            return categories.value.filter((cat) => fuzzyMatch(cat.name, keyword));
+        });
+
+        const filteredLauncherItems = computed<LauncherItem[]>(() => {
+            const keyword = searchKeyword.value.trim();
+            if (!currentCategoryId.value) return [];
+            if (!keyword) return getLauncherItemsByCategoryId(currentCategoryId.value);
+            const items = getLauncherItemsByCategoryId(currentCategoryId.value);
+            return items.filter((item) => fuzzyMatch(item.name, keyword));
+        });
+
+        const globalSearchResults = computed<GlobalSearchResult[]>(() => {
+            const keyword = searchKeyword.value.trim();
+            if (!keyword) return [];
+            const results: GlobalSearchResult[] = [];
+            for (const cat of categories.value) {
+                const items = getLauncherItemsByCategoryId(cat.id);
+                for (const item of items) {
+                    if (fuzzyMatch(item.name, keyword)) {
+                        results.push({
+                            item,
+                            categoryId: cat.id,
+                            categoryName: cat.name,
+                        });
+                    }
+                }
+            }
+            return results;
+        });
+
+        function clearSearch() {
+            searchKeyword.value = "";
+        }
+
+        function toggleFavorite(categoryId: string, itemId: string) {
+            const item = getLauncherItemById(categoryId, itemId);
+            if (!item) return;
+            const isFavorite = favoriteItemIds.value.includes(itemId);
+            if (isFavorite) {
+                favoriteItemIds.value = favoriteItemIds.value.filter(id => id !== itemId);
+            } else {
+                favoriteItemIds.value = [...favoriteItemIds.value, itemId];
+            }
+        }
+
+        function isItemFavorite(itemId: string): boolean {
+            return favoriteItemIds.value.includes(itemId);
+        }
+
+        function recordItemUsage(categoryId: string, itemId: string) {
+            const now = Date.now();
+            const existingIndex = recentUsedItems.value.findIndex(
+                r => r.categoryId === categoryId && r.itemId === itemId
+            );
+            if (existingIndex !== -1) {
+                recentUsedItems.value.splice(existingIndex, 1);
+            }
+            recentUsedItems.value.unshift({ categoryId, itemId, usedAt: now });
+            if (recentUsedItems.value.length > 50) {
+                recentUsedItems.value = recentUsedItems.value.slice(0, 50);
+            }
+        }
+
+        function clearRecentUsed() {
+            recentUsedItems.value = [];
+        }
+
+        function importCategories(newCategories: Category[]) {
+            categories.value = newCategories;
+        }
+
+        function importLauncherItems(items: Record<string, LauncherItem[]>) {
+            launcherItemsByCategoryId.value = items;
+        }
+
+        function importFavoriteItemIds(newIds: string[]) {
+            favoriteItemIds.value = newIds;
+        }
+
+        function importRecentUsedItems(newItems: RecentUsedItem[]) {
+            recentUsedItems.value = newItems;
+        }
+
+        function getRecentUsedItems(limit: number = 5): RecentUsedItem[] {
+            return recentUsedItems.value.slice(0, limit);
+        }
+
+        function getRecentUsedItemInfo(recentItem: RecentUsedItem): { item: LauncherItem | null; category: Category | null } {
+            const category = getCategoryById(recentItem.categoryId);
+            const item = getLauncherItemById(recentItem.categoryId, recentItem.itemId);
+            return { item, category };
+        }
+
         return {
             ContextMenu,
             ContextMenuType,
@@ -405,6 +627,8 @@ export const Store = defineStore(
             setLauncherCols,
             hydrateAppSettings,
             setToggleShortcut,
+            clipboardShortcut,
+            setClipboardShortcut,
             setFollowMouseOnShow,
             setFollowMouseYAnchor,
             refreshAutostartServiceStatus,
@@ -427,6 +651,36 @@ export const Store = defineStore(
             beginRenameCategory,
             confirmCategoryEdit,
             deleteCategory,
+            setCategoryIcon,
+            setLauncherItemIcon,
+            resetCategoryIcon,
+            resetLauncherItemIcon,
+            hasCustomIcon,
+            theme,
+            setTheme,
+            clipboardHistory,
+            clipboardHistoryEnabled,
+            addClipboardRecord,
+            removeClipboardRecord,
+            clearClipboardHistory,
+            setClipboardHistoryEnabled,
+            searchKeyword,
+            filteredCategories,
+            filteredLauncherItems,
+            globalSearchResults,
+            clearSearch,
+            favoriteItemIds,
+            recentUsedItems,
+            toggleFavorite,
+            isItemFavorite,
+            recordItemUsage,
+            clearRecentUsed,
+            importCategories,
+            importLauncherItems,
+            importFavoriteItemIds,
+            importRecentUsedItems,
+            getRecentUsedItems,
+            getRecentUsedItemInfo,
         };
     },
     {
@@ -438,9 +692,14 @@ export const Store = defineStore(
                 "currentCategoryId",
                 "launcherItemsByCategoryId",
                 "toggleShortcut",
+                "clipboardShortcut",
                 "followMouseOnShow",
                 "followMouseYAnchor",
                 "autostartServiceEnabled",
+                "theme",
+                "clipboardHistoryEnabled",
+                "favoriteItemIds",
+                "recentUsedItems",
             ],
         },
     }

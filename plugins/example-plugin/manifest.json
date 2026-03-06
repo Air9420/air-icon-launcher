@@ -1,0 +1,10 @@
+{
+  "id": "com.example.welcome-plugin",
+  "name": "欢迎插件",
+  "version": "1.0.0",
+  "description": "一个简单的示例插件，展示插件系统的基本功能。启动时会显示欢迎消息，并提供一个自定义命令。",
+  "author": "Air Icon Launcher Team",
+  "main": "main.js",
+  "keywords": ["example", "welcome", "demo"],
+  "license": "MIT"
+}

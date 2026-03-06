@@ -24,6 +24,30 @@
         <button
             class="menu-item"
             type="button"
+            @click="onToggleFavorite"
+            v-show="isMenuVisible(enumContextMenuType.IconItem)"
+        >
+            {{ isCurrentItemFavorite ? '取消收藏' : '收藏' }}
+        </button>
+        <button
+            class="menu-item"
+            type="button"
+            @click="onChangeIcon"
+            v-show="isMenuVisible(enumContextMenuType.IconItem)"
+        >
+            更换图标
+        </button>
+        <button
+            class="menu-item"
+            type="button"
+            @click="onResetIcon"
+            v-show="isMenuVisible(enumContextMenuType.IconItem) && hasCustomIconProp"
+        >
+            重置图标
+        </button>
+        <button
+            class="menu-item"
+            type="button"
             @click="onDeleteItem"
             v-show="isMenuVisible(enumContextMenuType.IconItem)"
         >
@@ -56,6 +80,22 @@
         <button
             class="menu-item"
             type="button"
+            @click="onChangeCategoryIcon"
+            v-show="isMenuVisible(enumContextMenuType.Categorie)"
+        >
+            更换图标
+        </button>
+        <button
+            class="menu-item"
+            type="button"
+            @click="onResetCategoryIcon"
+            v-show="isMenuVisible(enumContextMenuType.Categorie)"
+        >
+            重置图标
+        </button>
+        <button
+            class="menu-item"
+            type="button"
             @click="onDeleteCategory"
             v-show="isMenuVisible(enumContextMenuType.Categorie)"
         >
@@ -64,6 +104,13 @@
         <button class="menu-item" type="button" @mousedown="startDragging">
             拖拽窗口
         </button>
+        <button
+            class="menu-item"
+            type="button"
+            @click="onOpenSettings"
+        >
+            设置
+        </button>
 
         <div
             class="menu-sep"
@@ -71,16 +118,14 @@
         />
         <div
             class="menu-group"
-            v-show="
-                isMenuVisible(enumContextMenuType.CategorieView) ||
-                isMenuVisible(enumContextMenuType.IconView)
-            "
+            v-show="isMenuVisible(enumContextMenuType.CategorieView)"
         >
             <div class="menu-title">分类图标</div>
             <div class="menu-sub">
                 <button
                     class="menu-subitem"
                     type="button"
+                    :class="{ active: categoryCols === 4 }"
                     @click="onSetCategoryCols(4)"
                 >
                     4
@@ -88,16 +133,23 @@
                 <button
                     class="menu-subitem"
                     type="button"
+                    :class="{ active: categoryCols === 5 }"
                     @click="onSetCategoryCols(5)"
                 >
                     5
                 </button>
             </div>
+        </div>
+        <div
+            class="menu-group"
+            v-show="isMenuVisible(enumContextMenuType.IconView)"
+        >
             <div class="menu-title">启动项图标</div>
             <div class="menu-sub">
                 <button
                     class="menu-subitem"
                     type="button"
+                    :class="{ active: launcherCols === 4 }"
                     @click="onSetLauncherCols(4)"
                 >
                     4
@@ -105,6 +157,7 @@
                 <button
                     class="menu-subitem"
                     type="button"
+                    :class="{ active: launcherCols === 5 }"
                     @click="onSetLauncherCols(5)"
                 >
                     5
@@ -112,6 +165,7 @@
                 <button
                     class="menu-subitem"
                     type="button"
+                    :class="{ active: launcherCols === 6 }"
                     @click="onSetLauncherCols(6)"
                 >
                     6
@@ -125,8 +179,8 @@
 import { enumContextMenuType, Store } from "../stores/index";
 import { storeToRefs } from "pinia";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-// 导入响应式计算函数
 import { computed } from "vue";
+import { selectAndConvertIcon } from "../utils/iconUtils";
 
 const store = Store();
 const { ContextMenu, ContextMenuType } = storeToRefs(store);
@@ -141,111 +195,126 @@ const emit = defineEmits<{
     (e: "edit-item"): void;
     (e: "delete-item"): void;
     (e: "hide-window"): void;
+    (e: "change-icon", base64: string): void;
+    (e: "reset-icon"): void;
+    (e: "change-category-icon", base64: string): void;
+    (e: "reset-category-icon"): void;
+    (e: "toggle-favorite"): void;
+    (e: "open-settings"): void;
 }>();
 
-/**
- * 触发“删除类目”的菜单动作。
- */
+defineProps<{
+    currentItemId?: string;
+    isCurrentItemFavorite?: boolean;
+    hasCustomIconProp?: boolean;
+    categoryCols?: number;
+    launcherCols?: number;
+}>();
+
 function onDeleteCategory() {
     store.closeContextMenu();
     emit("delete-category");
 }
 
-/**
- * 触发“重命名类目”的菜单动作。
- */
 function onRenameCategory() {
     store.closeContextMenu();
     emit("rename-category");
 }
 
-/**
- * 触发“编辑启动项”的菜单动作。
- */
 function onEditItem() {
     store.closeContextMenu();
     emit("edit-item");
 }
 
-/**
- * 触发“删除启动项”的菜单动作。
- */
 function onDeleteItem() {
     store.closeContextMenu();
     emit("delete-item");
 }
 
-/**
- * 判断当前菜单类型是否匹配按钮展示类型。
- */
 const isMenuVisible = computed(() => {
     return (type: enumContextMenuType) => {
         return ContextMenuType.value === type;
     };
 });
 
-/**
- * 触发“添加项目”的菜单动作。
- */
 function onAddItem() {
     store.closeContextMenu();
     emit("add-item");
 }
 
-/**
- * 触发“添加类目”的菜单动作。
- */
 function onAddCategory() {
     store.closeContextMenu();
     emit("add-category");
 }
 
-/**
- * 触发“隐藏启动台”的菜单动作。
- */
 function onHideWindow() {
     store.closeContextMenu();
     emit("hide-window");
 }
 
-/**
- * 触发“分类图标每行数量”的菜单动作。
- */
 function onSetCategoryCols(cols: number) {
     emit("set-category-cols", cols);
 }
 
-/**
- * 触发“启动项图标每行数量”的菜单动作。
- */
 function onSetLauncherCols(cols: number) {
     emit("set-launcher-cols", cols);
 }
 
-/**
- * 开始拖动窗口。
- */
+async function onChangeIcon() {
+    store.closeContextMenu();
+    const base64 = await selectAndConvertIcon();
+    if (base64) {
+        emit("change-icon", base64);
+    }
+}
+
+function onResetIcon() {
+    store.closeContextMenu();
+    emit("reset-icon");
+}
+
+async function onChangeCategoryIcon() {
+    store.closeContextMenu();
+    const base64 = await selectAndConvertIcon();
+    if (base64) {
+        emit("change-category-icon", base64);
+    }
+}
+
+function onResetCategoryIcon() {
+    store.closeContextMenu();
+    emit("reset-category-icon");
+}
+
+function onToggleFavorite() {
+    store.closeContextMenu();
+    emit("toggle-favorite");
+}
+
+function onOpenSettings() {
+    store.closeContextMenu();
+    emit("open-settings");
+}
+
 async function startDragging(event: { target: any; currentTarget: any }) {
-    // 检查事件目标是否为 menu-bar 的直接子元素
     if (event.target === event.currentTarget) {
-        getCurrentWindow().startDragging(); // 只有在点击 menu-bar 的空白区域时才拖动
+        getCurrentWindow().startDragging();
     }
 }
 </script>
 
 <style scoped>
 .context-menu {
-    /* 不可选中文字 */
     user-select: none;
     position: fixed;
     z-index: 9999;
     width: 220px;
     padding: 8px;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.96);
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
-    backdrop-filter: blur(10px);
+    background: var(--menu-bg);
+    border: 1px solid var(--border-color);
+    box-shadow: var(--menu-shadow);
+    backdrop-filter: var(--backdrop-blur);
 }
 
 .menu-item,
@@ -258,17 +327,18 @@ async function startDragging(event: { target: any; currentTarget: any }) {
     border-radius: 8px;
     cursor: pointer;
     font-size: 14px;
+    color: var(--text-color);
 }
 
 .menu-item:hover,
 .menu-subitem:hover {
-    background: rgba(0, 0, 0, 0.06);
+    background: var(--hover-bg);
 }
 
 .menu-sep {
     height: 1px;
     margin: 6px 4px;
-    background: rgba(0, 0, 0, 0.1);
+    background: var(--border-color);
 }
 
 .menu-group {
@@ -279,6 +349,7 @@ async function startDragging(event: { target: any; currentTarget: any }) {
     padding: 6px 10px;
     font-size: 12px;
     opacity: 0.75;
+    color: var(--text-secondary);
 }
 
 .menu-sub {
@@ -289,5 +360,11 @@ async function startDragging(event: { target: any; currentTarget: any }) {
 
 .menu-subitem {
     text-align: center;
+}
+
+.menu-subitem.active {
+    background: var(--primary-bg);
+    color: var(--primary-color);
+    font-weight: 600;
 }
 </style>

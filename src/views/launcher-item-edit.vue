@@ -157,7 +157,7 @@ function getFallbackText(name: string) {
     display: flex;
     flex-direction: column;
     position: relative;
-    background: rgba(245, 246, 248, 1);
+    background: var(--bg-color);
 }
 
 .item-edit-header {
@@ -166,28 +166,29 @@ function getFallbackText(name: string) {
     align-items: center;
     gap: 12px;
     padding: 0 12px;
-    background: rgba(255, 255, 255, 0.92);
-    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-    backdrop-filter: blur(10px);
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border-color);
+    backdrop-filter: var(--backdrop-blur);
 }
 
 .back-btn {
     border: 0;
     padding: 8px 10px;
     border-radius: 10px;
-    background: rgba(0, 0, 0, 0.06);
+    background: var(--hover-bg);
     cursor: pointer;
     -webkit-app-region: no-drag;
+    color: var(--text-color);
 }
 
 .back-btn:hover {
-    background: rgba(0, 0, 0, 0.1);
+    background: var(--hover-bg-strong);
 }
 
 .title {
     font-size: 16px;
     font-weight: 700;
-    color: #2b2b2b;
+    color: var(--text-color);
 }
 
 .content {
@@ -200,8 +201,8 @@ function getFallbackText(name: string) {
     width: 92px;
     height: 92px;
     border-radius: 20px;
-    background: rgba(255, 255, 255, 0.92);
-    box-shadow: 0 0 10px rgba(0, 0, 0, 0.16);
+    background: var(--card-bg);
+    box-shadow: var(--card-shadow);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -221,9 +222,9 @@ function getFallbackText(name: string) {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, 0.08);
+    background: var(--icon-fallback-bg);
     font-weight: 800;
-    color: #3b3b3b;
+    color: var(--icon-fallback-text);
 }
 
 .form {
@@ -241,17 +242,18 @@ function getFallbackText(name: string) {
 
 .label {
     font-size: 12px;
-    color: rgba(0, 0, 0, 0.62);
+    color: var(--text-tertiary);
 }
 
 .input {
     height: 36px;
     padding: 0 10px;
     border-radius: 12px;
-    border: 1px solid rgba(0, 0, 0, 0.12);
-    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid var(--border-color-strong);
+    background: var(--input-bg);
     outline: none;
     -webkit-app-region: no-drag;
+    color: var(--text-color);
 }
 
 .actions {
@@ -270,21 +272,21 @@ function getFallbackText(name: string) {
 }
 
 .btn.primary {
-    background: rgba(74, 116, 255, 0.9);
+    background: var(--primary-color);
     color: #fff;
 }
 
 .btn.primary:hover {
-    background: rgba(74, 116, 255, 1);
+    opacity: 0.9;
 }
 
 .btn.danger {
-    background: rgba(255, 77, 77, 0.16);
-    color: rgba(0, 0, 0, 0.78);
+    background: var(--hover-bg);
+    color: var(--text-secondary);
 }
 
 .btn.danger:hover {
-    background: rgba(255, 77, 77, 0.24);
+    background: var(--hover-bg-strong);
 }
 
 .empty {
@@ -294,9 +296,9 @@ function getFallbackText(name: string) {
     transform: translate(-50%, -50%);
     padding: 10px 14px;
     border-radius: 12px;
-    background: rgba(255, 255, 255, 0.9);
-    border: 1px solid rgba(0, 0, 0, 0.06);
-    color: rgba(0, 0, 0, 0.7);
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
     font-size: 13px;
     pointer-events: none;
 }

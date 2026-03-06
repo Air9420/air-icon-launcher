@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useRouter } from "vue-router";
@@ -8,9 +8,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import ContextMenu from "./components/contextMenu.vue";
 import { enumContextMenuType, Store } from "./stores";
 import { storeToRefs } from "pinia";
+import "./styles/themes.css";
 
 const store = Store();
-const { ContextMenuType, isEditingCategory } = storeToRefs(store);
+const { ContextMenuType, isEditingCategory, theme, categoryCols, launcherCols } = storeToRefs(store);
 const lastDrop = ref<DropRecord | null>(null);
 const lastAction = ref<string>("");
 const currentCategoryId = ref<string | null>(null);
@@ -258,6 +259,50 @@ async function onHideWindow() {
     }
 }
 
+function onChangeIcon(base64: string) {
+    if (!currentCategoryId.value || !currentLauncherItemId.value) return;
+    store.setLauncherItemIcon(currentCategoryId.value, currentLauncherItemId.value, base64);
+    hasCurrentItemCustomIcon.value = true;
+}
+
+function onResetIcon() {
+    if (!currentCategoryId.value || !currentLauncherItemId.value) return;
+    store.resetLauncherItemIcon(currentCategoryId.value, currentLauncherItemId.value);
+    hasCurrentItemCustomIcon.value = false;
+}
+
+function onChangeCategoryIcon(base64: string) {
+    if (!currentCategoryId.value) return;
+    store.setCategoryIcon(currentCategoryId.value, base64);
+}
+
+function onResetCategoryIcon() {
+    if (!currentCategoryId.value) return;
+    store.resetCategoryIcon(currentCategoryId.value);
+}
+
+function onToggleFavorite() {
+    if (!currentCategoryId.value || !currentLauncherItemId.value) return;
+    store.toggleFavorite(currentCategoryId.value, currentLauncherItemId.value);
+}
+
+function onOpenSettings() {
+    router.push("/settings");
+}
+
+const isCurrentItemFavorite = ref<boolean>(false);
+const hasCurrentItemCustomIcon = ref<boolean>(false);
+
+watch([currentCategoryId, currentLauncherItemId], ([catId, itemId]) => {
+    if (catId && itemId) {
+        isCurrentItemFavorite.value = store.isItemFavorite(itemId);
+        hasCurrentItemCustomIcon.value = store.hasCustomIcon(catId, itemId);
+    } else {
+        isCurrentItemFavorite.value = false;
+        hasCurrentItemCustomIcon.value = false;
+    }
+});
+
 onMounted(async () => {
     await store.hydrateAppSettings();
     await store.refreshAutostartServiceStatus();
@@ -307,6 +352,28 @@ onMounted(async () => {
     await listen("tray-open-settings", async () => {
         router.push("/settings");
     });
+
+    await listen("open-clipboard", async () => {
+        router.push("/clipboard");
+    });
+
+    applyTheme(theme.value);
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleSystemThemeChange = () => {
+        if (theme.value === "system") {
+            applyTheme("system");
+        }
+    };
+    mediaQuery.addEventListener("change", handleSystemThemeChange);
+});
+
+function applyTheme(themeMode: string) {
+    document.documentElement.setAttribute("data-theme", themeMode);
+}
+
+watch(theme, (newTheme) => {
+    applyTheme(newTheme);
 });
 
 onBeforeUnmount(() => {
@@ -319,6 +386,11 @@ onBeforeUnmount(() => {
         <router-view></router-view>
     </main>
     <ContextMenu
+        :current-item-id="currentLauncherItemId || undefined"
+        :is-current-item-favorite="isCurrentItemFavorite"
+        :has-custom-icon-prop="hasCurrentItemCustomIcon"
+        :category-cols="categoryCols"
+        :launcher-cols="launcherCols"
         @add-item="onAddItem"
         @add-category="onAddCategory"
         @delete-category="onDeleteCategory"
@@ -328,6 +400,12 @@ onBeforeUnmount(() => {
         @hide-window="onHideWindow"
         @set-category-cols="onSetCategoryCols"
         @set-launcher-cols="onSetLauncherCols"
+        @change-icon="onChangeIcon"
+        @reset-icon="onResetIcon"
+        @change-category-icon="onChangeCategoryIcon"
+        @reset-category-icon="onResetCategoryIcon"
+        @toggle-favorite="onToggleFavorite"
+        @open-settings="onOpenSettings"
     />
 
     <!-- <div

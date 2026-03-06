@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -13,6 +13,7 @@ pub enum FollowMouseYAnchor {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     pub toggle_shortcut: String,
+    pub clipboard_shortcut: String,
     pub follow_mouse_on_show: bool,
     pub follow_mouse_y_anchor: FollowMouseYAnchor,
 }
@@ -26,6 +27,7 @@ impl Default for AppSettingsState {
         Self {
             inner: Mutex::new(AppSettings {
                 toggle_shortcut: "alt+space".to_string(),
+                clipboard_shortcut: "alt+v".to_string(),
                 follow_mouse_on_show: false,
                 follow_mouse_y_anchor: FollowMouseYAnchor::Center,
             }),
@@ -201,6 +203,65 @@ pub fn set_toggle_shortcut(
             .lock()
             .map_err(|_| "无法获取设置状态".to_string())?;
         g.toggle_shortcut = shortcut;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_clipboard_shortcut(
+    app: AppHandle,
+    state: tauri::State<'_, AppSettingsState>,
+    shortcut: String,
+) -> Result<(), String> {
+    let shortcut = shortcut.trim().to_string();
+    if shortcut.is_empty() {
+        return Err("快捷键不能为空".to_string());
+    }
+
+    let old = state
+        .inner
+        .lock()
+        .map(|g| g.clipboard_shortcut.clone())
+        .map_err(|_| "无法获取设置状态".to_string())?;
+
+    if old == shortcut {
+        return Ok(());
+    }
+
+    let toggle_shortcut = state
+        .inner
+        .lock()
+        .map(|g| g.toggle_shortcut.clone())
+        .map_err(|_| "无法获取设置状态".to_string())?;
+
+    if shortcut == toggle_shortcut {
+        return Err("剪贴板快捷键不能与主窗口快捷键相同".to_string());
+    }
+
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+    app.global_shortcut()
+        .on_shortcut(shortcut.as_str(), move |app, _shortcut, event| {
+            use tauri_plugin_global_shortcut::ShortcutState;
+            if event.state == ShortcutState::Pressed {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.emit("open-clipboard", ());
+                }
+            }
+        })
+        .map_err(|e| e.to_string())?;
+
+    if !old.is_empty() {
+        let _ = app.global_shortcut().unregister(old.as_str());
+    }
+
+    {
+        let mut g = state
+            .inner
+            .lock()
+            .map_err(|_| "无法获取设置状态".to_string())?;
+        g.clipboard_shortcut = shortcut;
     }
 
     Ok(())
