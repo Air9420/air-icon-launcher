@@ -100,8 +100,8 @@ defineExpose({
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
-    height: 20px;
+    width: 18px;
+    height: 18px;
     padding: 0;
     border: none;
     background: rgba(0, 0, 0, 0.08);

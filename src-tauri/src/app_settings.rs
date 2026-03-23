@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
+use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -119,24 +120,24 @@ fn cursor_position() -> Option<(i32, i32)> {
 }
 
 #[tauri::command]
-pub fn get_app_settings(state: tauri::State<'_, AppSettingsState>) -> Result<AppSettings, String> {
+pub fn get_app_settings(state: tauri::State<'_, AppSettingsState>) -> AppResult<AppSettings> {
     state
         .inner
         .lock()
         .map(|g| g.clone())
-        .map_err(|_| "无法获取设置状态".to_string())
+        .map_err(|_| AppError::internal("Failed to lock app settings state"))
 }
 
 #[tauri::command]
 pub fn set_follow_mouse_on_show(
     state: tauri::State<'_, AppSettingsState>,
     enabled: bool,
-) -> Result<(), String> {
+) -> AppResult<()> {
     {
         let mut g = state
             .inner
             .lock()
-            .map_err(|_| "无法获取设置状态".to_string())?;
+            .map_err(|_| AppError::internal("Failed to lock app settings state"))?;
         g.follow_mouse_on_show = enabled;
     }
     Ok(())
@@ -146,12 +147,53 @@ pub fn set_follow_mouse_on_show(
 pub fn set_follow_mouse_y_anchor(
     state: tauri::State<'_, AppSettingsState>,
     anchor: FollowMouseYAnchor,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let mut g = state
         .inner
         .lock()
-        .map_err(|_| "无法获取设置状态".to_string())?;
+        .map_err(|_| AppError::internal("Failed to lock app settings state"))?;
     g.follow_mouse_y_anchor = anchor;
+    Ok(())
+}
+
+pub fn register_toggle_shortcut(app: &AppHandle, shortcut: &str) -> AppResult<()> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+    app.global_shortcut()
+        .on_shortcut(shortcut, move |app, _shortcut, event| {
+            use tauri_plugin_global_shortcut::ShortcutState;
+            if event.state == ShortcutState::Pressed {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.emit("toggle-main", ());
+                }
+            }
+        })
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
+    Ok(())
+}
+
+pub fn register_clipboard_shortcut(app: &AppHandle, shortcut: &str) -> AppResult<()> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+    app.global_shortcut()
+        .on_shortcut(shortcut, move |app, _shortcut, event| {
+            use tauri_plugin_global_shortcut::ShortcutState;
+            if event.state == ShortcutState::Pressed {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.emit("toggle-clipboard", ());
+                    let (follow, anchor) = app
+                        .state::<AppSettingsState>()
+                        .inner
+                        .lock()
+                        .map(|g| (g.follow_mouse_on_show, g.follow_mouse_y_anchor))
+                        .unwrap_or((false, FollowMouseYAnchor::Center));
+                    show_main_window(app, follow, anchor);
+                }
+            }
+        })
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
     Ok(())
 }
 
@@ -160,40 +202,26 @@ pub fn set_toggle_shortcut(
     app: AppHandle,
     state: tauri::State<'_, AppSettingsState>,
     shortcut: String,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let shortcut = shortcut.trim().to_string();
     if shortcut.is_empty() {
-        return Err("快捷键不能为空".to_string());
+        return Err(AppError::invalid_input("Shortcut cannot be empty"));
     }
 
     let old = state
         .inner
         .lock()
         .map(|g| g.toggle_shortcut.clone())
-        .map_err(|_| "无法获取设置状态".to_string())?;
+        .map_err(|_| AppError::internal("Failed to lock app settings state"))?;
 
     if old == shortcut {
         return Ok(());
     }
 
-    use tauri_plugin_global_shortcut::GlobalShortcutExt;
-
-    app.global_shortcut()
-        .on_shortcut(shortcut.as_str(), move |app, _shortcut, event| {
-            use tauri_plugin_global_shortcut::ShortcutState;
-            if event.state == ShortcutState::Pressed {
-                let (follow, anchor) = app
-                    .state::<AppSettingsState>()
-                    .inner
-                    .lock()
-                    .map(|g| (g.follow_mouse_on_show, g.follow_mouse_y_anchor))
-                    .unwrap_or((false, FollowMouseYAnchor::Center));
-                toggle_main_window(app, follow, anchor);
-            }
-        })
-        .map_err(|e| e.to_string())?;
+    register_toggle_shortcut(&app, shortcut.as_str())?;
 
     if !old.is_empty() {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
         let _ = app.global_shortcut().unregister(old.as_str());
     }
 
@@ -201,7 +229,7 @@ pub fn set_toggle_shortcut(
         let mut g = state
             .inner
             .lock()
-            .map_err(|_| "无法获取设置状态".to_string())?;
+            .map_err(|_| AppError::internal("Failed to lock app settings state"))?;
         g.toggle_shortcut = shortcut;
     }
 
@@ -209,21 +237,51 @@ pub fn set_toggle_shortcut(
 }
 
 #[tauri::command]
+pub fn suspend_toggle_shortcut(
+    app: AppHandle,
+    state: tauri::State<'_, AppSettingsState>,
+) -> AppResult<String> {
+    let shortcut = state
+        .inner
+        .lock()
+        .map(|g| g.toggle_shortcut.clone())
+        .map_err(|_| AppError::internal("Failed to lock app settings state"))?;
+
+    if shortcut.is_empty() {
+        return Ok(shortcut);
+    }
+
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let _ = app.global_shortcut().unregister(shortcut.as_str());
+    Ok(shortcut)
+}
+
+#[tauri::command]
+pub fn resume_toggle_shortcut(app: AppHandle, shortcut: String) -> AppResult<()> {
+    let shortcut = shortcut.trim();
+    if shortcut.is_empty() {
+        return Ok(());
+    }
+
+    register_toggle_shortcut(&app, shortcut)
+}
+
+#[tauri::command]
 pub fn set_clipboard_shortcut(
     app: AppHandle,
     state: tauri::State<'_, AppSettingsState>,
     shortcut: String,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let shortcut = shortcut.trim().to_string();
     if shortcut.is_empty() {
-        return Err("快捷键不能为空".to_string());
+        return Err(AppError::invalid_input("Shortcut cannot be empty"));
     }
 
     let old = state
         .inner
         .lock()
         .map(|g| g.clipboard_shortcut.clone())
-        .map_err(|_| "无法获取设置状态".to_string())?;
+        .map_err(|_| AppError::internal("Failed to lock app settings state"))?;
 
     if old == shortcut {
         return Ok(());
@@ -233,24 +291,14 @@ pub fn set_clipboard_shortcut(
         .inner
         .lock()
         .map(|g| g.toggle_shortcut.clone())
-        .map_err(|_| "无法获取设置状态".to_string())?;
+        .map_err(|_| AppError::internal("Failed to lock app settings state"))?;
 
     if shortcut == toggle_shortcut {
-        return Err("剪贴板快捷键不能与主窗口快捷键相同".to_string());
+        return Err(AppError::invalid_input("Clipboard shortcut cannot be the same as toggle shortcut"));
     }
 
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
-
-    app.global_shortcut()
-        .on_shortcut(shortcut.as_str(), move |app, _shortcut, event| {
-            use tauri_plugin_global_shortcut::ShortcutState;
-            if event.state == ShortcutState::Pressed {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.emit("open-clipboard", ());
-                }
-            }
-        })
-        .map_err(|e| e.to_string())?;
+    register_clipboard_shortcut(&app, shortcut.as_str())?;
 
     if !old.is_empty() {
         let _ = app.global_shortcut().unregister(old.as_str());
@@ -260,9 +308,24 @@ pub fn set_clipboard_shortcut(
         let mut g = state
             .inner
             .lock()
-            .map_err(|_| "无法获取设置状态".to_string())?;
+            .map_err(|_| AppError::internal("Failed to lock app settings state"))?;
         g.clipboard_shortcut = shortcut;
     }
 
+    Ok(())
+}
+
+#[tauri::command]
+pub fn show_window_with_follow_mouse(
+    app: AppHandle,
+    state: tauri::State<'_, AppSettingsState>,
+) -> AppResult<()> {
+    let (follow, anchor) = state
+        .inner
+        .lock()
+        .map(|g| (g.follow_mouse_on_show, g.follow_mouse_y_anchor))
+        .map_err(|_| AppError::internal("Failed to lock app settings state"))?;
+
+    show_main_window(&app, follow, anchor);
     Ok(())
 }

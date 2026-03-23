@@ -1,4 +1,5 @@
 use tauri::{
+    image::Image,
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
     AppHandle,
@@ -8,6 +9,16 @@ use tauri::{
 use crate::app_settings;
 
 pub fn create_tray(app: &AppHandle) -> tauri::tray::TrayIcon {
+    #[cfg(debug_assertions)]
+    let icon = {
+        let bytes = include_bytes!("../icons/icon-dev.png");
+        let img = image::load_from_memory(bytes).unwrap();
+        let rgba = img.to_rgba8();
+        let (width, height) = rgba.dimensions();
+        Image::new_owned(rgba.into_raw(), width, height)
+    };
+
+    #[cfg(not(debug_assertions))]
     let icon = app.default_window_icon().cloned().unwrap();
     let settings_i =
         MenuItem::with_id(app, "settings", "设置", true, None::<&str>).unwrap();
@@ -20,6 +31,9 @@ pub fn create_tray(app: &AppHandle) -> tauri::tray::TrayIcon {
         .on_menu_event(|app, event| {
             match event.id().as_ref() {
                 "quit" => {
+                    if let Some(state) = app.try_state::<crate::TrayState>() {
+                        let _ = state.tray.set_visible(false);
+                    }
                     app.exit(0);
                 }
                 "settings" => {

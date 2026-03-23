@@ -39,6 +39,13 @@ pub struct ClipboardConfig {
     pub storage_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClipboardConfigPatch {
+    pub max_records: Option<usize>,
+    pub max_image_size_mb: Option<f64>,
+    pub encrypted: Option<bool>,
+}
+
 impl Default for ClipboardConfig {
     fn default() -> Self {
         Self {
@@ -66,6 +73,29 @@ impl Default for ClipboardState {
             is_monitoring: Arc::new(Mutex::new(false)),
             config: Arc::new(Mutex::new(ClipboardConfig::default())),
             storage_path: Arc::new(Mutex::new(PathBuf::new())),
+        }
+    }
+}
+
+impl ClipboardState {
+    pub fn from_config(app_config: &crate::config_manager::AppConfig, app_handle: &AppHandle) -> Self {
+        let storage_path = if let Some(path) = &app_config.clipboard_storage_path {
+            PathBuf::from(path)
+        } else {
+            get_default_storage_path(app_handle)
+        };
+        
+        Self {
+            history: Arc::new(Mutex::new(Vec::new())),
+            last_content_hash: Arc::new(Mutex::new(String::new())),
+            is_monitoring: Arc::new(Mutex::new(false)),
+            config: Arc::new(Mutex::new(ClipboardConfig {
+                max_records: app_config.clipboard_max_records,
+                max_image_size_mb: app_config.clipboard_max_image_size_mb,
+                encrypted: app_config.clipboard_encrypted,
+                storage_path: app_config.clipboard_storage_path.clone(),
+            })),
+            storage_path: Arc::new(Mutex::new(storage_path)),
         }
     }
 }
@@ -385,7 +415,7 @@ fn encode_image_to_base64(data: &[u8]) -> Option<String> {
     Some(format!("data:image/png;base64,{}", engine.encode(data)))
 }
 
-fn get_default_storage_path(app_handle: &AppHandle) -> PathBuf {
+pub fn get_default_storage_path(app_handle: &AppHandle) -> PathBuf {
     if let Some(app_data_dir) = app_handle.path().app_data_dir().ok() {
         let _ = fs::create_dir_all(&app_data_dir);
         app_data_dir.join("clipboard_history.json")
@@ -476,13 +506,13 @@ pub fn start_clipboard_monitor(app_handle: AppHandle, state: Arc<ClipboardState>
     let config = state.config.clone();
     let storage_path = state.storage_path.clone();
 
-    let initial_path = get_default_storage_path(&app_handle);
-    {
-        let mut path = storage_path.lock().unwrap();
-        *path = initial_path.clone();
-    }
+    let (path, encrypted) = {
+        let p = storage_path.lock().unwrap().clone();
+        let e = config.lock().unwrap().encrypted;
+        (p, e)
+    };
 
-    if let Ok(loaded) = load_history_from_file(&initial_path, false) {
+    if let Ok(loaded) = load_history_from_file(&path, encrypted) {
         let mut hist = history.lock().unwrap();
         *hist = loaded;
     }
@@ -735,30 +765,107 @@ pub fn get_clipboard_config(
     Ok(config.clone())
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ClipboardConfigDebug {
+    pub config_path: String,
+    pub runtime: ClipboardConfig,
+    pub disk_max_records: usize,
+    pub disk_max_image_size_mb: f64,
+    pub disk_encrypted: bool,
+    pub disk_storage_path: Option<String>,
+}
+
+/// 获取剪贴板配置的运行态与落盘态信息（用于诊断）。
+#[tauri::command]
+pub fn get_clipboard_config_debug(
+    config_manager: tauri::State<'_, crate::config_manager::ConfigManager>,
+    state: tauri::State<'_, Arc<ClipboardState>>,
+) -> Result<ClipboardConfigDebug, String> {
+    let runtime = state.config.lock().unwrap().clone();
+    let disk = config_manager.load_config();
+    Ok(ClipboardConfigDebug {
+        config_path: config_manager.config_path().to_string_lossy().to_string(),
+        runtime,
+        disk_max_records: disk.clipboard_max_records,
+        disk_max_image_size_mb: disk.clipboard_max_image_size_mb,
+        disk_encrypted: disk.clipboard_encrypted,
+        disk_storage_path: disk.clipboard_storage_path,
+    })
+}
+
 #[tauri::command]
 pub fn set_clipboard_config(
-    max_records: Option<usize>,
-    max_image_size_mb: Option<f64>,
-    encrypted: Option<bool>,
+    patch: ClipboardConfigPatch,
+    config_manager: tauri::State<'_, crate::config_manager::ConfigManager>,
     state: tauri::State<'_, Arc<ClipboardState>>,
-) -> Result<(), String> {
-    let mut config = state.config.lock().unwrap();
+) -> Result<ClipboardConfig, String> {
+    {
+        let mut config = state.config.lock().unwrap();
+        
+        if let Some(v) = patch.max_records {
+            config.max_records = v;
+        }
+        if let Some(v) = patch.max_image_size_mb {
+            config.max_image_size_mb = v;
+        }
+        if let Some(v) = patch.encrypted {
+            config.encrypted = v;
+        }
+    }
     
-    if let Some(v) = max_records {
-        config.max_records = v;
+    let mut app_config = config_manager.load_config();
+    
+    if let Some(v) = patch.max_records {
+        app_config.clipboard_max_records = v;
     }
-    if let Some(v) = max_image_size_mb {
-        config.max_image_size_mb = v;
+    if let Some(v) = patch.max_image_size_mb {
+        app_config.clipboard_max_image_size_mb = v;
     }
-    if let Some(v) = encrypted {
-        config.encrypted = v;
+    if let Some(v) = patch.encrypted {
+        app_config.clipboard_encrypted = v;
     }
     
-    Ok(())
+    config_manager.save_config(&app_config)?;
+
+    let verify = config_manager.load_config();
+    if let Some(v) = patch.max_records {
+        if verify.clipboard_max_records != v {
+            return Err(format!(
+                "配置写入校验失败：clipboard_max_records 期望={} 实际={} 路径={}",
+                v,
+                verify.clipboard_max_records,
+                config_manager.config_path().to_string_lossy()
+            ));
+        }
+    }
+    if let Some(v) = patch.max_image_size_mb {
+        if (verify.clipboard_max_image_size_mb - v).abs() > 1e-9 {
+            return Err(format!(
+                "配置写入校验失败：clipboard_max_image_size_mb 期望={} 实际={} 路径={}",
+                v,
+                verify.clipboard_max_image_size_mb,
+                config_manager.config_path().to_string_lossy()
+            ));
+        }
+    }
+    if let Some(v) = patch.encrypted {
+        if verify.clipboard_encrypted != v {
+            return Err(format!(
+                "配置写入校验失败：clipboard_encrypted 期望={} 实际={} 路径={}",
+                v,
+                verify.clipboard_encrypted,
+                config_manager.config_path().to_string_lossy()
+            ));
+        }
+    }
+    
+    let latest = state.config.lock().unwrap().clone();
+    Ok(latest)
 }
 
 #[tauri::command]
 pub fn set_clipboard_storage_path(
+    config_manager: tauri::State<'_, crate::config_manager::ConfigManager>,
     path: String,
     state: tauri::State<'_, Arc<ClipboardState>>,
 ) -> Result<(), String> {
@@ -788,7 +895,21 @@ pub fn set_clipboard_storage_path(
     
     {
         let mut config = state.config.lock().unwrap();
-        config.storage_path = Some(path);
+        config.storage_path = Some(path.clone());
+    }
+    
+    let mut app_config = config_manager.load_config();
+    app_config.clipboard_storage_path = Some(path);
+    config_manager.save_config(&app_config)?;
+
+    let verify = config_manager.load_config();
+    if verify.clipboard_storage_path != app_config.clipboard_storage_path {
+        return Err(format!(
+            "配置写入校验失败：clipboard_storage_path 期望={:?} 实际={:?} 路径={}",
+            app_config.clipboard_storage_path,
+            verify.clipboard_storage_path,
+            config_manager.config_path().to_string_lossy()
+        ));
     }
     
     Ok(())
@@ -805,6 +926,7 @@ pub fn get_clipboard_storage_path(
 #[tauri::command]
 pub fn reset_clipboard_storage_path(
     app: AppHandle,
+    config_manager: tauri::State<'_, crate::config_manager::ConfigManager>,
     state: tauri::State<'_, Arc<ClipboardState>>,
 ) -> Result<String, String> {
     let default_path = get_default_storage_path(&app);
@@ -826,6 +948,10 @@ pub fn reset_clipboard_storage_path(
         let mut config = state.config.lock().unwrap();
         config.storage_path = None;
     }
+    
+    let mut app_config = config_manager.load_config();
+    app_config.clipboard_storage_path = None;
+    config_manager.save_config(&app_config)?;
     
     Ok(default_path.to_string_lossy().to_string())
 }

@@ -1,31 +1,15 @@
 <template>
-    <div
-        class="category-view"
-        data-menu-type="icon-view"
-        :data-category-id="categoryId"
-    >
-        <header
-            class="category-header"
-            data-menu-type="icon-view"
-            :data-category-id="categoryId"
-            data-tauri-drag-region
-        >
+    <div class="category-view">
+        <header class="category-header" data-tauri-drag-region>
             <button
                 class="back-btn"
                 type="button"
-                data-menu-type="icon-view"
-                :data-category-id="categoryId"
                 @click="onBack"
                 @mousedown.stop
             >
                 返回
             </button>
-            <div
-                class="category-title"
-                data-menu-type="icon-view"
-                :data-category-id="categoryId"
-                data-tauri-drag-region
-            >
+            <div class="category-title" data-tauri-drag-region>
                 {{ title }}
             </div>
             <div class="header-search">
@@ -56,57 +40,46 @@
         >
             <template #item="{ element }">
                 <div
-                    v-show="!localSearchKeyword.trim() || matchesSearch(element.name)"
+                    v-show="
+                        !localSearchKeyword.trim() ||
+                        matchesSearch(element.name)
+                    "
                     class="icon-item"
-                    :class="{ 'is-favorite': isItemFavorite(element.id) }"
+                    :class="{ 'is-pinned': isItemPinned(element.id) }"
                     data-menu-type="icon-item"
                     :data-category-id="categoryId"
                     :data-item-id="element.id"
-                    @dblclick="onOpenItem(element)"
+                    @dblclick="throttledOnOpenItem(element)"
                 >
-                    <div
-                        class="icon-img"
-                        data-menu-type="icon-item"
-                        :data-category-id="categoryId"
-                        :data-item-id="element.id"
-                    >
+                    <div class="icon-img">
                         <img
                             v-if="element.iconBase64"
                             class="icon-real"
                             :src="getIconSrc(element.iconBase64)"
                             alt=""
                             draggable="false"
-                            data-menu-type="icon-item"
-                            :data-category-id="categoryId"
-                            :data-item-id="element.id"
                         />
-                        <div
-                            v-else
-                            class="icon-fallback"
-                            data-menu-type="icon-item"
-                            :data-category-id="categoryId"
-                            :data-item-id="element.id"
-                        >
+                        <div v-else class="icon-fallback">
                             {{ getFallbackText(element.name) }}
                         </div>
-                        <div
-                            v-if="isItemFavorite(element.id)"
-                            class="favorite-badge"
-                            data-menu-type="icon-item"
-                            :data-category-id="categoryId"
-                            :data-item-id="element.id"
-                        >
-                            ⭐
-                        </div>
+                    </div>
+                    <div v-if="isItemPinned(element.id)" class="pinned-badge">
+                        📌
+                    </div>
+                    <div v-if="!hideName" class="icon-name" :title="element.name">
+                        {{ element.name }}
                     </div>
                     <div
-                        class="icon-name"
-                        data-menu-type="icon-item"
-                        :data-category-id="categoryId"
-                        :data-item-id="element.id"
-                        :title="element.name"
+                        v-if="launchStatusMap.get(element.id) === 'launching'"
+                        class="launch-status launching"
                     >
-                        {{ element.name }}
+                        <span class="spinner"></span>
+                    </div>
+                    <div
+                        v-if="launchStatusMap.get(element.id) === 'success'"
+                        class="launch-status success"
+                    >
+                        <span class="check-icon">✓</span>
                     </div>
                 </div>
             </template>
@@ -133,14 +106,24 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watchEffect } from "vue";
+import {
+    computed,
+    nextTick,
+    onMounted,
+    onUnmounted,
+    ref,
+    watchEffect,
+} from "vue";
 import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
 import draggable from "vuedraggable";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
+import { useThrottleFn } from "@vueuse/core";
 import { Store } from "../stores";
+import { useUIStore } from "../stores/uiStore";
+import { useCategoryStore } from "../stores/categoryStore";
 import type { LauncherItem } from "../stores";
 import SearchBox from "../components/SearchBox.vue";
 
@@ -150,16 +133,33 @@ const props = defineProps<{
 
 const router = useRouter();
 const store = Store();
-const { launcherCols } = storeToRefs(store);
+const uiStore = useUIStore();
+const categoryStore = useCategoryStore();
+const { launcherCols } = storeToRefs(uiStore);
 const localSearchKeyword = ref<string>("");
 const searchBoxRef = ref<InstanceType<typeof SearchBox> | null>(null);
+
+type LaunchStatus = "launching" | "success";
+const launchStatusMap = ref<Map<string, LaunchStatus>>(new Map());
+const hideName = computed(() => (launcherCols.value ?? 5) >= 6);
+
+function setLaunchStatus(itemId: string, status: LaunchStatus) {
+    launchStatusMap.value.set(itemId, status);
+    launchStatusMap.value = new Map(launchStatusMap.value);
+    if (status === "success") {
+        setTimeout(() => {
+            launchStatusMap.value.delete(itemId);
+            launchStatusMap.value = new Map(launchStatusMap.value);
+        }, 2000);
+    }
+}
 
 let unlistenFocus: (() => void) | null = null;
 let unlistenShow: (() => void) | null = null;
 
 onMounted(async () => {
     const win = getCurrentWindow();
-    
+
     unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
         if (focused) {
             nextTick(() => {
@@ -167,13 +167,13 @@ onMounted(async () => {
             });
         }
     });
-    
+
     unlistenShow = await listen("window-shown", () => {
         nextTick(() => {
             searchBoxRef.value?.focus();
         });
     });
-    
+
     nextTick(() => {
         searchBoxRef.value?.focus();
     });
@@ -185,14 +185,14 @@ onUnmounted(() => {
 });
 
 const title = computed(() => {
-    const category = store.getCategoryById(props.categoryId);
+    const category = categoryStore.getCategoryById(props.categoryId);
     return category?.name || "未命名类目";
 });
 
 const items = computed<LauncherItem[]>({
     get() {
         const rawItems = store.getLauncherItemsByCategoryId(props.categoryId);
-        const favoriteIds = new Set(store.favoriteItemIds);
+        const favoriteIds = new Set(store.pinnedItemIds);
         return [...rawItems].sort((a, b) => {
             const aFav = favoriteIds.has(a.id);
             const bFav = favoriteIds.has(b.id);
@@ -206,8 +206,8 @@ const items = computed<LauncherItem[]>({
     },
 });
 
-function isItemFavorite(itemId: string): boolean {
-    return store.isItemFavorite(itemId);
+function isItemPinned(itemId: string): boolean {
+    return store.isItemPinned(itemId);
 }
 
 const filteredCount = computed(() => {
@@ -223,7 +223,11 @@ function matchesSearch(name: string): boolean {
     const lowerKeyword = keyword.toLowerCase();
     if (lowerName.includes(lowerKeyword)) return true;
     let keywordIndex = 0;
-    for (let i = 0; i < lowerName.length && keywordIndex < lowerKeyword.length; i++) {
+    for (
+        let i = 0;
+        i < lowerName.length && keywordIndex < lowerKeyword.length;
+        i++
+    ) {
         if (lowerName[i] === lowerKeyword[keywordIndex]) {
             keywordIndex++;
         }
@@ -232,7 +236,7 @@ function matchesSearch(name: string): boolean {
 }
 
 watchEffect(() => {
-    store.setCurrentCategory(props.categoryId);
+    categoryStore.setCurrentCategory(props.categoryId);
 });
 
 function onBack() {
@@ -240,13 +244,19 @@ function onBack() {
 }
 
 async function onOpenItem(item: LauncherItem) {
+    store.recordItemUsage(props.categoryId, item.id);
+    setLaunchStatus(item.id, "launching");
     try {
         await openPath(item.path);
-        store.recordItemUsage(props.categoryId, item.id);
+        setLaunchStatus(item.id, "success");
     } catch (e) {
         console.error(e);
+        launchStatusMap.value.delete(item.id);
+        launchStatusMap.value = new Map(launchStatusMap.value);
     }
 }
+
+const throttledOnOpenItem = useThrottleFn(onOpenItem, 2500, true, true);
 
 function getIconSrc(iconBase64: string) {
     if (iconBase64.startsWith("data:")) return iconBase64;
@@ -317,6 +327,7 @@ function getFallbackText(name: string) {
     gap: var(--gap);
     align-content: flex-start;
     grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+    grid-auto-rows: max-content;
     height: calc(100vh - 52px - 32px);
     overflow-y: scroll;
     -ms-overflow-style: none;
@@ -326,22 +337,21 @@ function getFallbackText(name: string) {
 }
 
 .icon-item {
-    padding: 8px;
+    padding: min(8px, 5%);
     border-radius: 18px;
     background: var(--card-bg);
     box-shadow: var(--card-shadow);
     user-select: none;
     opacity: 0.92;
     display: flex;
-    gap: 8px;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: space-evenly;
     aspect-ratio: 1 / 1;
     position: relative;
 }
 
-.icon-item.is-favorite {
+.icon-item.is-pinned {
     border: 2px solid var(--primary-color);
     opacity: 1;
 }
@@ -355,10 +365,10 @@ function getFallbackText(name: string) {
     position: relative;
 }
 
-.favorite-badge {
+.pinned-badge {
     position: absolute;
-    top: -4px;
-    right: -4px;
+    top: 5px;
+    right: 5px;
     font-size: 12px;
     line-height: 1;
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
@@ -390,6 +400,50 @@ function getFallbackText(name: string) {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+}
+
+.launch-status {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.launch-status.launching {
+    .spinner {
+        width: 12px;
+        height: 12px;
+        border: 2px solid var(--text-color-tertiary);
+        border-top-color: var(--primary-color, #0078d4);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+}
+
+.launch-status.success {
+    animation: fadeOut 0.5s ease 1.5s forwards;
+
+    .check-icon {
+        color: var(--success-color, #4caf50);
+        font-size: 14px;
+        font-weight: bold;
+    }
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes fadeOut {
+    to {
+        opacity: 0;
+    }
 }
 
 .icon-ghost {

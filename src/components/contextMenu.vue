@@ -5,301 +5,167 @@
         :style="{ left: `${ContextMenu.x}px`, top: `${ContextMenu.y}px` }"
         @click.stop
     >
-        <button
-            class="menu-item"
-            type="button"
-            @click="onAddItem"
-            v-show="isMenuVisible(enumContextMenuType.IconView)"
-        >
-            添加项目
-        </button>
-        <button
-            class="menu-item"
-            type="button"
-            @click="onEditItem"
-            v-show="isMenuVisible(enumContextMenuType.IconItem)"
-        >
-            编辑
-        </button>
-        <button
-            class="menu-item"
-            type="button"
-            @click="onToggleFavorite"
-            v-show="isMenuVisible(enumContextMenuType.IconItem)"
-        >
-            {{ isCurrentItemFavorite ? '取消收藏' : '收藏' }}
-        </button>
-        <button
-            class="menu-item"
-            type="button"
-            @click="onChangeIcon"
-            v-show="isMenuVisible(enumContextMenuType.IconItem)"
-        >
-            更换图标
-        </button>
-        <button
-            class="menu-item"
-            type="button"
-            @click="onResetIcon"
-            v-show="isMenuVisible(enumContextMenuType.IconItem) && hasCustomIconProp"
-        >
-            重置图标
-        </button>
-        <button
-            class="menu-item"
-            type="button"
-            @click="onDeleteItem"
-            v-show="isMenuVisible(enumContextMenuType.IconItem)"
-        >
-            删除
-        </button>
-        <button
-            class="menu-item"
-            type="button"
-            @click="onAddCategory"
-            v-show="isMenuVisible(enumContextMenuType.CategorieView)"
-        >
-            添加类目
-        </button>
-        <button
-            class="menu-item"
-            type="button"
-            @click="onHideWindow"
-            v-show="isMenuVisible(enumContextMenuType.CategorieView)"
-        >
-            隐藏启动台
-        </button>
-        <button
-            class="menu-item"
-            type="button"
-            @click="onRenameCategory"
-            v-show="isMenuVisible(enumContextMenuType.Categorie)"
-        >
-            重命名
-        </button>
-        <button
-            class="menu-item"
-            type="button"
-            @click="onChangeCategoryIcon"
-            v-show="isMenuVisible(enumContextMenuType.Categorie)"
-        >
-            更换图标
-        </button>
-        <button
-            class="menu-item"
-            type="button"
-            @click="onResetCategoryIcon"
-            v-show="isMenuVisible(enumContextMenuType.Categorie)"
-        >
-            重置图标
-        </button>
-        <button
-            class="menu-item"
-            type="button"
-            @click="onDeleteCategory"
-            v-show="isMenuVisible(enumContextMenuType.Categorie)"
-        >
-            删除
-        </button>
-        <button class="menu-item" type="button" @mousedown="startDragging">
-            拖拽窗口
-        </button>
-        <button
-            class="menu-item"
-            type="button"
-            @click="onOpenSettings"
-        >
-            设置
-        </button>
+        <template v-for="item in menuModel" :key="item.id">
+            <div v-if="item.type === 'separator'" class="menu-sep" />
 
-        <div
-            class="menu-sep"
-            v-show="isMenuVisible(enumContextMenuType.CategorieView)"
-        />
-        <div
-            class="menu-group"
-            v-show="isMenuVisible(enumContextMenuType.CategorieView)"
-        >
-            <div class="menu-title">分类图标</div>
-            <div class="menu-sub">
-                <button
-                    class="menu-subitem"
-                    type="button"
-                    :class="{ active: categoryCols === 4 }"
-                    @click="onSetCategoryCols(4)"
-                >
-                    4
-                </button>
-                <button
-                    class="menu-subitem"
-                    type="button"
-                    :class="{ active: categoryCols === 5 }"
-                    @click="onSetCategoryCols(5)"
-                >
-                    5
-                </button>
+            <div v-else-if="item.type === 'group'" class="menu-group">
+                <div class="menu-title">
+                    {{ resolveMenuLabel(item.title, menuContext) }}
+                </div>
+                <div class="menu-sub">
+                    <button
+                        v-for="child in item.children"
+                        :key="child.id"
+                        class="menu-subitem"
+                        type="button"
+                        :class="{
+                            active:
+                                child.type === 'item' &&
+                                !!evaluateCondition(
+                                    resolveConditionValue(child.checked, menuContext),
+                                    menuContext
+                                ),
+                        }"
+                        :disabled="
+                            child.type === 'item' &&
+                            !!evaluateCondition(
+                                resolveConditionValue(child.disabled, menuContext),
+                                menuContext
+                            )
+                        "
+                        @click="handleChildClick(child)"
+                    >
+                        {{
+                            child.type === "item"
+                                ? resolveMenuLabel(child.label, menuContext)
+                                : ""
+                        }}
+                    </button>
+                </div>
             </div>
-        </div>
-        <div
-            class="menu-group"
-            v-show="isMenuVisible(enumContextMenuType.IconView)"
-        >
-            <div class="menu-title">启动项图标</div>
-            <div class="menu-sub">
-                <button
-                    class="menu-subitem"
-                    type="button"
-                    :class="{ active: launcherCols === 4 }"
-                    @click="onSetLauncherCols(4)"
+
+            <button
+                v-else
+                class="menu-item"
+                type="button"
+                :disabled="!!evaluateCondition(resolveConditionValue(item.disabled, menuContext), menuContext)"
+                @click="onClickItem(item)"
+                @mousedown="onMouseDownItem(item)"
+            >
+                <span>{{ resolveMenuLabel(item.label, menuContext) }}</span>
+                <span
+                    v-if="
+                        item.mode &&
+                        item.mode !== 'normal' &&
+                        !!evaluateCondition(resolveConditionValue(item.checked, menuContext), menuContext)
+                    "
+                    class="menu-check"
                 >
-                    4
-                </button>
-                <button
-                    class="menu-subitem"
-                    type="button"
-                    :class="{ active: launcherCols === 5 }"
-                    @click="onSetLauncherCols(5)"
-                >
-                    5
-                </button>
-                <button
-                    class="menu-subitem"
-                    type="button"
-                    :class="{ active: launcherCols === 6 }"
-                    @click="onSetLauncherCols(6)"
-                >
-                    6
-                </button>
-            </div>
-        </div>
+                    ✓
+                </span>
+            </button>
+        </template>
     </div>
 </template>
 
 <script setup lang="ts">
-import { enumContextMenuType, Store } from "../stores/index";
+import { Store } from "../stores/index";
+import { HomeLayoutPresetKey, useUIStore } from "../stores/uiStore";
 import { storeToRefs } from "pinia";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { computed } from "vue";
-import { selectAndConvertIcon } from "../utils/iconUtils";
+import { buildContextMenuModel } from "../menus/contextMenu";
+import type { MenuContext, MenuItem, MenuAction } from "../menus/contextMenuTypes";
+import { resolveLabel as resolveMenuLabel, resolveConditionValue, evaluateCondition } from "../menus/contextMenuTypes";
 
 const store = Store();
-const { ContextMenu, ContextMenuType } = storeToRefs(store);
+const uiStore = useUIStore();
+const { ContextMenu, ContextMenuType } = storeToRefs(uiStore);
 
 const emit = defineEmits<{
-    (e: "add-item"): void;
-    (e: "add-category"): void;
-    (e: "set-category-cols", cols: number): void;
-    (e: "set-launcher-cols", cols: number): void;
-    (e: "delete-category"): void;
-    (e: "rename-category"): void;
-    (e: "edit-item"): void;
-    (e: "delete-item"): void;
-    (e: "hide-window"): void;
-    (e: "change-icon", base64: string): void;
-    (e: "reset-icon"): void;
-    (e: "change-category-icon", base64: string): void;
-    (e: "reset-category-icon"): void;
-    (e: "toggle-favorite"): void;
-    (e: "open-settings"): void;
+    (e: "action", action: MenuAction, ctx: MenuContext): void;
 }>();
 
-defineProps<{
+const props = defineProps<{
     currentItemId?: string;
     isCurrentItemFavorite?: boolean;
     hasCustomIconProp?: boolean;
     categoryCols?: number;
     launcherCols?: number;
+    currentHomeSection?: "pinned" | "recent";
+    pinnedLayoutPreset?: HomeLayoutPresetKey;
+    recentLayoutPreset?: HomeLayoutPresetKey;
+    currentCategoryId?: string;
 }>();
 
-function onDeleteCategory() {
-    store.closeContextMenu();
-    emit("delete-category");
-}
+const menuContext = computed<MenuContext>(() => {
+    const item = props.currentItemId
+        ? {
+              pinned: !!props.isCurrentItemFavorite,
+              favorite: !!props.isCurrentItemFavorite,
+              customIcon: !!props.hasCustomIconProp,
+          }
+        : undefined;
 
-function onRenameCategory() {
-    store.closeContextMenu();
-    emit("rename-category");
-}
+    const layout = {
+        categoryCols: props.categoryCols ?? 5,
+        launcherCols: props.launcherCols ?? 5,
+        pinnedPreset: props.pinnedLayoutPreset ?? "1x5",
+        recentPreset: props.recentLayoutPreset ?? "1x5",
+    };
 
-function onEditItem() {
-    store.closeContextMenu();
-    emit("edit-item");
-}
-
-function onDeleteItem() {
-    store.closeContextMenu();
-    emit("delete-item");
-}
-
-const isMenuVisible = computed(() => {
-    return (type: enumContextMenuType) => {
-        return ContextMenuType.value === type;
+    return {
+        menuType: ContextMenuType.value,
+        categoryId: props.currentCategoryId ?? null,
+        itemId: props.currentItemId ?? null,
+        homeSection: props.currentHomeSection ?? null,
+        item,
+        layout,
     };
 });
 
-function onAddItem() {
-    store.closeContextMenu();
-    emit("add-item");
+const menuModel = computed<MenuItem[]>(() => {
+    return buildContextMenuModel(menuContext.value);
+});
+
+/**
+ * 点击菜单项后执行动作分发（内置/插件统一）。
+ */
+function onSelectItem(item: Extract<MenuItem, { type: "item" }>) {
+    uiStore.closeContextMenu();
+    emit("action", item.action, menuContext.value);
 }
 
-function onAddCategory() {
-    store.closeContextMenu();
-    emit("add-category");
+/**
+ * 处理子菜单项点击。
+ */
+function handleChildClick(child: MenuItem) {
+    if (child.type !== "item") return;
+    onSelectItem(child);
 }
 
-function onHideWindow() {
-    store.closeContextMenu();
-    emit("hide-window");
+/**
+ * 处理菜单项点击：拖拽窗口项不走 action 分发。
+ */
+function onClickItem(item: Extract<MenuItem, { type: "item" }>) {
+    if (item.action.kind === "start-dragging-window") return;
+    onSelectItem(item);
 }
 
-function onSetCategoryCols(cols: number) {
-    emit("set-category-cols", cols);
-}
-
-function onSetLauncherCols(cols: number) {
-    emit("set-launcher-cols", cols);
-}
-
-async function onChangeIcon() {
-    store.closeContextMenu();
-    const base64 = await selectAndConvertIcon();
-    if (base64) {
-        emit("change-icon", base64);
+/**
+ * 处理菜单项按下：用于触发“拖拽窗口”。
+ */
+function onMouseDownItem(item: Extract<MenuItem, { type: "item" }>) {
+    if (item.action.kind === "start-dragging-window") {
+        startDragging();
     }
 }
 
-function onResetIcon() {
-    store.closeContextMenu();
-    emit("reset-icon");
-}
-
-async function onChangeCategoryIcon() {
-    store.closeContextMenu();
-    const base64 = await selectAndConvertIcon();
-    if (base64) {
-        emit("change-category-icon", base64);
-    }
-}
-
-function onResetCategoryIcon() {
-    store.closeContextMenu();
-    emit("reset-category-icon");
-}
-
-function onToggleFavorite() {
-    store.closeContextMenu();
-    emit("toggle-favorite");
-}
-
-function onOpenSettings() {
-    store.closeContextMenu();
-    emit("open-settings");
-}
-
-async function startDragging(event: { target: any; currentTarget: any }) {
-    if (event.target === event.currentTarget) {
-        getCurrentWindow().startDragging();
-    }
+/**
+ * 在菜单项上开始拖拽窗口（需 mousedown 触发以符合 Tauri 行为）。
+ */
+async function startDragging() {
+    await getCurrentWindow().startDragging();
 }
 </script>
 
@@ -330,6 +196,17 @@ async function startDragging(event: { target: any; currentTarget: any }) {
     color: var(--text-color);
 }
 
+.menu-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.menu-check {
+    opacity: 0.85;
+}
+
 .menu-item:hover,
 .menu-subitem:hover {
     background: var(--hover-bg);
@@ -354,11 +231,14 @@ async function startDragging(event: { target: any; currentTarget: any }) {
 
 .menu-sub {
     display: flex;
-    gap: 6px;
+    flex-wrap: wrap;
+    gap: 4px;
     padding: 0 6px 4px;
 }
 
 .menu-subitem {
+    flex: 1 0 calc(100% / 4 - 4px);
+    min-width: 40px;
     text-align: center;
 }
 

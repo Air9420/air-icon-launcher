@@ -1,4 +1,8 @@
-import type { Category, LauncherItem } from "../stores";
+import type { enumContextMenuType } from "../stores";
+import type { ContextMenuItemInput } from "./contextMenuRegistry";
+import type { Permission } from "./permissions";
+import type { PluginAPIv1 } from "./api-v1";
+import type { PluginCategory, PluginLauncherItem } from "./dto";
 
 export interface PluginManifest {
   id: string;
@@ -15,41 +19,33 @@ export interface PluginManifest {
   engines?: {
     "air-icon-launcher": string;
   };
+  permissions?: Permission[];
 }
 
-export interface PluginAPI {
-  getAppInfo: () => { version: string; name: string };
-  getCategories: () => Category[];
-  getLauncherItems: (categoryId: string) => LauncherItem[];
-  launchItem: (categoryId: string, itemId: string) => Promise<void>;
-  storage: {
-    get: (key: string) => unknown;
-    set: (key: string, value: unknown) => void;
-    remove: (key: string) => void;
-    clear: () => void;
-  };
-  showToast: (message: string, type?: "info" | "success" | "error") => void;
-  on: (event: string, callback: (...args: unknown[]) => void) => void;
-  off: (event: string, callback: (...args: unknown[]) => void) => void;
-  emit: (event: string, ...args: unknown[]) => void;
-  registerCommand: (commandId: string, handler: (...args: unknown[]) => void) => void;
-  unregisterCommand: (commandId: string) => void;
-  executeCommand: (commandId: string, ...args: unknown[]) => void;
+export interface PluginLifecycle {
+  onLoad?(api: PluginAPIv1): void | Promise<void>;
+  onUnload?(): void | Promise<void>;
+  onEnable?(api: PluginAPIv1): void | Promise<void>;
+  onDisable?(): void | Promise<void>;
 }
 
-export interface Plugin {
+export interface Plugin extends PluginLifecycle {
   manifest: PluginManifest;
-  activate: (api: PluginAPI) => void | Promise<void>;
+  activate?: (api: PluginAPIv1) => void | Promise<void>;
   deactivate?: () => void | Promise<void>;
 }
+
+export type PluginStatus = "none" | "loaded" | "enabled" | "error";
 
 export interface PluginInstance {
   manifest: PluginManifest;
   enabled: boolean;
   loaded: boolean;
+  status: PluginStatus;
   error?: string;
   plugin?: Plugin;
   sandbox?: HTMLIFrameElement;
+  permissions: Permission[];
 }
 
 export interface PluginEvent {
@@ -79,3 +75,7 @@ export interface PluginCommand {
 export interface PluginStorage {
   [pluginId: string]: Record<string, unknown>;
 }
+
+export type { Permission } from "./permissions";
+export type { PluginAPIv1 } from "./api-v1";
+export type { PluginCategory, PluginLauncherItem } from "./dto";

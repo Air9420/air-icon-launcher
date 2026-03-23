@@ -85,7 +85,7 @@ fn ensure_single_instance_or_wake() {
     }
 }
 
-/// 安装并启动开机自启服务。
+/// 安装开机自启服务，并配置为系统启动时启动（AUTO_START）。
 #[cfg(windows)]
 fn install_service() -> Result<(), String> {
     use std::process::Command;
@@ -141,7 +141,31 @@ fn install_service() -> Result<(), String> {
     let _ = Command::new("sc")
         .creation_flags(0x08000000)
         .args(["description", SERVICE_NAME, SERVICE_DESCRIPTION])
+        .output()
+        .map_err(|e| e.to_string())
+        .ok()
+        .filter(|o| !o.status.success())
+        .map(|o| {
+            eprintln!(
+                "Warning: Failed to set service description: {}",
+                String::from_utf8_lossy(&o.stderr)
+            )
+        });
+
+    let config_result = Command::new("sc")
+        .creation_flags(0x08000000)
+        .args(["config", SERVICE_NAME, "start=", "auto"])
         .output();
+    if let Err(e) = config_result {
+        eprintln!("Warning: Failed to configure service start type: {}", e);
+    } else if let Ok(output) = config_result {
+        if !output.status.success() {
+            eprintln!(
+                "Warning: Failed to configure service start type: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
 
     Ok(())
 }

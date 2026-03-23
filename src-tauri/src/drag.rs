@@ -148,6 +148,13 @@ pub fn get_last_drop(state: State<'_, DragDropState>) -> Option<DropRecord> {
     state.last_drop.lock().ok().and_then(|g| g.clone())
 }
 
+/// 从给定的路径列表中提取图标 base64 数据（用于手动添加项目）。
+#[tauri::command]
+pub fn extract_icons_from_paths(paths: Vec<String>) -> Vec<Option<String>> {
+    let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    extract_icon_base64s(&path_bufs)
+}
+
 /// 将操作系统回调提供的物理坐标转换为前端可用于 elementFromPoint 的逻辑坐标。
 fn physical_to_logical_position(
     window: &tauri::WebviewWindow,

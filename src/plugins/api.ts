@@ -1,7 +1,15 @@
 import type { PluginAPI, PluginCommand } from "./types";
 import type { Category, LauncherItem } from "../stores";
 import { Store } from "../stores";
-import { invoke } from "@tauri-apps/api/core";
+import { useCategoryStore } from "../stores/categoryStore";
+import { invoke } from "../utils/invoke-wrapper";
+import type { enumContextMenuType } from "../stores";
+import type { ContextMenuItemInput } from "./contextMenuRegistry";
+import {
+  clearContextMenuItemsByPlugin,
+  registerContextMenuItems,
+  unregisterContextMenuItems,
+} from "./contextMenuRegistry";
 
 type ToastType = "info" | "success" | "error";
 
@@ -17,6 +25,7 @@ export function setToastCallback(callback: (message: string, type: ToastType) =>
 
 export function createPluginAPI(pluginId: string): PluginAPI {
   const store = Store();
+  const categoryStore = useCategoryStore();
 
   function getStorage(): Record<string, unknown> {
     if (!pluginStorage.has(pluginId)) {
@@ -32,7 +41,7 @@ export function createPluginAPI(pluginId: string): PluginAPI {
     }),
 
     getCategories: (): Category[] => {
-      return store.categories;
+      return categoryStore.categories;
     },
 
     getLauncherItems: (categoryId: string): LauncherItem[] => {
@@ -44,7 +53,10 @@ export function createPluginAPI(pluginId: string): PluginAPI {
       if (!item) {
         throw new Error(`Item ${itemId} not found in category ${categoryId}`);
       }
-      await invoke("launch_item", { path: item.path });
+      const result = await invoke<null>("launch_item", { path: item.path });
+      if (!result.ok) {
+        throw new Error(`Failed to launch: ${result.error.message}`);
+      }
       store.recordItemUsage(categoryId, itemId);
     },
 
@@ -121,6 +133,17 @@ export function createPluginAPI(pluginId: string): PluginAPI {
         console.warn(`Command ${commandId} not found`);
       }
     },
+
+    registerContextMenuItems: (
+      menuType: enumContextMenuType,
+      items: ContextMenuItemInput[]
+    ): void => {
+      registerContextMenuItems(pluginId, menuType, items);
+    },
+
+    unregisterContextMenuItems: (menuType?: enumContextMenuType): void => {
+      unregisterContextMenuItems(pluginId, menuType);
+    },
   };
 }
 
@@ -141,6 +164,22 @@ export function getRegisteredCommands(): PluginCommand[] {
   return Array.from(commands.values());
 }
 
+/**
+ * 执行已注册的插件命令（Host 调用）。
+ */
+export function executePluginCommand(commandId: string, ...args: unknown[]): void {
+  const command = commands.get(commandId);
+  if (command) {
+    try {
+      command.handler(...args);
+    } catch (error) {
+      console.error(`Error executing command ${commandId}:`, error);
+    }
+  } else {
+    console.warn(`Command ${commandId} not found`);
+  }
+}
+
 export function clearPluginData(pluginId: string): void {
   pluginStorage.delete(pluginId);
   eventListeners.forEach((listeners) => {
@@ -151,4 +190,6 @@ export function clearPluginData(pluginId: string): void {
       commands.delete(commandId);
     }
   }
+
+  clearContextMenuItemsByPlugin(pluginId);
 }

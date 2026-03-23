@@ -55,6 +55,12 @@
             <div class="empty-text">暂无剪贴板历史</div>
             <div class="empty-hint">复制文本后会自动记录到这里</div>
         </div>
+
+        <Transition name="toast">
+            <div v-if="showToast" class="toast">
+                {{ toastMessage }}
+            </div>
+        </Transition>
     </div>
 </template>
 
@@ -62,32 +68,51 @@
 import { onMounted, onBeforeUnmount, ref } from "vue";
 import { useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
+import { safeInvoke } from "../utils/invoke-wrapper";
 import { listen } from "@tauri-apps/api/event";
-import { Store, ClipboardRecord } from "../stores";
+import { useClipboardStore, type ClipboardRecord } from "../stores/clipboardStore";
 import { storeToRefs } from "pinia";
 
 const router = useRouter();
-const store = Store();
-const { clipboardHistory: history } = storeToRefs(store);
+const clipboardStore = useClipboardStore();
+const { clipboardHistory: history } = storeToRefs(clipboardStore);
 const currentTime = ref(Date.now());
+const showToast = ref(false);
+const toastMessage = ref("");
+let toastTimeout: number | null = null;
 let timeUpdateInterval: number | null = null;
 
 function onBack() {
     router.push("/categories");
 }
 
+function showToastMessage(message: string) {
+    toastMessage.value = message;
+    showToast.value = true;
+    
+    if (toastTimeout) {
+        clearTimeout(toastTimeout);
+    }
+    
+    toastTimeout = window.setTimeout(() => {
+        showToast.value = false;
+    }, 1500);
+}
+
 async function onCopyItem(item: ClipboardRecord) {
     try {
-        await invoke("set_clipboard_content", { content: item.content });
+        await safeInvoke("set_clipboard_content", { content: item.content });
+        showToastMessage("已复制");
     } catch (e) {
         console.error("Failed to copy to clipboard:", e);
+        showToastMessage("复制失败");
     }
 }
 
 async function onDeleteItem(id: string) {
     try {
-        await invoke("delete_clipboard_record", { id });
-        store.removeClipboardRecord(id);
+        await safeInvoke("delete_clipboard_record", { id });
+        clipboardStore.removeClipboardRecord(id);
     } catch (e) {
         console.error("Failed to delete record:", e);
     }
@@ -95,8 +120,8 @@ async function onDeleteItem(id: string) {
 
 async function onClearAll() {
     try {
-        await invoke("clear_clipboard_history");
-        store.clearClipboardHistory();
+        await safeInvoke("clear_clipboard_history");
+        clipboardStore.clearClipboardHistory();
     } catch (e) {
         console.error("Failed to clear history:", e);
     }
@@ -136,7 +161,7 @@ onMounted(async () => {
         const backendHistory = await invoke<ClipboardRecord[]>("get_clipboard_history");
         const sortedHistory = backendHistory.sort((a, b) => b.timestamp - a.timestamp);
         sortedHistory.reverse().forEach(record => {
-            store.addClipboardRecord({
+            clipboardStore.addClipboardRecord({
                 id: record.id,
                 content: record.content,
                 type: record.type as "text" | "image",
@@ -149,7 +174,7 @@ onMounted(async () => {
 
     unlisten = await listen<ClipboardRecord>("clipboard-changed", (event) => {
         const record = event.payload;
-        store.addClipboardRecord({
+        clipboardStore.addClipboardRecord({
             id: record.id,
             content: record.content,
             type: record.type as "text" | "image",
@@ -168,6 +193,9 @@ onBeforeUnmount(() => {
     }
     if (timeUpdateInterval) {
         clearInterval(timeUpdateInterval);
+    }
+    if (toastTimeout) {
+        clearTimeout(toastTimeout);
     }
 });
 </script>
@@ -331,5 +359,32 @@ onBeforeUnmount(() => {
 .empty-hint {
     font-size: 13px;
     color: var(--text-hint);
+}
+
+.toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 10px 20px;
+    background: var(--card-bg-solid);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: var(--card-shadow);
+    font-size: 14px;
+    color: var(--text-color);
+    z-index: 1000;
+    pointer-events: none;
+}
+
+.toast-enter-active,
+.toast-leave-active {
+    transition: all 0.2s ease;
+}
+
+.toast-enter-from,
+.toast-leave-to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(10px);
 }
 </style>

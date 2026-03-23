@@ -1,14 +1,67 @@
 import { ref, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import type { PluginManifest, PluginInstance, Plugin } from "./types";
-import { createPluginAPI, clearPluginData, emitPluginEvent } from "./api";
+import type {
+  PluginManifest,
+  PluginInstance,
+  Plugin,
+} from "./types";
+import { createVersionedAPI, clearPluginResources, emitGlobalEvent } from "./api-factory";
+import {
+  Permission,
+  DEFAULT_PERMISSIONS,
+  validatePermissions,
+} from "./permissions";
+import { resourceTracker } from "./resource-tracker";
+import { sandboxManager } from "./sandbox";
+import { invoke as safeInvoke } from "../utils/invoke-wrapper";
 
 const plugins = ref<Map<string, PluginInstance>>(new Map());
+
+const PLUGIN_STATE_KEY = "plugin-enabled-state";
+
+const SANDBOX_MODE_KEY = "plugin-sandbox-mode";
+
+function loadPluginStates(): Record<string, boolean> {
+  try {
+    const saved = localStorage.getItem(PLUGIN_STATE_KEY);
+    return saved ? JSON.parse(saved) : {};
+  } catch {
+    return {};
+  }
+}
+
+function savePluginStates(states: Record<string, boolean>): void {
+  try {
+    localStorage.setItem(PLUGIN_STATE_KEY, JSON.stringify(states));
+  } catch (e) {
+    console.error("Failed to save plugin states:", e);
+  }
+}
+
+function getPluginStates(): Record<string, boolean> {
+  return loadPluginStates();
+}
+
+function isSandboxModeEnabled(): boolean {
+  try {
+    return localStorage.getItem(SANDBOX_MODE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function setSandboxModeEnabled(enabled: boolean): void {
+  try {
+    localStorage.setItem(SANDBOX_MODE_KEY, String(enabled));
+  } catch (e) {
+    console.error("Failed to save sandbox mode:", e);
+  }
+}
 
 export function usePluginManager() {
   const pluginList = computed(() => Array.from(plugins.value.values()));
   const enabledPlugins = computed(() =>
-    pluginList.value.filter((p) => p.enabled && p.loaded)
+    pluginList.value.filter((p) => p.status === "enabled")
   );
 
   async function getPluginDirectory(): Promise<string> {
@@ -50,228 +103,282 @@ export function usePluginManager() {
     }
   }
 
+  function parsePermissions(manifest: PluginManifest): Permission[] {
+    const requested = manifest.permissions || [];
+    const { valid } = validatePermissions(requested);
+    return [...DEFAULT_PERMISSIONS, ...valid];
+  }
+
+  function loadPluginDirect(
+    code: string,
+    manifest: PluginManifest,
+    api: ReturnType<typeof createVersionedAPI>
+  ): Plugin | null {
+    try {
+      console.log(`[PluginManager] Creating module factory for ${manifest.id}...`);
+      
+      let cleanCode = code.trim();
+      if (cleanCode.endsWith(";")) {
+        cleanCode = cleanCode.slice(0, -1);
+      }
+      
+      const wrappedCode = `return ${cleanCode}(manifest, api);`;
+      
+      console.log(`[PluginManager] wrappedCode preview:`, wrappedCode.substring(0, 200) + '...');
+      
+      const moduleFactory = new Function("manifest", "api", wrappedCode);
+      console.log(`[PluginManager] Executing module factory...`);
+      const pluginExports = moduleFactory(manifest, api);
+      
+      console.log(`[PluginManager] Raw pluginExports:`, pluginExports);
+      console.log(`[PluginManager] Type:`, typeof pluginExports);
+      
+      const exports = pluginExports || {};
+      console.log(`[PluginManager] Plugin exports keys:`, Object.keys(exports));
+
+      const plugin: Plugin = {
+        manifest,
+        onLoad: exports.onLoad || undefined,
+        onUnload: exports.onUnload || undefined,
+        onEnable: exports.onEnable || undefined,
+        onDisable: exports.onDisable || undefined,
+        activate: exports.activate || exports.onEnable || function () {},
+        deactivate: exports.deactivate || exports.onDisable || function () {},
+      };
+
+      return plugin;
+    } catch (error) {
+      console.error("[PluginManager] Plugin load error:", error);
+      return null;
+    }
+  }
+
   async function loadPlugin(pluginId: string): Promise<boolean> {
     const instance = plugins.value.get(pluginId);
     if (!instance) {
-      console.error(`Plugin ${pluginId} not found`);
+      console.error(`[PluginManager] Plugin ${pluginId} not found`);
       return false;
     }
 
-    if (instance.loaded) {
+    if (instance.status === "loaded" || instance.status === "enabled") {
+      console.log(`[PluginManager] Plugin ${pluginId} already loaded, skipping`);
       return true;
     }
 
+    console.log(`[PluginManager] Loading plugin ${pluginId}...`);
+
     try {
       const pluginPath = await invoke<string>("get_plugin_path", { pluginId });
+      console.log(`[PluginManager] Plugin path: ${pluginPath}`);
+      
       const code = await loadPluginCode(pluginPath, instance.manifest.main);
 
       if (!code) {
+        instance.status = "error";
         instance.error = "Failed to load plugin code";
         return false;
       }
 
-      const api = createPluginAPI(pluginId);
+      console.log(`[PluginManager] Plugin code loaded, length: ${code.length}`);
 
-      const pluginModule = await loadPluginInSandbox(code, instance.manifest, api);
+      const permissions = parsePermissions(instance.manifest);
+      instance.permissions = permissions;
+
+      const useSandbox = isSandboxModeEnabled();
+      console.log(`[PluginManager] Sandbox mode: ${useSandbox}`);
+
+      if (useSandbox) {
+        try {
+          const sandbox = await sandboxManager.createSandbox({
+            pluginId,
+            manifest: instance.manifest,
+            permissions,
+            code,
+          });
+          
+          instance.sandbox = sandbox.iframe;
+          instance.status = "loaded";
+          instance.loaded = true;
+          instance.error = undefined;
+          
+          await sandboxManager.callLifecycle(pluginId, "onLoad");
+          
+          emitGlobalEvent("plugin:loaded", { pluginId });
+          return true;
+        } catch (error) {
+          console.error(`[PluginManager] Sandbox creation failed:`, error);
+          instance.status = "error";
+          instance.error = `Sandbox error: ${error}`;
+          return false;
+        }
+      }
+
+      const api = createVersionedAPI(pluginId, permissions);
+
+      const pluginModule = loadPluginDirect(code, instance.manifest, api);
 
       if (pluginModule) {
         instance.plugin = pluginModule;
+        instance.status = "loaded";
         instance.loaded = true;
         instance.error = undefined;
-        emitPluginEvent("plugin:loaded", { pluginId });
+
+        if (pluginModule.onLoad) {
+          try {
+            await pluginModule.onLoad(api);
+          } catch (e) {
+            console.error(`[PluginManager] Plugin ${pluginId} onLoad error:`, e);
+          }
+        }
+
+        emitGlobalEvent("plugin:loaded", { pluginId });
         return true;
       } else {
+        instance.status = "error";
         instance.error = "Failed to initialize plugin";
         return false;
       }
     } catch (error) {
-      console.error(`Error loading plugin ${pluginId}:`, error);
+      console.error(`[PluginManager] Error loading plugin ${pluginId}:`, error);
+      instance.status = "error";
       instance.error = String(error);
       return false;
     }
   }
 
-  async function loadPluginInSandbox(
-    code: string,
-    manifest: PluginManifest,
-    api: ReturnType<typeof createPluginAPI>
-  ): Promise<Plugin | null> {
-    return new Promise((resolve) => {
-      const iframe = document.createElement("iframe");
-      iframe.style.display = "none";
-      iframe.sandbox.add("allow-scripts");
-
-      const pluginId = manifest.id;
-
-      iframe.onload = () => {
-        const iframeWindow = iframe.contentWindow;
-        if (!iframeWindow) {
-          resolve(null);
-          return;
-        }
-
-        const script = iframeWindow.document.createElement("script");
-        script.textContent = `
-          (function() {
-            const manifest = ${JSON.stringify(manifest)};
-            const api = {
-              getAppInfo: ${api.getAppInfo.toString()},
-              getCategories: ${api.getCategories.toString()},
-              getLauncherItems: ${api.getLauncherItems.toString()},
-              launchItem: ${api.launchItem.toString()},
-              storage: {
-                get: ${api.storage.get.toString()},
-                set: ${api.storage.set.toString()},
-                remove: ${api.storage.remove.toString()},
-                clear: ${api.storage.clear.toString()}
-              },
-              showToast: ${api.showToast.toString()},
-              on: ${api.on.toString()},
-              off: ${api.off.toString()},
-              emit: ${api.emit.toString()},
-              registerCommand: ${api.registerCommand.toString()},
-              unregisterCommand: ${api.unregisterCommand.toString()},
-              executeCommand: ${api.executeCommand.toString()}
-            };
-
-            let pluginExports = {};
-
-            try {
-              const moduleFactory = new Function('manifest', 'api', \`${code}\`);
-              pluginExports = moduleFactory(manifest, api) || {};
-
-              const plugin = {
-                manifest: manifest,
-                activate: pluginExports.activate || function() {},
-                deactivate: pluginExports.deactivate || function() {}
-              };
-
-              window.__pluginResult = plugin;
-            } catch (e) {
-              window.__pluginError = e.message;
-            }
-          })();
-        `;
-
-        iframeWindow.document.head.appendChild(script);
-
-        setTimeout(() => {
-          const result = (iframeWindow as unknown as { __pluginResult?: Plugin; __pluginError?: string }).__pluginResult;
-          const error = (iframeWindow as unknown as { __pluginError?: string }).__pluginError;
-
-          if (error) {
-            console.error("Plugin sandbox error:", error);
-            resolve(null);
-          } else if (result) {
-            try {
-              const activateResult = result.activate(api);
-              if (activateResult instanceof Promise) {
-                activateResult.then(() => {
-                  const instance = plugins.value.get(pluginId);
-                  if (instance) {
-                    instance.sandbox = iframe;
-                  }
-                  resolve(result);
-                }).catch((err: unknown) => {
-                  console.error("Plugin activation error:", err);
-                  resolve(null);
-                });
-              } else {
-                const instance = plugins.value.get(pluginId);
-                if (instance) {
-                  instance.sandbox = iframe;
-                }
-                resolve(result);
-              }
-            } catch (err: unknown) {
-              console.error("Plugin activation error:", err);
-              resolve(null);
-            }
-          } else {
-            resolve(null);
-          }
-        }, 100);
-      };
-
-      document.body.appendChild(iframe);
-    });
-  }
-
   async function unloadPlugin(pluginId: string): Promise<void> {
     const instance = plugins.value.get(pluginId);
-    if (!instance || !instance.loaded) {
+    if (!instance) return;
+
+    if (instance.status === "none" || instance.status === "error") {
       return;
     }
 
     try {
-      if (instance.plugin?.deactivate) {
-        await instance.plugin.deactivate();
-      }
-
       if (instance.sandbox) {
-        instance.sandbox.remove();
+        if (instance.status === "enabled") {
+          await sandboxManager.callLifecycle(pluginId, "onDisable");
+        }
+        await sandboxManager.callLifecycle(pluginId, "onUnload");
+        await sandboxManager.destroySandbox(pluginId);
+        instance.sandbox = undefined;
+      } else {
+        if (instance.status === "enabled" && instance.plugin?.onDisable) {
+          await instance.plugin.onDisable();
+        }
+
+        if (instance.plugin?.onUnload) {
+          await instance.plugin.onUnload();
+        }
+
+        resourceTracker.cleanup(pluginId);
+        clearPluginResources(pluginId);
       }
 
-      clearPluginData(pluginId);
+      instance.status = "none";
       instance.loaded = false;
+      instance.enabled = false;
       instance.plugin = undefined;
-      instance.sandbox = undefined;
-      emitPluginEvent("plugin:unloaded", { pluginId });
+
+      emitGlobalEvent("plugin:unloaded", { pluginId });
     } catch (error) {
-      console.error(`Error unloading plugin ${pluginId}:`, error);
+      console.error(`[PluginManager] Error unloading plugin ${pluginId}:`, error);
     }
   }
 
   async function enablePlugin(pluginId: string): Promise<boolean> {
     const instance = plugins.value.get(pluginId);
-    if (!instance) {
+    if (!instance) return false;
+
+    if (instance.status === "enabled") return true;
+
+    const currentSandboxMode = isSandboxModeEnabled();
+    const isRunningInSandbox = !!instance.sandbox;
+    
+    if (instance.status === "loaded" && isRunningInSandbox !== currentSandboxMode) {
+      console.log(`[PluginManager] Sandbox mode changed, reloading plugin ${pluginId}`);
+      await unloadPlugin(pluginId);
+    }
+
+    if (instance.status !== "loaded") {
+      const loaded = await loadPlugin(pluginId);
+      if (!loaded) return false;
+    }
+
+    try {
+      if (instance.sandbox) {
+        await sandboxManager.callLifecycle(pluginId, "onEnable");
+      } else {
+        const api = createVersionedAPI(pluginId, instance.permissions);
+        
+        if (instance.plugin?.onEnable) {
+          await instance.plugin.onEnable(api);
+        } else if (instance.plugin?.activate) {
+          await instance.plugin.activate(api);
+        }
+      }
+
+      instance.status = "enabled";
+      instance.enabled = true;
+      
+      const states = getPluginStates();
+      states[pluginId] = true;
+      savePluginStates(states);
+      
+      emitGlobalEvent("plugin:enabled", { pluginId });
+      return true;
+    } catch (error) {
+      console.error(`[PluginManager] Failed to enable plugin ${pluginId}:`, error);
+      instance.status = "error";
+      instance.error = String(error);
       return false;
     }
-
-    if (!instance.loaded) {
-      const loaded = await loadPlugin(pluginId);
-      if (!loaded) {
-        return false;
-      }
-    }
-
-    instance.enabled = true;
-    emitPluginEvent("plugin:enabled", { pluginId });
-    return true;
   }
 
   async function disablePlugin(pluginId: string): Promise<void> {
     const instance = plugins.value.get(pluginId);
-    if (!instance) {
-      return;
-    }
+    if (!instance || instance.status !== "enabled") return;
 
-    await unloadPlugin(pluginId);
-    instance.enabled = false;
-    emitPluginEvent("plugin:disabled", { pluginId });
+    try {
+      if (instance.sandbox) {
+        await sandboxManager.callLifecycle(pluginId, "onDisable");
+      } else {
+        if (instance.plugin?.onDisable) {
+          await instance.plugin.onDisable();
+        }
+
+        resourceTracker.cleanup(pluginId);
+        clearPluginResources(pluginId);
+      }
+
+      instance.status = "loaded";
+      instance.enabled = false;
+      
+      const states = getPluginStates();
+      states[pluginId] = false;
+      savePluginStates(states);
+      
+      emitGlobalEvent("plugin:disabled", { pluginId });
+    } catch (error) {
+      console.error(`[PluginManager] Failed to disable plugin ${pluginId}:`, error);
+    }
   }
 
   async function installPluginFromPath(sourcePath: string): Promise<boolean> {
     try {
       const manifest = await loadPluginManifest(sourcePath);
-      if (!manifest) {
-        console.error("Invalid plugin: missing manifest");
-        return false;
-      }
-
-      if (plugins.value.has(manifest.id)) {
-        console.error(`Plugin ${manifest.id} already installed`);
-        return false;
-      }
+      if (!manifest || plugins.value.has(manifest.id)) return false;
 
       const installed = await invoke<boolean>("install_plugin", { sourcePath });
       if (installed) {
-        const instance: PluginInstance = {
+        const permissions = parsePermissions(manifest);
+        plugins.value.set(manifest.id, {
           manifest,
           enabled: false,
           loaded: false,
-        };
-        plugins.value.set(manifest.id, instance);
+          status: "none",
+          permissions,
+        });
         return true;
       }
       return false;
@@ -283,14 +390,21 @@ export function usePluginManager() {
 
   async function uninstallPlugin(pluginId: string): Promise<boolean> {
     const instance = plugins.value.get(pluginId);
-    if (!instance) {
-      return false;
-    }
+    if (!instance) return false;
 
     try {
       await unloadPlugin(pluginId);
-      await invoke("uninstall_plugin", { pluginId });
+      const result = await safeInvoke<boolean>("uninstall_plugin", { pluginId });
+      if (!result.ok) {
+        console.error(`Failed to uninstall plugin ${pluginId}: [${result.error.code}] ${result.error.message}`);
+        return false;
+      }
       plugins.value.delete(pluginId);
+
+      const states = getPluginStates();
+      delete states[pluginId];
+      savePluginStates(states);
+
       return true;
     } catch (error) {
       console.error(`Failed to uninstall plugin ${pluginId}:`, error);
@@ -301,21 +415,29 @@ export function usePluginManager() {
   async function refreshPlugins(): Promise<void> {
     try {
       const manifests = await scanPlugins();
+      const savedStates = getPluginStates();
 
       for (const manifest of manifests) {
         if (!plugins.value.has(manifest.id)) {
-          const instance: PluginInstance = {
+          const permissions = parsePermissions(manifest);
+          const wasEnabled = savedStates[manifest.id] === true;
+          
+          plugins.value.set(manifest.id, {
             manifest,
             enabled: false,
             loaded: false,
-          };
-          plugins.value.set(manifest.id, instance);
+            status: "none",
+            permissions,
+          });
+          
+          if (wasEnabled) {
+            await enablePlugin(manifest.id);
+          }
         }
       }
 
       for (const [pluginId] of plugins.value) {
-        const exists = manifests.some((m) => m.id === pluginId);
-        if (!exists) {
+        if (!manifests.some((m) => m.id === pluginId)) {
           await unloadPlugin(pluginId);
           plugins.value.delete(pluginId);
         }
@@ -327,6 +449,18 @@ export function usePluginManager() {
 
   function getPlugin(pluginId: string): PluginInstance | undefined {
     return plugins.value.get(pluginId);
+  }
+
+  function getPluginPermissions(pluginId: string): Permission[] {
+    return plugins.value.get(pluginId)?.permissions || [];
+  }
+
+  function isSandboxMode(): boolean {
+    return isSandboxModeEnabled();
+  }
+
+  function setSandboxMode(enabled: boolean): void {
+    setSandboxModeEnabled(enabled);
   }
 
   return {
@@ -344,6 +478,9 @@ export function usePluginManager() {
     uninstallPlugin,
     refreshPlugins,
     getPlugin,
+    getPluginPermissions,
+    isSandboxMode,
+    setSandboxMode,
   };
 }
 
