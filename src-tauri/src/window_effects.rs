@@ -1,7 +1,7 @@
-use std::time::Duration;
-use tauri::{AppHandle, Manager, PhysicalSize};
-use tauri::window::{EffectsBuilder, Effect, Color};
 use crate::error::{AppError, AppResult};
+use std::time::Duration;
+use tauri::window::{Color, Effect, EffectsBuilder};
+use tauri::{AppHandle, Manager, PhysicalSize};
 
 #[tauri::command]
 pub async fn set_window_effects(app: AppHandle, enabled: bool) -> AppResult<()> {
@@ -11,9 +11,13 @@ pub async fn set_window_effects(app: AppHandle, enabled: bool) -> AppResult<()> 
                 .effects(vec![Effect::Acrylic])
                 .color(Color(0, 0, 0, 0))
                 .build();
-            window.set_effects(Some(effects)).map_err(|e| AppError::internal(e.to_string()))?;
+            window
+                .set_effects(Some(effects))
+                .map_err(|e| AppError::internal(e.to_string()))?;
         } else {
-            window.set_effects(None).map_err(|e| AppError::internal(e.to_string()))?;
+            window
+                .set_effects(None)
+                .map_err(|e| AppError::internal(e.to_string()))?;
         }
         force_window_refresh(&window);
     }
@@ -29,13 +33,17 @@ pub async fn set_window_effect_type(app: AppHandle, effect_type: String) -> AppR
             _ => Effect::Acrylic,
         };
 
-        window.set_effects(None).map_err(|e| AppError::internal(format!("clear effects error: {}", e)))?;
+        window
+            .set_effects(None)
+            .map_err(|e| AppError::internal(format!("clear effects error: {}", e)))?;
         tokio::time::sleep(Duration::from_millis(50)).await;
         let effects = EffectsBuilder::new()
             .effects(vec![effect])
             .color(Color(0, 0, 0, 0))
             .build();
-        window.set_effects(Some(effects)).map_err(|e| AppError::internal(format!("set effects error: {}", e)))?;
+        window
+            .set_effects(Some(effects))
+            .map_err(|e| AppError::internal(format!("set effects error: {}", e)))?;
         force_window_refresh(&window);
     }
     Ok(())

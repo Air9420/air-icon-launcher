@@ -238,11 +238,11 @@ fn extract_icon_base64s(paths: &[PathBuf]) -> Vec<Option<String>> {
 fn resolve_windows_shortcut_target(path: &PathBuf) -> Option<PathBuf> {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::{Interface, PCWSTR};
-    use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-        COINIT_APARTMENTTHREADED, IPersistFile, STGM_READ,
-    };
     use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED, STGM_READ,
+    };
     use windows::Win32::UI::Shell::{IShellLinkW, ShellLink, SLGP_RAWPATH};
 
     struct ComInitGuard;
@@ -287,13 +287,11 @@ fn resolve_windows_shortcut_target(path: &PathBuf) -> Option<PathBuf> {
 fn extract_windows_icon_base64(path: &PathBuf) -> Option<String> {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL};
     use windows::Win32::UI::Shell::{
         SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGFI_USEFILEATTRIBUTES,
     };
     use windows::Win32::UI::WindowsAndMessaging::DestroyIcon;
-    use windows::Win32::Storage::FileSystem::{
-        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
-    };
 
     let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
     wide.push(0);

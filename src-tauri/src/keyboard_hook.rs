@@ -1,22 +1,21 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
-use std::time::Instant;
 use std::sync::OnceLock;
+use std::time::Instant;
 use tauri::Emitter;
 
 #[cfg(target_os = "windows")]
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 #[cfg(target_os = "windows")]
-use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetMessageW,
-    DispatchMessageW, TranslateMessage, MSG, SetWindowsHookExW, UnhookWindowsHookEx,
-    WH_KEYBOARD_LL, KBDLLHOOKSTRUCT, WM_KEYDOWN, WM_SYSKEYDOWN,
-};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN,
+    GetAsyncKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 #[cfg(target_os = "windows")]
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::WindowsAndMessaging::{
+    CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
+    UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+};
 
 static HOOK_HANDLE: AtomicU64 = AtomicU64::new(0);
 static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
@@ -43,7 +42,11 @@ pub struct HotkeyConfig {
 
 impl HotkeyConfig {
     pub fn matches(&self, vk: u32, ctrl: bool, shift: bool, alt: bool, win: bool) -> bool {
-        self.vk == vk && self.ctrl == ctrl && self.shift == shift && self.alt == alt && self.win == win
+        self.vk == vk
+            && self.ctrl == ctrl
+            && self.shift == shift
+            && self.alt == alt
+            && self.win == win
     }
 }
 
@@ -54,10 +57,18 @@ pub fn set_app_handle(handle: tauri::AppHandle) {
 pub fn register_hotkey(config: HotkeyConfig) {
     REGISTERED_VK.store(config.vk, Ordering::Relaxed);
     let mut mods: u8 = 0;
-    if config.ctrl { mods |= MOD_CTRL; }
-    if config.shift { mods |= MOD_SHIFT; }
-    if config.alt { mods |= MOD_ALT; }
-    if config.win { mods |= MOD_WIN; }
+    if config.ctrl {
+        mods |= MOD_CTRL;
+    }
+    if config.shift {
+        mods |= MOD_SHIFT;
+    }
+    if config.alt {
+        mods |= MOD_ALT;
+    }
+    if config.win {
+        mods |= MOD_WIN;
+    }
     REGISTERED_MODS.store(mods, Ordering::Relaxed);
 }
 
@@ -105,7 +116,7 @@ unsafe fn get_modifier_state() -> (bool, bool, bool, bool) {
     let shift = GetAsyncKeyState(VK_SHIFT.0 as i32) as u16 & 0x8000 != 0;
     let alt = GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000 != 0;
     let win = GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0
-           || GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0;
+        || GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0;
     (ctrl, shift, alt, win)
 }
 
@@ -138,8 +149,11 @@ unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: L
         let expect_alt = (registered_mods & MOD_ALT) != 0;
         let expect_win = (registered_mods & MOD_WIN) != 0;
 
-        if vk == registered_vk && ctrl == expect_ctrl && shift == expect_shift
-            && alt == expect_alt && win == expect_win
+        if vk == registered_vk
+            && ctrl == expect_ctrl
+            && shift == expect_shift
+            && alt == expect_alt
+            && win == expect_win
         {
             if should_trigger() && should_block_input() {
                 if let Some(handle) = APP_HANDLE.get() {
@@ -154,26 +168,23 @@ unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: L
 
 #[cfg(target_os = "windows")]
 pub fn start_keyboard_hook() -> bool {
-    std::thread::spawn(move || {
-        unsafe {
-            let h_instance = GetModuleHandleW(None)
-                .expect("Failed to get module handle");
+    std::thread::spawn(move || unsafe {
+        let h_instance = GetModuleHandleW(None).expect("Failed to get module handle");
 
-            let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), h_instance, 0);
+        let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), h_instance, 0);
 
-            match hook {
-                Ok(h) => {
-                    HOOK_HANDLE.store(h.0 as u64, Ordering::SeqCst);
-                    let mut msg = MSG::default();
-                    while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                        let _ = TranslateMessage(&msg);
-                        let _ = DispatchMessageW(&msg);
-                    }
-                    let _ = UnhookWindowsHookEx(h);
+        match hook {
+            Ok(h) => {
+                HOOK_HANDLE.store(h.0 as u64, Ordering::SeqCst);
+                let mut msg = MSG::default();
+                while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                    let _ = TranslateMessage(&msg);
+                    let _ = DispatchMessageW(&msg);
                 }
-                Err(e) => {
-                    eprintln!("[keyboard_hook] Failed to set hook: {:?}", e);
-                }
+                let _ = UnhookWindowsHookEx(h);
+            }
+            Err(e) => {
+                eprintln!("[keyboard_hook] Failed to set hook: {:?}", e);
             }
         }
     });
@@ -265,7 +276,13 @@ pub fn parse_hotkey(hotkey: &str) -> Option<HotkeyConfig> {
     }
 
     if vk != 0 {
-        Some(HotkeyConfig { vk, ctrl, shift, alt, win })
+        Some(HotkeyConfig {
+            vk,
+            ctrl,
+            shift,
+            alt,
+            win,
+        })
     } else {
         None
     }

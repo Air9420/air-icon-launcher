@@ -1,9 +1,9 @@
 pub mod types;
 
+use crate::error::{AppError, AppResult};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
-use crate::error::{AppError, AppResult};
 pub use types::*;
 
 pub const CONFIG_VERSION: &str = "1.0";
@@ -63,22 +63,20 @@ impl ConfigManager {
         }
 
         match fs::read_to_string(&self.config_path) {
-            Ok(content) => {
-                match serde_json::from_str::<AppConfig>(&content) {
-                    Ok(config) => config,
-                    Err(e) => {
-                        eprintln!(
-                            "Failed to parse config file ({}): {}",
-                            self.config_path.to_string_lossy(),
-                            e
-                        );
-                        let _ = self.backup_bad_config_file();
-                        let default_config = AppConfig::default();
-                        let _ = self.save_config(&default_config);
-                        default_config
-                    }
+            Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
+                Ok(config) => config,
+                Err(e) => {
+                    eprintln!(
+                        "Failed to parse config file ({}): {}",
+                        self.config_path.to_string_lossy(),
+                        e
+                    );
+                    let _ = self.backup_bad_config_file();
+                    let default_config = AppConfig::default();
+                    let _ = self.save_config(&default_config);
+                    default_config
                 }
-            }
+            },
             Err(e) => {
                 eprintln!(
                     "Failed to read config file ({}): {}",
@@ -102,8 +100,7 @@ impl ConfigManager {
     }
 
     pub fn save_config(&self, config: &AppConfig) -> Result<(), String> {
-        let content = serde_json::to_string_pretty(config)
-            .map_err(|e| e.to_string())?;
+        let content = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
         write_atomically(&self.config_path, content.as_bytes())
     }
 
@@ -113,19 +110,16 @@ impl ConfigManager {
         }
 
         match fs::read_to_string(&self.launcher_data_path) {
-            Ok(content) => {
-                match serde_json::from_str::<LauncherData>(&content) {
-                    Ok(data) => data,
-                    Err(_) => LauncherData::default(),
-                }
-            }
+            Ok(content) => match serde_json::from_str::<LauncherData>(&content) {
+                Ok(data) => data,
+                Err(_) => LauncherData::default(),
+            },
             Err(_) => LauncherData::default(),
         }
     }
 
     pub fn save_launcher_data(&self, data: &LauncherData) -> Result<(), String> {
-        let content = serde_json::to_string_pretty(data)
-            .map_err(|e| e.to_string())?;
+        let content = serde_json::to_string_pretty(data).map_err(|e| e.to_string())?;
         write_atomically(&self.launcher_data_path, content.as_bytes())
     }
 
@@ -133,7 +127,11 @@ impl ConfigManager {
         self.backups_dir.clone()
     }
 
-    pub fn create_backup(&self, config: &AppConfig, launcher_data: &LauncherData) -> Result<String, String> {
+    pub fn create_backup(
+        &self,
+        config: &AppConfig,
+        launcher_data: &LauncherData,
+    ) -> Result<String, String> {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -149,8 +147,7 @@ impl ConfigManager {
             "launcher_data": launcher_data,
         });
 
-        let content = serde_json::to_string_pretty(&backup_data)
-            .map_err(|e| e.to_string())?;
+        let content = serde_json::to_string_pretty(&backup_data).map_err(|e| e.to_string())?;
 
         write_atomically(&backup_path, content.as_bytes())?;
 
@@ -160,8 +157,7 @@ impl ConfigManager {
     pub fn list_backups(&self) -> Result<Vec<BackupInfo>, String> {
         let mut backups = Vec::new();
 
-        let entries = fs::read_dir(&self.backups_dir)
-            .map_err(|e| e.to_string())?;
+        let entries = fs::read_dir(&self.backups_dir).map_err(|e| e.to_string())?;
 
         for entry in entries {
             if let Ok(entry) = entry {
@@ -171,7 +167,8 @@ impl ConfigManager {
                         if let Some(name_str) = name.to_str() {
                             if name_str.starts_with("backup_") {
                                 if let Ok(metadata) = entry.metadata() {
-                                    let created = metadata.created()
+                                    let created = metadata
+                                        .created()
                                         .ok()
                                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                                         .map(|d| d.as_secs())
@@ -202,17 +199,18 @@ impl ConfigManager {
             return Err("Backup file not found".to_string());
         }
 
-        let content = fs::read_to_string(&backup_path)
-            .map_err(|e| e.to_string())?;
+        let content = fs::read_to_string(&backup_path).map_err(|e| e.to_string())?;
 
-        let backup: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| e.to_string())?;
+        let backup: serde_json::Value =
+            serde_json::from_str(&content).map_err(|e| e.to_string())?;
 
-        let config: AppConfig = backup.get("config")
+        let config: AppConfig = backup
+            .get("config")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
-        let launcher_data: LauncherData = backup.get("launcher_data")
+        let launcher_data: LauncherData = backup
+            .get("launcher_data")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
@@ -221,8 +219,7 @@ impl ConfigManager {
 
     pub fn delete_backup(&self, filename: &str) -> Result<(), String> {
         let backup_path = self.backups_dir.join(filename);
-        fs::remove_file(&backup_path)
-            .map_err(|e| e.to_string())
+        fs::remove_file(&backup_path).map_err(|e| e.to_string())
     }
 
     pub fn cleanup_old_backups(&self, retention: usize) -> AppResult<()> {
@@ -231,7 +228,8 @@ impl ConfigManager {
         if backups.len() > retention {
             let to_delete: Vec<_> = backups.into_iter().skip(retention).collect();
             for backup in to_delete {
-                self.delete_backup(&backup.filename).map_err(|e| AppError::internal(e))?;
+                self.delete_backup(&backup.filename)
+                    .map_err(|e| AppError::internal(e))?;
             }
         }
 
@@ -255,7 +253,8 @@ pub fn read_raw_config_json(manager: tauri::State<'_, ConfigManager>) -> AppResu
     if !path.exists() {
         return Err(AppError::not_found(format!("config.json at {:?}", path)));
     }
-    fs::read_to_string(&path).map_err(|e| AppError::io_error(format!("Failed to read config.json: {}", e)))
+    fs::read_to_string(&path)
+        .map_err(|e| AppError::io_error(format!("Failed to read config.json: {}", e)))
 }
 
 #[tauri::command]
@@ -265,7 +264,9 @@ pub fn get_config(manager: tauri::State<'_, ConfigManager>) -> AppResult<AppConf
 
 #[tauri::command]
 pub fn save_config(manager: tauri::State<'_, ConfigManager>, config: AppConfig) -> AppResult<()> {
-    manager.save_config(&config).map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))
+    manager
+        .save_config(&config)
+        .map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))
 }
 
 #[tauri::command]
@@ -274,27 +275,45 @@ pub fn get_launcher_data(manager: tauri::State<'_, ConfigManager>) -> AppResult<
 }
 
 #[tauri::command]
-pub fn save_launcher_data(manager: tauri::State<'_, ConfigManager>, data: LauncherData) -> AppResult<()> {
-    manager.save_launcher_data(&data).map_err(|e| AppError::new("LAUNCHER_DATA_SAVE_ERROR", e))
+pub fn save_launcher_data(
+    manager: tauri::State<'_, ConfigManager>,
+    data: LauncherData,
+) -> AppResult<()> {
+    manager
+        .save_launcher_data(&data)
+        .map_err(|e| AppError::new("LAUNCHER_DATA_SAVE_ERROR", e))
 }
 
 #[tauri::command]
 pub fn create_backup(manager: tauri::State<'_, ConfigManager>) -> AppResult<String> {
     let config = manager.load_config();
     let launcher_data = manager.load_launcher_data();
-    manager.create_backup(&config, &launcher_data).map_err(|e| AppError::new("BACKUP_ERROR", e))
+    manager
+        .create_backup(&config, &launcher_data)
+        .map_err(|e| AppError::new("BACKUP_ERROR", e))
 }
 
 #[tauri::command]
 pub fn list_backups(manager: tauri::State<'_, ConfigManager>) -> AppResult<Vec<BackupInfo>> {
-    manager.list_backups().map_err(|e| AppError::new("LIST_BACKUPS_ERROR", e))
+    manager
+        .list_backups()
+        .map_err(|e| AppError::new("LIST_BACKUPS_ERROR", e))
 }
 
 #[tauri::command]
-pub fn restore_backup(manager: tauri::State<'_, ConfigManager>, filename: String) -> AppResult<serde_json::Value> {
-    let (config, launcher_data) = manager.restore_backup(&filename).map_err(|e| AppError::new("RESTORE_BACKUP_ERROR", e))?;
-    manager.save_config(&config).map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))?;
-    manager.save_launcher_data(&launcher_data).map_err(|e| AppError::new("LAUNCHER_DATA_SAVE_ERROR", e))?;
+pub fn restore_backup(
+    manager: tauri::State<'_, ConfigManager>,
+    filename: String,
+) -> AppResult<serde_json::Value> {
+    let (config, launcher_data) = manager
+        .restore_backup(&filename)
+        .map_err(|e| AppError::new("RESTORE_BACKUP_ERROR", e))?;
+    manager
+        .save_config(&config)
+        .map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))?;
+    manager
+        .save_launcher_data(&launcher_data)
+        .map_err(|e| AppError::new("LAUNCHER_DATA_SAVE_ERROR", e))?;
 
     Ok(serde_json::json!({
         "settings": config,
@@ -304,7 +323,9 @@ pub fn restore_backup(manager: tauri::State<'_, ConfigManager>, filename: String
 
 #[tauri::command]
 pub fn delete_backup(manager: tauri::State<'_, ConfigManager>, filename: String) -> AppResult<()> {
-    manager.delete_backup(&filename).map_err(|e| AppError::new("DELETE_BACKUP_ERROR", e))
+    manager
+        .delete_backup(&filename)
+        .map_err(|e| AppError::new("DELETE_BACKUP_ERROR", e))
 }
 
 #[tauri::command]
@@ -354,7 +375,9 @@ pub fn import_data(
 ) -> AppResult<()> {
     if let Some(settings) = data.settings {
         if !merge_mode {
-            manager.save_config(&settings).map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))?;
+            manager
+                .save_config(&settings)
+                .map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))?;
         } else {
             let mut current = manager.load_config();
             current.theme = settings.theme;
@@ -373,17 +396,22 @@ pub fn import_data(
             current.backup_on_exit = settings.backup_on_exit;
             current.backup_frequency = settings.backup_frequency;
             current.backup_retention = settings.backup_retention;
-            manager.save_config(&current).map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))?;
+            manager
+                .save_config(&current)
+                .map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))?;
         }
     }
 
     if let Some(launcher_data) = data.launcher_data {
         if !merge_mode {
-            manager.save_launcher_data(&launcher_data).map_err(|e| AppError::new("LAUNCHER_DATA_SAVE_ERROR", e))?;
+            manager
+                .save_launcher_data(&launcher_data)
+                .map_err(|e| AppError::new("LAUNCHER_DATA_SAVE_ERROR", e))?;
         } else {
             let mut current = manager.load_launcher_data();
             for category in launcher_data.categories {
-                if let Some(existing) = current.categories.iter_mut().find(|c| c.id == category.id) {
+                if let Some(existing) = current.categories.iter_mut().find(|c| c.id == category.id)
+                {
                     for item in category.items {
                         if !existing.items.iter().any(|i| i.id == item.id) {
                             existing.items.push(item);
@@ -399,11 +427,10 @@ pub fn import_data(
                 }
             }
             for recent_item in launcher_data.recent_used_items {
-                if let Some(existing) = current
-                    .recent_used_items
-                    .iter_mut()
-                    .find(|item| item.category_id == recent_item.category_id && item.item_id == recent_item.item_id)
-                {
+                if let Some(existing) = current.recent_used_items.iter_mut().find(|item| {
+                    item.category_id == recent_item.category_id
+                        && item.item_id == recent_item.item_id
+                }) {
                     if recent_item.used_at > existing.used_at {
                         existing.used_at = recent_item.used_at;
                     }
@@ -411,7 +438,9 @@ pub fn import_data(
                     current.recent_used_items.push(recent_item);
                 }
             }
-            manager.save_launcher_data(&current).map_err(|e| AppError::new("LAUNCHER_DATA_SAVE_ERROR", e))?;
+            manager
+                .save_launcher_data(&current)
+                .map_err(|e| AppError::new("LAUNCHER_DATA_SAVE_ERROR", e))?;
         }
     }
 
@@ -440,13 +469,11 @@ pub fn export_to_file(
         "json" => {
             let content = serde_json::to_string_pretty(&data)
                 .map_err(|e| AppError::new("SERIALIZE_ERROR", e.to_string()))?;
-            fs::write(&path, content)
-                .map_err(|e| AppError::io_error(e.to_string()))?;
+            fs::write(&path, content).map_err(|e| AppError::io_error(e.to_string()))?;
         }
         "zip" => {
             use std::io::Write;
-            let file = fs::File::create(&path)
-                .map_err(|e| AppError::io_error(e.to_string()))?;
+            let file = fs::File::create(&path).map_err(|e| AppError::io_error(e.to_string()))?;
             let mut zip = zip::ZipWriter::new(file);
             let options = zip::write::FileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated);
@@ -462,31 +489,30 @@ pub fn export_to_file(
             zip.finish()
                 .map_err(|e| AppError::new("ZIP_ERROR", e.to_string()))?;
         }
-        _ => return Err(AppError::invalid_input(format!("Unsupported format: {}", format))),
+        _ => {
+            return Err(AppError::invalid_input(format!(
+                "Unsupported format: {}",
+                format
+            )))
+        }
     }
 
     Ok(())
 }
 
 #[tauri::command]
-pub fn export_data_to_file(
-    path: String,
-    format: String,
-    data: serde_json::Value,
-) -> AppResult<()> {
+pub fn export_data_to_file(path: String, format: String, data: serde_json::Value) -> AppResult<()> {
     let path = PathBuf::from(&path);
 
     match format.as_str() {
         "json" => {
             let content = serde_json::to_string_pretty(&data)
                 .map_err(|e| AppError::new("SERIALIZE_ERROR", e.to_string()))?;
-            fs::write(&path, content)
-                .map_err(|e| AppError::io_error(e.to_string()))?;
+            fs::write(&path, content).map_err(|e| AppError::io_error(e.to_string()))?;
         }
         "zip" => {
             use std::io::Write;
-            let file = fs::File::create(&path)
-                .map_err(|e| AppError::io_error(e.to_string()))?;
+            let file = fs::File::create(&path).map_err(|e| AppError::io_error(e.to_string()))?;
             let mut zip = zip::ZipWriter::new(file);
             let options = zip::write::FileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated);
@@ -502,7 +528,12 @@ pub fn export_data_to_file(
             zip.finish()
                 .map_err(|e| AppError::new("ZIP_ERROR", e.to_string()))?;
         }
-        _ => return Err(AppError::invalid_input(format!("Unsupported format: {}", format))),
+        _ => {
+            return Err(AppError::invalid_input(format!(
+                "Unsupported format: {}",
+                format
+            )))
+        }
     }
 
     Ok(())
@@ -517,25 +548,22 @@ pub fn import_from_file(
     let path = PathBuf::from(&path);
 
     let data: ExportData = if path.extension().map(|e| e == "zip").unwrap_or(false) {
-        let file = fs::File::open(&path)
-            .map_err(|e| AppError::io_error(e.to_string()))?;
-        let mut archive = zip::ZipArchive::new(file)
-            .map_err(|e| AppError::new("ZIP_ERROR", e.to_string()))?;
+        let file = fs::File::open(&path).map_err(|e| AppError::io_error(e.to_string()))?;
+        let mut archive =
+            zip::ZipArchive::new(file).map_err(|e| AppError::new("ZIP_ERROR", e.to_string()))?;
 
-        let mut json_file = archive.by_name("export.json")
+        let mut json_file = archive
+            .by_name("export.json")
             .map_err(|e| AppError::new("ZIP_ERROR", format!("File not found in zip: {}", e)))?;
 
         let mut content = String::new();
         std::io::Read::read_to_string(&mut json_file, &mut content)
             .map_err(|e| AppError::io_error(e.to_string()))?;
 
-        serde_json::from_str(&content)
-            .map_err(|e| AppError::new("PARSE_ERROR", e.to_string()))?
+        serde_json::from_str(&content).map_err(|e| AppError::new("PARSE_ERROR", e.to_string()))?
     } else {
-        let content = fs::read_to_string(&path)
-            .map_err(|e| AppError::io_error(e.to_string()))?;
-        serde_json::from_str(&content)
-            .map_err(|e| AppError::new("PARSE_ERROR", e.to_string()))?
+        let content = fs::read_to_string(&path).map_err(|e| AppError::io_error(e.to_string()))?;
+        serde_json::from_str(&content).map_err(|e| AppError::new("PARSE_ERROR", e.to_string()))?
     };
 
     import_data(manager, data.clone(), merge_mode)?;

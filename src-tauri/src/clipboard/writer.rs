@@ -1,14 +1,11 @@
-use crate::db::ClipboardRecordDb;
 use crate::clipboard::{ClipboardRecord, ClipboardState};
+use crate::db::ClipboardRecordDb;
 use crossbeam_channel::Receiver;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-pub(crate) fn start_writer_thread(
-    receiver: Receiver<ClipboardRecord>,
-    state: Arc<ClipboardState>,
-) {
+pub(crate) fn start_writer_thread(receiver: Receiver<ClipboardRecord>, state: Arc<ClipboardState>) {
     thread::spawn(move || {
         let mut buffer: Vec<ClipboardRecordDb> = Vec::new();
         let mut last_flush = Instant::now();
@@ -26,6 +23,15 @@ pub(crate) fn start_writer_thread(
                             if let Some(db) = state.database.lock().unwrap().as_ref() {
                                 if db.insert_batch(&records_to_flush).is_err() {
                                     buffer.extend(records_to_flush);
+                                } else {
+                                    let max_records = state.config.lock().unwrap().max_records;
+                                    if max_records > 0 {
+                                        if let Ok(images) = db.enforce_max_records(max_records) {
+                                            for image_path in images {
+                                                let _ = std::fs::remove_file(image_path);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -38,6 +44,15 @@ pub(crate) fn start_writer_thread(
                         if let Some(db) = state.database.lock().unwrap().as_ref() {
                             if db.insert_batch(&records_to_flush).is_err() {
                                 buffer.extend(records_to_flush);
+                            } else {
+                                let max_records = state.config.lock().unwrap().max_records;
+                                if max_records > 0 {
+                                    if let Ok(images) = db.enforce_max_records(max_records) {
+                                        for image_path in images {
+                                            let _ = std::fs::remove_file(image_path);
+                                        }
+                                    }
+                                }
                             }
                         }
                         last_flush = Instant::now();
@@ -50,6 +65,15 @@ pub(crate) fn start_writer_thread(
                 if let Some(db) = state.database.lock().unwrap().as_ref() {
                     if db.insert_batch(&records_to_flush).is_err() {
                         buffer.extend(records_to_flush);
+                    } else {
+                        let max_records = state.config.lock().unwrap().max_records;
+                        if max_records > 0 {
+                            if let Ok(images) = db.enforce_max_records(max_records) {
+                                for image_path in images {
+                                    let _ = std::fs::remove_file(image_path);
+                                }
+                            }
+                        }
                     }
                 }
                 last_flush = Instant::now();

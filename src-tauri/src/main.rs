@@ -88,8 +88,8 @@ fn ensure_single_instance_or_wake() {
 /// 安装开机自启服务，并配置为系统启动时启动（AUTO_START）。
 #[cfg(windows)]
 fn install_service() -> Result<(), String> {
-    use std::process::Command;
     use std::os::windows::process::CommandExt;
+    use std::process::Command;
 
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let bin_path = format!("\"{}\" --service", exe.display());
@@ -173,8 +173,8 @@ fn install_service() -> Result<(), String> {
 /// 停止并卸载开机自启服务。
 #[cfg(windows)]
 fn uninstall_service() -> Result<(), String> {
-    use std::process::Command;
     use std::os::windows::process::CommandExt;
+    use std::process::Command;
 
     let _ = Command::new("sc")
         .creation_flags(0x08000000)

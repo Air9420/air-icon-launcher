@@ -16,8 +16,8 @@ pub mod types;
 pub mod writer;
 
 pub use cache::{ClipboardCache, EventDeduplicator};
-pub use image::{get_clipboard_image, set_clipboard_image_from_png, save_image_atomic};
-pub use monitor::{start_clipboard_monitor, get_default_storage_path};
+pub use image::{get_clipboard_image, save_image_atomic, set_clipboard_image_from_png};
+pub use monitor::{get_default_storage_path, start_clipboard_monitor};
 pub use platform::{get_clipboard_text, set_clipboard_text};
 pub use types::{ClipboardConfig, ClipboardConfigDebug, ClipboardConfigPatch, ClipboardRecord};
 
@@ -48,10 +48,7 @@ impl Default for ClipboardState {
 }
 
 impl ClipboardState {
-    pub fn from_config(
-        app_config: &crate::config::AppConfig,
-        app_handle: &AppHandle,
-    ) -> Self {
+    pub fn from_config(app_config: &crate::config::AppConfig, app_handle: &AppHandle) -> Self {
         let storage_path = if let Some(path) = &app_config.clipboard_storage_path {
             PathBuf::from(path)
         } else {
@@ -59,7 +56,10 @@ impl ClipboardState {
         };
 
         let db_path = storage_path.with_extension("db");
-        let images_dir = storage_path.parent().unwrap_or(&storage_path).join("images");
+        let images_dir = storage_path
+            .parent()
+            .unwrap_or(&storage_path)
+            .join("images");
 
         let database = ClipboardDatabase::new(&db_path).ok();
 
@@ -96,8 +96,7 @@ impl ClipboardState {
         }
         fs::create_dir_all(&images_dir).map_err(|e| e.to_string())?;
 
-        let new_db = ClipboardDatabase::new(&db_path)
-            .map_err(|e| e.to_string())?;
+        let new_db = ClipboardDatabase::new(&db_path).map_err(|e| e.to_string())?;
 
         let mut db_lock = self.database.lock().unwrap();
         *db_lock = Some(new_db);
@@ -135,7 +134,7 @@ fn get_timestamp() -> u64 {
 }
 
 fn simple_hash(data: &[u8]) -> String {
-    use std::hash::{Hash, Hasher, DefaultHasher};
+    use std::hash::{DefaultHasher, Hash, Hasher};
     let mut hasher = DefaultHasher::new();
     data.hash(&mut hasher);
     format!("{:x}", hasher.finish())
@@ -189,14 +188,17 @@ pub fn set_clipboard_content(
 pub fn get_clipboard_history(
     state: tauri::State<'_, Arc<ClipboardState>>,
 ) -> Result<Vec<ClipboardRecord>, String> {
+    let max_records = state.config.lock().unwrap().max_records;
     let cache = state.cache.lock().unwrap();
-    Ok(cache.get_all())
+    let mut records = cache.get_all();
+    if max_records > 0 && records.len() > max_records {
+        records.truncate(max_records);
+    }
+    Ok(records)
 }
 
 #[tauri::command]
-pub fn clear_clipboard_history(
-    state: tauri::State<'_, Arc<ClipboardState>>,
-) -> Result<(), String> {
+pub fn clear_clipboard_history(state: tauri::State<'_, Arc<ClipboardState>>) -> Result<(), String> {
     {
         let mut cache = state.cache.lock().unwrap();
         cache.list.clear();
@@ -332,6 +334,29 @@ pub fn set_clipboard_config(
                 verify.clipboard_encrypted,
                 config_manager.config_path().to_string_lossy()
             ));
+        }
+    }
+
+    if let Some(v) = patch.max_records {
+        if v > 0 {
+            if let Some(db) = state.database.lock().unwrap().as_ref() {
+                let images = db.enforce_max_records(v).map_err(|e| e.to_string())?;
+                for image_path in images {
+                    let _ = std::fs::remove_file(image_path);
+                }
+            }
+
+            let removed = {
+                let mut cache = state.cache.lock().unwrap();
+                cache.enforce_max_records(v)
+            };
+            for record in removed {
+                if let Some(image_path) = record.image_path {
+                    if !image_path.is_empty() {
+                        let _ = std::fs::remove_file(image_path);
+                    }
+                }
+            }
         }
     }
 

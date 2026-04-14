@@ -1,7 +1,7 @@
+use crate::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
-use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -60,7 +60,21 @@ pub fn show_main_window(app: &AppHandle, follow_mouse_on_show: bool, anchor: Fol
     };
 
     if follow_mouse_on_show {
-        if let (Ok(size), Some((x, y))) = (window.outer_size(), cursor_position()) {
+        if let Some((x, y)) = cursor_position() {
+            // 某些安装/升级后的首次启动场景中，隐藏窗口的 outer_size 可能短暂返回 0，
+            // 会导致 center/bottom 锚点退化为 top。这里提供稳定兜底尺寸。
+            let size = window.outer_size().ok();
+            let width = size
+                .as_ref()
+                .map(|s| s.width as i32)
+                .filter(|w| *w > 0)
+                .unwrap_or(450);
+            let height = size
+                .as_ref()
+                .map(|s| s.height as i32)
+                .filter(|h| *h > 0)
+                .unwrap_or(700);
+
             let monitor = window
                 .monitor_from_point(x as f64, y as f64)
                 .ok()
@@ -68,32 +82,38 @@ pub fn show_main_window(app: &AppHandle, follow_mouse_on_show: bool, anchor: Fol
                 .or_else(|| window.current_monitor().ok().flatten())
                 .or_else(|| window.primary_monitor().ok().flatten());
 
-            let work_area = monitor.map(|m| *m.work_area()).unwrap_or_default();
-
-            let desired_left = x - (size.width as i32 / 2);
+            let desired_left = x - (width / 2);
             let desired_top = match anchor {
                 FollowMouseYAnchor::Top => y,
-                FollowMouseYAnchor::Center => y - (size.height as i32 / 2),
-                FollowMouseYAnchor::Bottom => y - (size.height as i32),
+                FollowMouseYAnchor::Center => y - (height / 2),
+                FollowMouseYAnchor::Bottom => y - height,
             };
 
-            let min_x = work_area.position.x;
-            let min_y = work_area.position.y;
-            let max_x = min_x + (work_area.size.width as i32) - (size.width as i32);
-            let max_y = min_y + (work_area.size.height as i32) - (size.height as i32);
+            let (left, top) = if let Some(monitor) = monitor {
+                let work_area = *monitor.work_area();
+                let min_x = work_area.position.x;
+                let min_y = work_area.position.y;
+                let max_x = min_x + (work_area.size.width as i32) - width;
+                let max_y = min_y + (work_area.size.height as i32) - height;
 
-            let left = if max_x >= min_x {
-                desired_left.clamp(min_x, max_x)
+                let left = if max_x >= min_x {
+                    desired_left.clamp(min_x, max_x)
+                } else {
+                    desired_left
+                };
+                let top = if max_y >= min_y {
+                    desired_top.clamp(min_y, max_y)
+                } else {
+                    desired_top
+                };
+                (left, top)
             } else {
-                min_x
-            };
-            let top = if max_y >= min_y {
-                desired_top.clamp(min_y, max_y)
-            } else {
-                min_y
+                (desired_left, desired_top)
             };
 
-            let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(left, top)));
+            let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
+                left, top,
+            )));
         }
     }
 
@@ -318,7 +338,9 @@ pub fn set_clipboard_shortcut(
         .map_err(|_| AppError::internal("Failed to lock app settings state"))?;
 
     if shortcut == toggle_shortcut {
-        return Err(AppError::invalid_input("Clipboard shortcut cannot be the same as toggle shortcut"));
+        return Err(AppError::invalid_input(
+            "Clipboard shortcut cannot be the same as toggle shortcut",
+        ));
     }
 
     use tauri_plugin_global_shortcut::GlobalShortcutExt;

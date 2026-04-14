@@ -32,24 +32,43 @@ impl ClipboardCache {
         self.hash_index.contains(hash) || self.buffer_hashes.contains(hash)
     }
 
-    pub fn push(&mut self, record: ClipboardRecord) {
+    pub fn push_with_limit(&mut self, record: ClipboardRecord, max_records: usize) {
         if self.contains(&record.hash, record.text_content.as_deref().unwrap_or("")) {
             return;
         }
 
         self.hash_index.insert(record.hash.clone());
         if let Some(ref content) = record.text_content {
-            self.content_index.insert(record.hash.clone(), content.clone());
+            self.content_index
+                .insert(record.hash.clone(), content.clone());
         }
         self.buffer_hashes.insert(record.hash.clone());
         self.list.push_front(record);
 
-        while self.list.len() > 1000 {
+        let _ = self.enforce_max_records(max_records);
+    }
+
+    pub fn push(&mut self, record: ClipboardRecord) {
+        self.push_with_limit(record, 1000);
+    }
+
+    /// 限制缓存最大条数，返回被裁剪掉的记录（按最旧顺序）。
+    /// max_records = 0 表示不限制。
+    pub fn enforce_max_records(&mut self, max_records: usize) -> Vec<ClipboardRecord> {
+        if max_records == 0 {
+            return Vec::new();
+        }
+
+        let mut removed = Vec::new();
+        while self.list.len() > max_records {
             if let Some(old) = self.list.pop_back() {
                 self.hash_index.remove(&old.hash);
                 self.content_index.remove(&old.hash);
+                self.buffer_hashes.remove(&old.hash);
+                removed.push(old);
             }
         }
+        removed
     }
 
     pub fn remove_by_id(&mut self, id: &str) -> Option<ClipboardRecord> {

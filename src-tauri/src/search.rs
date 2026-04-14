@@ -1,8 +1,8 @@
+use crate::pinyin::PinyinIndex;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use crate::pinyin::PinyinIndex;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchItem {
@@ -179,12 +179,18 @@ impl SearchIndex {
         p_full.starts_with(keyword) || p_full.contains(keyword)
     }
 
-    fn rank_results(&self, mut candidates: Vec<ScoredCandidate>, ctx: &SearchContext) -> Vec<SearchResult> {
+    fn rank_results(
+        &self,
+        mut candidates: Vec<ScoredCandidate>,
+        ctx: &SearchContext,
+    ) -> Vec<SearchResult> {
         if candidates.is_empty() {
             return Vec::new();
         }
 
-        let max_usage = self.items.iter()
+        let max_usage = self
+            .items
+            .iter()
             .map(|i| i.usage_count)
             .max()
             .unwrap_or(1)
@@ -235,22 +241,27 @@ impl SearchIndex {
             if level_cmp != Ordering::Equal {
                 return level_cmp;
             }
-            b.item.rank_score.partial_cmp(&a.item.rank_score)
+            b.item
+                .rank_score
+                .partial_cmp(&a.item.rank_score)
                 .unwrap_or(Ordering::Equal)
         });
 
         candidates.truncate(ctx.limit);
 
-        candidates.into_iter().map(|c| SearchResult {
-            id: c.item.id,
-            name: c.item.name,
-            path: c.item.path,
-            category_id: c.item.category_id,
-            fuzzy_score: c.fuzzy_score,
-            matched_pinyin_initial: c.matched_pinyin_initial,
-            matched_pinyin_full: c.matched_pinyin_full,
-            rank_score: c.item.rank_score,
-        }).collect()
+        candidates
+            .into_iter()
+            .map(|c| SearchResult {
+                id: c.item.id,
+                name: c.item.name,
+                path: c.item.path,
+                category_id: c.item.category_id,
+                fuzzy_score: c.fuzzy_score,
+                matched_pinyin_initial: c.matched_pinyin_initial,
+                matched_pinyin_full: c.matched_pinyin_full,
+                rank_score: c.item.rank_score,
+            })
+            .collect()
     }
 }
 
@@ -273,7 +284,11 @@ fn calculate_recency_score(last_used: i64, now: i64) -> f32 {
 }
 
 fn calculate_path_depth_score(path: &str) -> f32 {
-    let depth = path.replace('\\', "/").split('/').filter(|s| !s.is_empty()).count();
+    let depth = path
+        .replace('\\', "/")
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .count();
     if depth == 0 {
         return 0.0;
     }
@@ -336,7 +351,11 @@ mod tests {
             make_item("2", "Firefox", "C:\\Firefox\\firefox.exe", "cat-work"),
         ];
         let index = build_index_with_items(items);
-        let ctx = SearchContext { keyword: "Chrome".to_string(), limit: 20, now: 1000000 };
+        let ctx = SearchContext {
+            keyword: "Chrome".to_string(),
+            limit: 20,
+            now: 1000000,
+        };
         let results = index.search(&ctx);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "1");
@@ -345,22 +364,36 @@ mod tests {
 
     #[test]
     fn test_search_prefix_match() {
-        let items = vec![
-            make_item("1", "Chrome Browser", "C:\\Chrome\\chrome.exe", "cat-system"),
-        ];
+        let items = vec![make_item(
+            "1",
+            "Chrome Browser",
+            "C:\\Chrome\\chrome.exe",
+            "cat-system",
+        )];
         let index = build_index_with_items(items);
-        let ctx = SearchContext { keyword: "Chro".to_string(), limit: 20, now: 1000000 };
+        let ctx = SearchContext {
+            keyword: "Chro".to_string(),
+            limit: 20,
+            now: 1000000,
+        };
         let results = index.search(&ctx);
         assert_eq!(results.len(), 1);
     }
 
     #[test]
     fn test_search_substring_match() {
-        let items = vec![
-            make_item("1", "Google Chrome Browser", "C:\\Chrome\\chrome.exe", "cat-system"),
-        ];
+        let items = vec![make_item(
+            "1",
+            "Google Chrome Browser",
+            "C:\\Chrome\\chrome.exe",
+            "cat-system",
+        )];
         let index = build_index_with_items(items);
-        let ctx = SearchContext { keyword: "rome".to_string(), limit: 20, now: 1000000 };
+        let ctx = SearchContext {
+            keyword: "rome".to_string(),
+            limit: 20,
+            now: 1000000,
+        };
         let results = index.search(&ctx);
         assert_eq!(results.len(), 1);
     }
@@ -369,7 +402,11 @@ mod tests {
     fn test_search_empty_keyword_returns_nothing() {
         let items = vec![make_item("1", "Chrome", "C:\\chrome.exe", "cat-system")];
         let index = build_index_with_items(items);
-        let ctx = SearchContext { keyword: "".to_string(), limit: 20, now: 1000000 };
+        let ctx = SearchContext {
+            keyword: "".to_string(),
+            limit: 20,
+            now: 1000000,
+        };
         let results = index.search(&ctx);
         assert!(results.is_empty());
     }
@@ -378,29 +415,42 @@ mod tests {
     fn test_search_no_match_returns_empty() {
         let items = vec![make_item("1", "Chrome", "C:\\chrome.exe", "cat-system")];
         let index = build_index_with_items(items);
-        let ctx = SearchContext { keyword: "zzzzzzzzz".to_string(), limit: 20, now: 1000000 };
+        let ctx = SearchContext {
+            keyword: "zzzzzzzzz".to_string(),
+            limit: 20,
+            now: 1000000,
+        };
         let results = index.search(&ctx);
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_search_case_insensitive() {
-        let items = vec![
-            make_item("1", "Chrome", "C:\\chrome.exe", "cat-system"),
-        ];
+        let items = vec![make_item("1", "Chrome", "C:\\chrome.exe", "cat-system")];
         let index = build_index_with_items(items);
-        let ctx = SearchContext { keyword: "chrome".to_string(), limit: 20, now: 1000000 };
+        let ctx = SearchContext {
+            keyword: "chrome".to_string(),
+            limit: 20,
+            now: 1000000,
+        };
         let results = index.search(&ctx);
         assert_eq!(results.len(), 1);
     }
 
     #[test]
     fn test_search_pinyin_full_match() {
-        let items = vec![
-            make_item("1", "微信", "C:\\WeChat\\WeChat.exe", "cat-system"),
-        ];
+        let items = vec![make_item(
+            "1",
+            "微信",
+            "C:\\WeChat\\WeChat.exe",
+            "cat-system",
+        )];
         let index = build_index_with_items(items);
-        let ctx = SearchContext { keyword: "weixin".to_string(), limit: 20, now: 1000000 };
+        let ctx = SearchContext {
+            keyword: "weixin".to_string(),
+            limit: 20,
+            now: 1000000,
+        };
         let results = index.search(&ctx);
         assert!(!results.is_empty());
         assert!(results[0].matched_pinyin_full);
@@ -408,11 +458,18 @@ mod tests {
 
     #[test]
     fn test_search_pinyin_initial_match() {
-        let items = vec![
-            make_item("1", "微信", "C:\\WeChat\\WeChat.exe", "cat-system"),
-        ];
+        let items = vec![make_item(
+            "1",
+            "微信",
+            "C:\\WeChat\\WeChat.exe",
+            "cat-system",
+        )];
         let index = build_index_with_items(items);
-        let ctx = SearchContext { keyword: "wx".to_string(), limit: 20, now: 1000000 };
+        let ctx = SearchContext {
+            keyword: "wx".to_string(),
+            limit: 20,
+            now: 1000000,
+        };
         let results = index.search(&ctx);
         assert!(!results.is_empty());
         assert!(results[0].matched_pinyin_initial);
@@ -420,11 +477,18 @@ mod tests {
 
     #[test]
     fn test_search_fuzzy_match_on_path() {
-        let items = vec![
-            make_item("1", "MyApp", "C:\\Program Files\\MyApp\\app.exe", "cat-system"),
-        ];
+        let items = vec![make_item(
+            "1",
+            "MyApp",
+            "C:\\Program Files\\MyApp\\app.exe",
+            "cat-system",
+        )];
         let index = build_index_with_items(items);
-        let ctx = SearchContext { keyword: "program".to_string(), limit: 20, now: 1000000 };
+        let ctx = SearchContext {
+            keyword: "program".to_string(),
+            limit: 20,
+            now: 1000000,
+        };
         let results = index.search(&ctx);
         assert!(!results.is_empty());
     }
@@ -432,10 +496,21 @@ mod tests {
     #[test]
     fn test_search_limit_truncates_results() {
         let items: Vec<SearchItem> = (0..30)
-            .map(|i| make_item(&format!("{}", i), &format!("App{}", i), &format!("C:\\app{}.exe", i), "cat-system"))
+            .map(|i| {
+                make_item(
+                    &format!("{}", i),
+                    &format!("App{}", i),
+                    &format!("C:\\app{}.exe", i),
+                    "cat-system",
+                )
+            })
             .collect();
         let index = build_index_with_items(items);
-        let ctx = SearchContext { keyword: "App".to_string(), limit: 5, now: 1000000 };
+        let ctx = SearchContext {
+            keyword: "App".to_string(),
+            limit: 5,
+            now: 1000000,
+        };
         let results = index.search(&ctx);
         assert!(results.len() <= 5);
     }
@@ -447,7 +522,11 @@ mod tests {
             make_item("2", "Apple Pie", "C:\\apple.exe", "cat-system"),
         ];
         let index = build_index_with_items(items);
-        let ctx = SearchContext { keyword: "App".to_string(), limit: 20, now: 1000000 };
+        let ctx = SearchContext {
+            keyword: "App".to_string(),
+            limit: 20,
+            now: 1000000,
+        };
         let results = index.search(&ctx);
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].id, "1");
@@ -460,7 +539,11 @@ mod tests {
         let mut item2 = make_item("2", "TestApp2", "C:\\test2.exe", "cat-system");
         item2.is_pinned = false;
         let index = build_index_with_items(vec![item1, item2]);
-        let ctx = SearchContext { keyword: "Test".to_string(), limit: 20, now: 1000000 };
+        let ctx = SearchContext {
+            keyword: "Test".to_string(),
+            limit: 20,
+            now: 1000000,
+        };
         let results = index.search(&ctx);
         assert_eq!(results[0].id, "1");
     }
@@ -472,56 +555,152 @@ mod tests {
         let mut item2 = make_item("2", "ToolB", "C:\\b.exe", "cat-system");
         item2.usage_count = 1;
         let index = build_index_with_items(vec![item1, item2]);
-        let ctx = SearchContext { keyword: "Tool".to_string(), limit: 20, now: 1000000 };
+        let ctx = SearchContext {
+            keyword: "Tool".to_string(),
+            limit: 20,
+            now: 1000000,
+        };
         let results = index.search(&ctx);
         assert_eq!(results[0].id, "1");
     }
 
     fn generate_items(count: usize) -> Vec<SearchItem> {
         let app_names = vec![
-            "Chrome", "Firefox", "VSCode", "Slack", "Discord", "Telegram",
-            "WeChat", "QQ", "DingTalk", "Feishu", "Notion", "Obsidian",
-            "Figma", "Photoshop", "Premiere", "Blender", "VLC", "Spotify",
-            "Steam", "Epic Games", "Unity", "Godot", "GitKraken", "Postman",
-            "Insomnia", "Wireshark", "VMware", "VirtualBox", "Docker Desktop",
-            "Windows Terminal", "PowerShell", "Node.js", "Python", "Rust",
-            "Go", "Java", "IntelliJ", "WebStorm", "PyCharm", "CLion",
-            "Rider", "DataGrip", "RubyMine", "AppCode", "Fleet",
-            "微信", "支付宝", "钉钉", "飞书", "网易云音乐", "QQ音乐",
-            "哔哩哔哩", "百度网盘", "WPS Office", "Foxmail", "Snipaste",
-            "Everything", "Listary", "AutoHotkey", "PowerToys", "ShareX",
-            "OBS Studio", "Streamlabs", "DaVinci Resolve", "Audacity", "GIMP",
-            "Inkscape", "Krita", "Sublime Text", "Atom", "Brave Browser",
-            "Edge", "Opera", "Vivaldi", "Tor Browser", "Waterfox",
-            "7-Zip", "WinRAR", "PeaZip", "Honeyview", "IrfanView",
-            "SumatraPDF", "Zotero", "Joplin", "Standard Notes", "Signal",
-            "Thunderbird", "ProtonMail", "Bitwarden", "KeePassXC", "Authy",
-            "Microsoft Teams", "Zoom", "Google Meet", "Skype", "Line",
-            "WhatsApp", "Messenger", "Twitter/X", "Reddit", "LinkedIn",
+            "Chrome",
+            "Firefox",
+            "VSCode",
+            "Slack",
+            "Discord",
+            "Telegram",
+            "WeChat",
+            "QQ",
+            "DingTalk",
+            "Feishu",
+            "Notion",
+            "Obsidian",
+            "Figma",
+            "Photoshop",
+            "Premiere",
+            "Blender",
+            "VLC",
+            "Spotify",
+            "Steam",
+            "Epic Games",
+            "Unity",
+            "Godot",
+            "GitKraken",
+            "Postman",
+            "Insomnia",
+            "Wireshark",
+            "VMware",
+            "VirtualBox",
+            "Docker Desktop",
+            "Windows Terminal",
+            "PowerShell",
+            "Node.js",
+            "Python",
+            "Rust",
+            "Go",
+            "Java",
+            "IntelliJ",
+            "WebStorm",
+            "PyCharm",
+            "CLion",
+            "Rider",
+            "DataGrip",
+            "RubyMine",
+            "AppCode",
+            "Fleet",
+            "微信",
+            "支付宝",
+            "钉钉",
+            "飞书",
+            "网易云音乐",
+            "QQ音乐",
+            "哔哩哔哩",
+            "百度网盘",
+            "WPS Office",
+            "Foxmail",
+            "Snipaste",
+            "Everything",
+            "Listary",
+            "AutoHotkey",
+            "PowerToys",
+            "ShareX",
+            "OBS Studio",
+            "Streamlabs",
+            "DaVinci Resolve",
+            "Audacity",
+            "GIMP",
+            "Inkscape",
+            "Krita",
+            "Sublime Text",
+            "Atom",
+            "Brave Browser",
+            "Edge",
+            "Opera",
+            "Vivaldi",
+            "Tor Browser",
+            "Waterfox",
+            "7-Zip",
+            "WinRAR",
+            "PeaZip",
+            "Honeyview",
+            "IrfanView",
+            "SumatraPDF",
+            "Zotero",
+            "Joplin",
+            "Standard Notes",
+            "Signal",
+            "Thunderbird",
+            "ProtonMail",
+            "Bitwarden",
+            "KeePassXC",
+            "Authy",
+            "Microsoft Teams",
+            "Zoom",
+            "Google Meet",
+            "Skype",
+            "Line",
+            "WhatsApp",
+            "Messenger",
+            "Twitter/X",
+            "Reddit",
+            "LinkedIn",
         ];
-        (0..count).map(|i| {
-            let name = app_names[i % app_names.len()];
-            SearchItem {
-                id: format!("item-{}", i),
-                name: name.to_string(),
-                path: format!("C:\\Program Files\\{}\\{}.exe", name, name),
-                category_id: if i % 3 == 0 { "cat-system".to_string() }
-                              else if i % 3 == 1 { "cat-work".to_string() }
-                              else { "cat-dev".to_string() },
-                usage_count: (i % 50) as u32,
-                last_used_at: (i * 10000) as i64,
-                is_pinned: i % 10 == 0,
-                search_tokens: vec![name.to_lowercase()],
-                rank_score: 0.0,
-            }
-        }).collect()
+        (0..count)
+            .map(|i| {
+                let name = app_names[i % app_names.len()];
+                SearchItem {
+                    id: format!("item-{}", i),
+                    name: name.to_string(),
+                    path: format!("C:\\Program Files\\{}\\{}.exe", name, name),
+                    category_id: if i % 3 == 0 {
+                        "cat-system".to_string()
+                    } else if i % 3 == 1 {
+                        "cat-work".to_string()
+                    } else {
+                        "cat-dev".to_string()
+                    },
+                    usage_count: (i % 50) as u32,
+                    last_used_at: (i * 10000) as i64,
+                    is_pinned: i % 10 == 0,
+                    search_tokens: vec![name.to_lowercase()],
+                    rank_score: 0.0,
+                }
+            })
+            .collect()
     }
 
     #[test]
     fn bench_search_100_items_exact_match() {
         let items = generate_items(100);
         let index = build_index_with_items(items);
-        let ctx = SearchContext { keyword: "Chrome".to_string(), limit: 20, now: chrono_now() };
+        let ctx = SearchContext {
+            keyword: "Chrome".to_string(),
+            limit: 20,
+            now: chrono_now(),
+        };
 
         let start = std::time::Instant::now();
         for _ in 0..1000 {
@@ -529,15 +708,26 @@ mod tests {
         }
         let elapsed = start.elapsed();
         let per_op = elapsed.as_micros() as f64 / 1000.0;
-        println!("[BENCH] search_100_exact: {:.2} µs/op (total {:?} for 1000 iterations)", per_op, elapsed);
-        assert!(per_op < 5000.0, "search catastrophically slow: {:.2} µs", per_op);
+        println!(
+            "[BENCH] search_100_exact: {:.2} µs/op (total {:?} for 1000 iterations)",
+            per_op, elapsed
+        );
+        assert!(
+            per_op < 5000.0,
+            "search catastrophically slow: {:.2} µs",
+            per_op
+        );
     }
 
     #[test]
     fn bench_search_300_items_fuzzy_keyword() {
         let items = generate_items(300);
         let index = build_index_with_items(items);
-        let ctx = SearchContext { keyword: "code".to_string(), limit: 20, now: chrono_now() };
+        let ctx = SearchContext {
+            keyword: "code".to_string(),
+            limit: 20,
+            now: chrono_now(),
+        };
 
         let start = std::time::Instant::now();
         for _ in 0..1000 {
@@ -545,15 +735,26 @@ mod tests {
         }
         let elapsed = start.elapsed();
         let per_op = elapsed.as_micros() as f64 / 1000.0;
-        println!("[BENCH] search_300_fuzzy('code'): {:.2} µs/op (total {:?} for 1000 iterations)", per_op, elapsed);
-        assert!(per_op < 10000.0, "search catastrophically slow: {:.2} µs", per_op);
+        println!(
+            "[BENCH] search_300_fuzzy('code'): {:.2} µs/op (total {:?} for 1000 iterations)",
+            per_op, elapsed
+        );
+        assert!(
+            per_op < 10000.0,
+            "search catastrophically slow: {:.2} µs",
+            per_op
+        );
     }
 
     #[test]
     fn bench_search_500_items_pinyin() {
         let items = generate_items(500);
         let index = build_index_with_items(items);
-        let ctx = SearchContext { keyword: "wx".to_string(), limit: 20, now: chrono_now() };
+        let ctx = SearchContext {
+            keyword: "wx".to_string(),
+            limit: 20,
+            now: chrono_now(),
+        };
 
         let start = std::time::Instant::now();
         for _ in 0..500 {
@@ -561,8 +762,15 @@ mod tests {
         }
         let elapsed = start.elapsed();
         let per_op = elapsed.as_micros() as f64 / 500.0;
-        println!("[BENCH] search_500_pinyin('wx'): {:.2} µs/op (total {:?} for 500 iterations)", per_op, elapsed);
-        assert!(per_op < 15000.0, "search catastrophically slow: {:.2} µs", per_op);
+        println!(
+            "[BENCH] search_500_pinyin('wx'): {:.2} µs/op (total {:?} for 500 iterations)",
+            per_op, elapsed
+        );
+        assert!(
+            per_op < 15000.0,
+            "search catastrophically slow: {:.2} µs",
+            per_op
+        );
     }
 
     #[test]
@@ -577,18 +785,15 @@ mod tests {
         }
         let elapsed = start.elapsed();
         let per_op = elapsed.as_micros() as f64 / 100.0;
-        println!("[BENCH] build_index(500): {:.2} µs/op (total {:?} for 100 iterations)", per_op, elapsed);
+        println!(
+            "[BENCH] build_index(500): {:.2} µs/op (total {:?} for 100 iterations)",
+            per_op, elapsed
+        );
     }
 
     #[test]
     fn bench_parse_search_input() {
-        let inputs = vec![
-            "chrome",
-            "微信",
-            "wx",
-            "",
-            "a",
-        ];
+        let inputs = vec!["chrome", "微信", "wx", "", "a"];
 
         let start = std::time::Instant::now();
         for _ in 0..10000 {
@@ -599,6 +804,9 @@ mod tests {
         let elapsed = start.elapsed();
         let total_ops = inputs.len() * 10000;
         let per_op = elapsed.as_nanos() as f64 / total_ops as f64;
-        println!("[BENCH] parse_search_input: {:.2} ns/op (total {:?} for {} ops)", per_op, elapsed, total_ops);
+        println!(
+            "[BENCH] parse_search_input: {:.2} ns/op (total {:?} for {} ops)",
+            per_op, elapsed, total_ops
+        );
     }
 }

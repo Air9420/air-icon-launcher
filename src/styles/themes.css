@@ -216,3 +216,20 @@
         --menu-bg: rgba(255, 255, 255, 0.98);
     }
 }
+
+/* 统一去除浏览器默认焦点描边，避免 Tab / Esc 导致黑色边框闪现 */
+button:focus,
+button:focus-visible,
+input:focus,
+input:focus-visible,
+select:focus,
+select:focus-visible,
+textarea:focus,
+textarea:focus-visible,
+[tabindex]:focus,
+[tabindex]:focus-visible,
+[role="button"]:focus,
+[role="button"]:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
+}

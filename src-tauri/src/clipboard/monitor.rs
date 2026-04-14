@@ -1,8 +1,7 @@
+use super::types::{ClipboardConfig, ClipboardRecord};
 use crate::clipboard::cache::{ClipboardCache, EventDeduplicator};
 use crate::clipboard::image::{get_clipboard_image, save_image_atomic};
 use crate::clipboard::platform::{get_clipboard_text, set_clipboard_text};
-use tauri::{Manager, Emitter};
-use super::types::{ClipboardRecord, ClipboardConfig};
 use crate::clipboard::ClipboardState;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::path::PathBuf;
@@ -10,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
+use tauri::{Emitter, Manager};
 
 #[cfg(target_os = "windows")]
 use crate::clipboard_listener::listen_clipboard;
@@ -57,12 +57,21 @@ pub fn start_clipboard_monitor(app_handle: AppHandle, state: Arc<ClipboardState>
         *monitoring = true;
     }
 
+    let max_records = state.config.lock().unwrap().max_records;
     if let Some(db) = state.database.lock().unwrap().as_ref() {
+        if max_records > 0 {
+            if let Ok(images) = db.enforce_max_records(max_records) {
+                for image_path in images {
+                    let _ = std::fs::remove_file(image_path);
+                }
+            }
+        }
+
         if let Ok(records) = db.get_all() {
             let mut cache = state.cache.lock().unwrap();
             for record in records {
                 let clipboard_record: ClipboardRecord = record.into();
-                cache.push(clipboard_record);
+                cache.push_with_limit(clipboard_record, max_records);
             }
         }
     }
@@ -151,9 +160,12 @@ fn process_clipboard_change(
     app_handle: &AppHandle,
     dedup: &mut EventDeduplicator,
 ) -> Option<ClipboardRecord> {
-    let max_image_size = {
+    let (max_image_size, max_records) = {
         let cfg = config.lock().unwrap();
-        (cfg.max_image_size_mb * 1024.0 * 1024.0) as usize
+        (
+            (cfg.max_image_size_mb * 1024.0 * 1024.0) as usize,
+            cfg.max_records,
+        )
     };
 
     if let Some(image_data) = get_clipboard_image() {
@@ -189,7 +201,7 @@ fn process_clipboard_change(
                 };
 
                 let mut c = cache.lock().unwrap();
-                c.push(record.clone());
+                c.push_with_limit(record.clone(), max_records);
                 c.clear_buffer_hashes();
 
                 let send_result = sender.try_send(record.clone());
@@ -231,7 +243,7 @@ fn process_clipboard_change(
                 };
 
                 let mut c = cache.lock().unwrap();
-                c.push(record.clone());
+                c.push_with_limit(record.clone(), max_records);
                 c.clear_buffer_hashes();
 
                 let send_result = sender.try_send(record.clone());
@@ -274,7 +286,7 @@ fn get_timestamp() -> u64 {
 }
 
 fn simple_hash(data: &[u8]) -> String {
-    use std::hash::{Hash, Hasher, DefaultHasher};
+    use std::hash::{DefaultHasher, Hash, Hasher};
     let mut hasher = DefaultHasher::new();
     data.hash(&mut hasher);
     format!("{:x}", hasher.finish())

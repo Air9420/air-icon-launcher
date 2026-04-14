@@ -5,7 +5,7 @@
     }" :data-menu-type="menuType" :data-home-section="homeSection" :data-category-id="categoryId"
         :data-item-id="itemId" v-on="longpressHandlers" @pointerdown="onPointerDown" @pointerup="onPointerUp"
         @pointerleave="onPointerLeave" data-no-drag>
-        <div v-if="itemType === 'url'" class="url-badge">URL</div>
+        <div v-if="badgeText" class="url-badge">{{ badgeText }}</div>
         <div class="home-card-main">
             <div class="home-card-icon">
                 <img v-if="iconBase64" class="icon-real" :src="getIconSrc(iconBase64)" alt="" draggable="false" />
@@ -32,6 +32,7 @@ const props = defineProps<{
     name: string;
     iconBase64?: string | null;
     itemType?: 'file' | 'url';
+    hasDependencies?: boolean;
     menuType?: string;
     homeSection?: string;
     launchStatus?: "launching" | "success" | undefined;
@@ -77,6 +78,11 @@ function onPointerLeave() {
 const isLaunching = computed(() => props.launchStatus === "launching");
 const isSuccess = computed(() => props.launchStatus === "success");
 const hideName = computed(() => (props.cols ?? 5) >= 7);
+const badgeText = computed(() => {
+    if (props.itemType === "url") return "URL";
+    if (props.hasDependencies) return "依赖";
+    return "";
+});
 
 const fallbackText = computed(() => {
     const text = props.name?.trim() || "";

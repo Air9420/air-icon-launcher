@@ -31,8 +31,11 @@
                         </div>
 
                     </div>
-                    <div v-if="element.itemType === 'url'" class="url-badge">
-                        URL
+                    <div
+                        v-if="element.itemType === 'url' || hasLaunchDependencies(element)"
+                        class="url-badge"
+                    >
+                        {{ element.itemType === 'url' ? 'URL' : '依赖' }}
                     </div>
                     <div v-if="isItemPinned(element.id)" class="pinned-badge">
                         📌
@@ -268,6 +271,10 @@ function getFallbackText(name: string) {
     const text = name.trim();
     if (!text) return "?";
     return text.slice(0, 1).toUpperCase();
+}
+
+function hasLaunchDependencies(item: LauncherItem): boolean {
+    return Array.isArray(item.launchDependencies) && item.launchDependencies.length > 0;
 }
 </script>
 

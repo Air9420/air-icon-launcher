@@ -26,12 +26,7 @@ impl PinyinIndex {
         let all_pinyin: Vec<String> = pinyin::pinyin(text, &args)
             .iter()
             .flatten()
-            .map(|py| {
-                py.chars()
-                    .next()
-                    .map(|c| c.to_string())
-                    .unwrap_or_default()
-            })
+            .map(|py| py.chars().next().map(|c| c.to_string()).unwrap_or_default())
             .collect();
         all_pinyin.join("")
     }

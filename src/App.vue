@@ -41,6 +41,7 @@ const {
     performanceMode,
     windowEffectType,
     showGuideOnStartup,
+    followMouseOnShow,
     cornerHotspotEnabled,
     cornerHotspotPosition,
     cornerHotspotSensitivity,
@@ -149,8 +150,19 @@ onMounted(async () => {
     const isAutostart = await invoke<boolean>("check_is_autostart_launch");
     if (!isAutostart) {
         try {
-            await restoreWindowPosition();
-            await getCurrentWindow().show();
+            const win = getCurrentWindow();
+            const restored = await restoreWindowPosition();
+            if (restored) {
+                await win.show();
+                await win.setFocus();
+            } else {
+                if (followMouseOnShow.value) {
+                    await safeInvoke("show_window_with_follow_mouse");
+                } else {
+                    await win.show();
+                    await win.setFocus();
+                }
+            }
         } catch (e) {
             console.error("Failed to show window:", e);
         }

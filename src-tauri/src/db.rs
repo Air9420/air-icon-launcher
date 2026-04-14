@@ -1,6 +1,6 @@
-use rusqlite::{Connection, Result as SqliteResult, params};
-use std::path::Path;
+use rusqlite::{params, Connection, Result as SqliteResult};
 use std::fs;
+use std::path::Path;
 use std::sync::Mutex;
 
 pub struct ClipboardDatabase {
@@ -19,7 +19,7 @@ impl ClipboardDatabase {
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=NORMAL;
-             PRAGMA busy_timeout=5000;"
+             PRAGMA busy_timeout=5000;",
         )?;
 
         conn.execute(
@@ -44,7 +44,9 @@ impl ClipboardDatabase {
             [],
         )?;
 
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     pub fn insert(&self, record: &ClipboardRecordDb) -> SqliteResult<()> {
@@ -95,10 +97,7 @@ impl ClipboardDatabase {
             )
             .ok();
 
-        conn.execute(
-            "DELETE FROM clipboard_records WHERE id = ?1",
-            [id],
-        )?;
+        conn.execute("DELETE FROM clipboard_records WHERE id = ?1", [id])?;
 
         Ok(image_path)
     }
@@ -130,20 +129,21 @@ impl ClipboardDatabase {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, content_type, text_content, image_path, hash, timestamp
-             FROM clipboard_records ORDER BY timestamp DESC"
+             FROM clipboard_records ORDER BY timestamp DESC",
         )?;
 
-        let records = stmt.query_map([], |row| {
-            Ok(ClipboardRecordDb {
-                id: row.get(0)?,
-                content_type: row.get(1)?,
-                text_content: row.get(2)?,
-                image_path: row.get(3)?,
-                hash: row.get(4)?,
-                timestamp: row.get(5)?,
-            })
-        })?
-        .collect::<SqliteResult<Vec<_>>>()?;
+        let records = stmt
+            .query_map([], |row| {
+                Ok(ClipboardRecordDb {
+                    id: row.get(0)?,
+                    content_type: row.get(1)?,
+                    text_content: row.get(2)?,
+                    image_path: row.get(3)?,
+                    hash: row.get(4)?,
+                    timestamp: row.get(5)?,
+                })
+            })?
+            .collect::<SqliteResult<Vec<_>>>()?;
 
         Ok(records)
     }
@@ -152,7 +152,7 @@ impl ClipboardDatabase {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, content_type, text_content, image_path, hash, timestamp
-             FROM clipboard_records WHERE hash = ?1"
+             FROM clipboard_records WHERE hash = ?1",
         )?;
 
         let mut records = stmt.query_map([hash], |row| {
@@ -174,33 +174,27 @@ impl ClipboardDatabase {
 
     pub fn count(&self) -> SqliteResult<i64> {
         let conn = self.conn.lock().unwrap();
-        conn.query_row(
-            "SELECT COUNT(*) FROM clipboard_records",
-            [],
-            |row| row.get(0),
-        )
+        conn.query_row("SELECT COUNT(*) FROM clipboard_records", [], |row| {
+            row.get(0)
+        })
     }
 
     pub fn enforce_max_records(&self, max: usize) -> SqliteResult<Vec<String>> {
         let conn = self.conn.lock().unwrap();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM clipboard_records",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM clipboard_records", [], |row| {
+            row.get(0)
+        })?;
 
         if count as usize > max {
             let to_delete = count as usize - max;
 
             let mut stmt = conn.prepare(
                 "SELECT id, image_path FROM clipboard_records
-                 ORDER BY timestamp ASC LIMIT ?1"
+                 ORDER BY timestamp ASC LIMIT ?1",
             )?;
 
             let old_records: Vec<(String, Option<String>)> = stmt
-                .query_map([to_delete as i64], |row| {
-                    Ok((row.get(0)?, row.get(1)?))
-                })?
+                .query_map([to_delete as i64], |row| Ok((row.get(0)?, row.get(1)?)))?
                 .filter_map(|r| r.ok())
                 .collect();
 
@@ -218,10 +212,7 @@ impl ClipboardDatabase {
                 .collect();
 
             for id in &ids {
-                conn.execute(
-                    "DELETE FROM clipboard_records WHERE id = ?1",
-                    [id.as_str()],
-                )?;
+                conn.execute("DELETE FROM clipboard_records WHERE id = ?1", [id.as_str()])?;
             }
 
             Ok(deleted_images)
@@ -242,9 +233,8 @@ impl ClipboardDatabase {
 
     pub fn clear(&self) -> SqliteResult<Vec<String>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT image_path FROM clipboard_records WHERE image_path IS NOT NULL"
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT image_path FROM clipboard_records WHERE image_path IS NOT NULL")?;
 
         let images: Vec<String> = stmt
             .query_map([], |row| row.get::<_, String>(0))?
@@ -273,7 +263,13 @@ mod tests {
     use super::*;
     use rusqlite::Connection;
 
-    fn make_record(id: &str, content_type: &str, text: Option<&str>, hash: &str, ts: i64) -> ClipboardRecordDb {
+    fn make_record(
+        id: &str,
+        content_type: &str,
+        text: Option<&str>,
+        hash: &str,
+        ts: i64,
+    ) -> ClipboardRecordDb {
         ClipboardRecordDb {
             id: id.to_string(),
             content_type: content_type.to_string(),
@@ -289,8 +285,9 @@ mod tests {
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=NORMAL;
-             PRAGMA busy_timeout=5000;"
-        ).unwrap();
+             PRAGMA busy_timeout=5000;",
+        )
+        .unwrap();
         conn.execute(
             "CREATE TABLE IF NOT EXISTS clipboard_records (
                 id TEXT PRIMARY KEY,
@@ -301,16 +298,21 @@ mod tests {
                 timestamp INTEGER NOT NULL
             )",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_hash ON clipboard_records(hash)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_time ON clipboard_records(timestamp DESC)",
             [],
-        ).unwrap();
-        ClipboardDatabase { conn: Mutex::new(conn) }
+        )
+        .unwrap();
+        ClipboardDatabase {
+            conn: Mutex::new(conn),
+        }
     }
 
     #[test]
@@ -342,7 +344,8 @@ mod tests {
     #[test]
     fn test_get_by_hash() {
         let db = open_mem_db();
-        db.insert(&make_record("1", "text", Some("data"), "abc123", 1000)).unwrap();
+        db.insert(&make_record("1", "text", Some("data"), "abc123", 1000))
+            .unwrap();
 
         let found = db.get_by_hash("abc123").unwrap();
         assert!(found.is_some());
@@ -355,7 +358,8 @@ mod tests {
     #[test]
     fn test_delete() {
         let db = open_mem_db();
-        db.insert(&make_record("1", "text", Some("data"), "h1", 1000)).unwrap();
+        db.insert(&make_record("1", "text", Some("data"), "h1", 1000))
+            .unwrap();
 
         let result = db.delete("1").unwrap();
         assert_eq!(result, None);
@@ -385,11 +389,16 @@ mod tests {
     #[test]
     fn test_delete_batch() {
         let db = open_mem_db();
-        db.insert(&make_record("1", "text", Some("a"), "h1", 1000)).unwrap();
-        db.insert(&make_record("2", "text", Some("b"), "h2", 2000)).unwrap();
-        db.insert(&make_record("3", "text", Some("c"), "h3", 3000)).unwrap();
+        db.insert(&make_record("1", "text", Some("a"), "h1", 1000))
+            .unwrap();
+        db.insert(&make_record("2", "text", Some("b"), "h2", 2000))
+            .unwrap();
+        db.insert(&make_record("3", "text", Some("c"), "h3", 3000))
+            .unwrap();
 
-        let deleted = db.delete_batch(&["1".to_string(), "2".to_string()]).unwrap();
+        let deleted = db
+            .delete_batch(&["1".to_string(), "2".to_string()])
+            .unwrap();
         assert_eq!(deleted.len(), 0);
 
         let remaining = db.get_all().unwrap();
@@ -402,8 +411,10 @@ mod tests {
         let db = open_mem_db();
         assert_eq!(db.count().unwrap(), 0);
 
-        db.insert(&make_record("1", "text", Some("a"), "h1", 1000)).unwrap();
-        db.insert(&make_record("2", "text", Some("b"), "h2", 2000)).unwrap();
+        db.insert(&make_record("1", "text", Some("a"), "h1", 1000))
+            .unwrap();
+        db.insert(&make_record("2", "text", Some("b"), "h2", 2000))
+            .unwrap();
         assert_eq!(db.count().unwrap(), 2);
     }
 
@@ -412,15 +423,18 @@ mod tests {
         let db = open_mem_db();
         assert!(!db.hash_exists("h1").unwrap());
 
-        db.insert(&make_record("1", "text", Some("a"), "h1", 1000)).unwrap();
+        db.insert(&make_record("1", "text", Some("a"), "h1", 1000))
+            .unwrap();
         assert!(db.hash_exists("h1").unwrap());
     }
 
     #[test]
     fn test_clear() {
         let db = open_mem_db();
-        db.insert(&make_record("1", "text", Some("a"), "h1", 1000)).unwrap();
-        db.insert(&make_record("2", "image", None, "h2", 2000)).unwrap();
+        db.insert(&make_record("1", "text", Some("a"), "h1", 1000))
+            .unwrap();
+        db.insert(&make_record("2", "image", None, "h2", 2000))
+            .unwrap();
 
         let cleared_images = db.clear().unwrap();
         assert_eq!(cleared_images.len(), 0);
@@ -443,7 +457,14 @@ mod tests {
     fn test_enforce_max_records_within_limit() {
         let db = open_mem_db();
         for i in 0..5 {
-            db.insert(&make_record(&format!("{}", i), "text", Some("x"), &format!("h{}", i), i as i64)).unwrap();
+            db.insert(&make_record(
+                &format!("{}", i),
+                "text",
+                Some("x"),
+                &format!("h{}", i),
+                i as i64,
+            ))
+            .unwrap();
         }
         let deleted = db.enforce_max_records(10).unwrap();
         assert!(deleted.is_empty());
@@ -454,7 +475,14 @@ mod tests {
     fn test_enforce_max_records_exceeds_limit() {
         let db = open_mem_db();
         for i in 0..5 {
-            db.insert(&make_record(&format!("{}", i), "text", Some("x"), &format!("h{}", i), (i + 1) as i64 * 1000)).unwrap();
+            db.insert(&make_record(
+                &format!("{}", i),
+                "text",
+                Some("x"),
+                &format!("h{}", i),
+                (i + 1) as i64 * 1000,
+            ))
+            .unwrap();
         }
         let _deleted = db.enforce_max_records(3).unwrap();
         assert_eq!(db.count().unwrap(), 3);

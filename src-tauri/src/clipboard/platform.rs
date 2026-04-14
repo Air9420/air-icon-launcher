@@ -19,8 +19,8 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::{BITMAPINFOHEADER, BI_RGB};
 #[cfg(target_os = "windows")]
 use windows::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, GetClipboardData, IsClipboardFormatAvailable,
-    OpenClipboard, SetClipboardData,
+    CloseClipboard, EmptyClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+    SetClipboardData,
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
@@ -159,12 +159,11 @@ pub fn get_clipboard_image_windows() -> Option<Vec<u8>> {
 
         let bytes_per_pixel = bit_count / 8;
         let row_size = ((width * bytes_per_pixel + 3) / 4) * 4;
-        let image_size =
-            if header.biSizeImage > 0 {
-                header.biSizeImage as usize
-            } else {
-                (row_size * height) as usize
-            };
+        let image_size = if header.biSizeImage > 0 {
+            header.biSizeImage as usize
+        } else {
+            (row_size * height) as usize
+        };
 
         let header_size = if header.biCompression == BI_RGB.0 && bit_count == 32 {
             size_of::<BITMAPINFOHEADER>()

@@ -1,12 +1,11 @@
 use std::ffi::OsStr;
-use std::os::windows::ffi::OsStrExt;
 use std::io::Write;
+use std::os::windows::ffi::OsStrExt;
 use std::time::Duration;
 
 use windows_service::define_windows_service;
 use windows_service::service::{
-    ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
-    ServiceType,
+    ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType,
 };
 use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
 use windows_service::service_dispatcher;
@@ -14,7 +13,8 @@ use windows_service::service_dispatcher;
 const SERVICE_NAME: &str = "AirIconLauncher";
 
 fn log_to_file(message: &str) {
-    let program_data = std::env::var("ProgramData").unwrap_or_else(|_| "C:\\ProgramData".to_string());
+    let program_data =
+        std::env::var("ProgramData").unwrap_or_else(|_| "C:\\ProgramData".to_string());
     let dir = std::path::PathBuf::from(program_data).join("AirIconLauncher");
     let _ = std::fs::create_dir_all(&dir);
     let log_path = dir.join("service.log");
@@ -34,8 +34,7 @@ fn log_to_file(message: &str) {
 
 /// 以 Windows 服务模式运行（被 SCM 调用的入口）。
 pub fn run_windows_service() -> Result<(), String> {
-    service_dispatcher::start(SERVICE_NAME, ffi_service_main)
-        .map_err(|e| e.to_string())
+    service_dispatcher::start(SERVICE_NAME, ffi_service_main).map_err(|e| e.to_string())
 }
 
 define_windows_service!(ffi_service_main, service_main);
@@ -116,12 +115,12 @@ fn launch_gui_in_active_session(
     use windows::Win32::Security::{
         DuplicateTokenEx, SecurityImpersonation, TokenPrimary, TOKEN_ALL_ACCESS,
     };
+    use windows::Win32::System::Environment::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
+    use windows::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId;
     use windows::Win32::System::RemoteDesktop::WTSQueryUserToken;
     use windows::Win32::System::Threading::{
         CreateProcessAsUserW, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, STARTUPINFOW,
     };
-    use windows::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId;
-    use windows::Win32::System::Environment::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
 
     let exe = std::env::current_exe().map_err(|e| {
         let msg = format!("获取可执行文件路径失败: {}", e);
@@ -129,7 +128,7 @@ fn launch_gui_in_active_session(
         msg
     })?;
     let exe_w = to_wide(exe.as_os_str());
-    
+
     log_to_file(&format!("准备启动 GUI: {}", exe.display()));
 
     let mut attempt = 0u64;
@@ -176,9 +175,9 @@ fn launch_gui_in_active_session(
                 &mut primary_token,
             )
         };
-        
+
         let _ = unsafe { CloseHandle(user_token) };
-        
+
         if dup_result.is_err() {
             let err = dup_result.unwrap_err().message().to_string();
             log_to_file(&format!("复制令牌失败: {} (尝试 {})", err, attempt));
@@ -193,13 +192,11 @@ fn launch_gui_in_active_session(
 
         let mut proc_info = PROCESS_INFORMATION::default();
 
-        let mut cmd = to_wide(OsStr::new(
-            &format!("\"{}\" --autostart", exe.display()),
-        ));
+        let mut cmd = to_wide(OsStr::new(&format!("\"{}\" --autostart", exe.display())));
 
         let mut env_block: *mut std::ffi::c_void = std::ptr::null_mut();
         let env_result = unsafe { CreateEnvironmentBlock(&mut env_block, primary_token, false) };
-        
+
         if env_result.is_err() {
             log_to_file(&format!("创建环境块失败: {:?}", env_result.err()));
         }
@@ -233,13 +230,20 @@ fn launch_gui_in_active_session(
 
         match create_result {
             Ok(_) => {
-                log_to_file(&format!("GUI 进程启动成功 (PID: {:?})", proc_info.dwProcessId));
+                log_to_file(&format!(
+                    "GUI 进程启动成功 (PID: {:?})",
+                    proc_info.dwProcessId
+                ));
                 let _ = unsafe { CloseHandle(proc_info.hProcess) };
                 let _ = unsafe { CloseHandle(proc_info.hThread) };
                 return Ok(());
             }
             Err(e) => {
-                log_to_file(&format!("CreateProcessAsUserW 失败: {} (尝试 {})", e.message(), attempt));
+                log_to_file(&format!(
+                    "CreateProcessAsUserW 失败: {} (尝试 {})",
+                    e.message(),
+                    attempt
+                ));
                 std::thread::sleep(Duration::from_secs(2));
             }
         }

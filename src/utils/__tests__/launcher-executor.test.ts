@@ -138,9 +138,9 @@ describe("launcher-executor", () => {
         getItem: (categoryId, itemId) => items.get(`${categoryId}:${itemId}`) ?? null,
         launchItem: vi.fn(),
       })
-    ).rejects.toMatchObject<Partial<LauncherExecutionError>>({
+    ).rejects.toMatchObject({
       code: "CIRCULAR_DEPENDENCY",
-    });
+    } satisfies Partial<LauncherExecutionError>);
   });
 
   it("throws when a dependency is missing", async () => {
@@ -161,9 +161,9 @@ describe("launcher-executor", () => {
         getItem: (categoryId, itemId) => items.get(`${categoryId}:${itemId}`) ?? null,
         launchItem: vi.fn(),
       })
-    ).rejects.toMatchObject<Partial<LauncherExecutionError>>({
+    ).rejects.toMatchObject({
       code: "MISSING_ITEM",
-    });
+    } satisfies Partial<LauncherExecutionError>);
   });
 
   it("stops execution when a dependency launch fails", async () => {
@@ -195,9 +195,9 @@ describe("launcher-executor", () => {
           }
         },
       })
-    ).rejects.toMatchObject<Partial<LauncherExecutionError>>({
+    ).rejects.toMatchObject({
       code: "LAUNCH_FAILED",
-    });
+    } satisfies Partial<LauncherExecutionError>);
 
     expect(launched).toEqual(["VPN"]);
   });

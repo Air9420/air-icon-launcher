@@ -1,5 +1,5 @@
-use serde::{Serialize, Deserialize};
 use crate::error::{AppError, AppResult};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AutostartType {
@@ -64,7 +64,9 @@ pub fn get_autostart_status() -> AppResult<AutostartStatus> {
 
     #[cfg(not(windows))]
     {
-        Err(AppError::invalid_input("Autostart is only supported on Windows"))
+        Err(AppError::invalid_input(
+            "Autostart is only supported on Windows",
+        ))
     }
 }
 
@@ -80,7 +82,9 @@ pub fn get_autostart_service_status() -> AppResult<AutostartServiceStatus> {
 
     #[cfg(not(windows))]
     {
-        Err(AppError::invalid_input("Autostart service is only supported on Windows"))
+        Err(AppError::invalid_input(
+            "Autostart service is only supported on Windows",
+        ))
     }
 }
 
@@ -112,7 +116,9 @@ pub fn set_autostart(method: AutostartType, enabled: bool) -> AppResult<()> {
     #[cfg(not(windows))]
     {
         let _ = (method, enabled);
-        Err(AppError::invalid_input("Autostart is only supported on Windows"))
+        Err(AppError::invalid_input(
+            "Autostart is only supported on Windows",
+        ))
     }
 }
 
@@ -156,9 +162,8 @@ fn is_service_installed_windows() -> AppResult<bool> {
         s.encode_wide().chain(Some(0)).collect()
     }
 
-    let scm =
-        unsafe { OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_CONNECT) }
-            .map_err(|e| AppError::internal(e.message().to_string()))?;
+    let scm = unsafe { OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_CONNECT) }
+        .map_err(|e| AppError::internal(e.message().to_string()))?;
 
     let name = to_wide(OsStr::new(SERVICE_NAME));
     let service = unsafe { OpenServiceW(scm, PCWSTR(name.as_ptr()), SERVICE_QUERY_STATUS) };
@@ -233,7 +238,8 @@ fn is_registry_autostart_enabled() -> AppResult<bool> {
             };
             let value_normalized = value.trim();
             let expected_with_flag = format!("\"{}\" --autostart", expected_exe);
-            Ok(value_normalized == expected_with_flag || value_normalized.ends_with("\" --autostart"))
+            Ok(value_normalized == expected_with_flag
+                || value_normalized.ends_with("\" --autostart"))
         }
         Err(_) => Ok(false),
     }
@@ -254,10 +260,14 @@ fn set_task_scheduler_autostart(enabled: bool) -> AppResult<()> {
             .creation_flags(0x08000000)
             .args([
                 "/Create",
-                "/TN", TASK_NAME,
-                "/TR", &format!("\"{}\" --autostart", exe_str),
-                "/SC", "ONLOGON",
-                "/RL", "HIGHEST",
+                "/TN",
+                TASK_NAME,
+                "/TR",
+                &format!("\"{}\" --autostart", exe_str),
+                "/SC",
+                "ONLOGON",
+                "/RL",
+                "HIGHEST",
                 "/F",
             ])
             .output()
@@ -265,7 +275,10 @@ fn set_task_scheduler_autostart(enabled: bool) -> AppResult<()> {
 
         if !create_result.status.success() {
             let stderr = String::from_utf8_lossy(&create_result.stderr);
-            return Err(AppError::internal(format!("Failed to create task: {}", stderr)));
+            return Err(AppError::internal(format!(
+                "Failed to create task: {}",
+                stderr
+            )));
         }
     } else {
         let delete_result = Command::new("schtasks")
@@ -317,7 +330,10 @@ fn run_child_and_wait_windows(arg: &str) -> AppResult<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(AppError::internal(format!("Operation failed (exit code: {})", status)))
+        Err(AppError::internal(format!(
+            "Operation failed (exit code: {})",
+            status
+        )))
     }
 }
 
@@ -348,7 +364,9 @@ fn run_elevated_and_wait_windows(arg: &str) -> AppResult<()> {
         );
 
         if (result.0 as isize) <= 32 {
-            return Err(AppError::permission_denied("Failed to request admin privileges (may have been cancelled)"));
+            return Err(AppError::permission_denied(
+                "Failed to request admin privileges (may have been cancelled)",
+            ));
         }
     }
 
@@ -365,7 +383,9 @@ fn wait_for_service_state_windows(installed: bool) -> AppResult<()> {
             return Ok(());
         }
         if start.elapsed() >= timeout {
-            return Err(AppError::internal("Timeout waiting for service state update"));
+            return Err(AppError::internal(
+                "Timeout waiting for service state update",
+            ));
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
@@ -373,8 +393,8 @@ fn wait_for_service_state_windows(installed: bool) -> AppResult<()> {
 
 #[cfg(windows)]
 fn install_service() -> AppResult<()> {
-    use std::process::Command;
     use std::os::windows::process::CommandExt;
+    use std::process::Command;
 
     let exe = std::env::current_exe().map_err(|e| AppError::io_error(e.to_string()))?;
     let bin_path = format!("\"{}\" --service", exe.display());
@@ -457,8 +477,8 @@ fn install_service() -> AppResult<()> {
 
 #[cfg(windows)]
 fn uninstall_service() -> AppResult<()> {
-    use std::process::Command;
     use std::os::windows::process::CommandExt;
+    use std::process::Command;
 
     let _ = Command::new("sc")
         .creation_flags(0x08000000)

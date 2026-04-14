@@ -1,9 +1,9 @@
+use crate::error::{AppError, AppResult};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use tauri::command;
-use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginManifest {
@@ -34,7 +34,8 @@ pub struct PluginInfo {
     pub path: String,
 }
 
-static PLUGIN_PATHS: std::sync::OnceLock<std::sync::RwLock<HashMap<String, String>>> = std::sync::OnceLock::new();
+static PLUGIN_PATHS: std::sync::OnceLock<std::sync::RwLock<HashMap<String, String>>> =
+    std::sync::OnceLock::new();
 
 fn get_plugin_paths() -> &'static std::sync::RwLock<HashMap<String, String>> {
     PLUGIN_PATHS.get_or_init(|| std::sync::RwLock::new(HashMap::new()))
@@ -56,7 +57,9 @@ fn get_plugin_base_directory() -> PathBuf {
     }
 
     let app_data = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(app_data).join("air-icon-launcher").join("plugins")
+    PathBuf::from(app_data)
+        .join("air-icon-launcher")
+        .join("plugins")
 }
 
 #[command]
@@ -99,17 +102,16 @@ pub fn scan_plugins() -> AppResult<Vec<PluginManifest>> {
             let manifest_path = path.join("manifest.json");
             if manifest_path.exists() {
                 match fs::read_to_string(&manifest_path) {
-                    Ok(content) => {
-                        match serde_json::from_str::<PluginManifest>(&content) {
-                            Ok(manifest) => {
-                                path_map.insert(manifest.id.clone(), path.to_string_lossy().to_string());
-                                manifests.push(manifest);
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to parse manifest at {:?}: {}", manifest_path, e);
-                            }
+                    Ok(content) => match serde_json::from_str::<PluginManifest>(&content) {
+                        Ok(manifest) => {
+                            path_map
+                                .insert(manifest.id.clone(), path.to_string_lossy().to_string());
+                            manifests.push(manifest);
                         }
-                    }
+                        Err(e) => {
+                            eprintln!("Failed to parse manifest at {:?}: {}", manifest_path, e);
+                        }
+                    },
                     Err(e) => {
                         eprintln!("Failed to read manifest at {:?}: {}", manifest_path, e);
                     }
@@ -129,7 +131,10 @@ pub fn read_plugin_manifest(plugin_path: String) -> AppResult<PluginManifest> {
     let manifest_path = PathBuf::from(&plugin_path).join("manifest.json");
 
     if !manifest_path.exists() {
-        return Err(AppError::not_found(format!("Manifest at {:?}", manifest_path)));
+        return Err(AppError::not_found(format!(
+            "Manifest at {:?}",
+            manifest_path
+        )));
     }
 
     let content = fs::read_to_string(&manifest_path)
@@ -163,7 +168,9 @@ pub fn install_plugin(source_path: String) -> AppResult<bool> {
 
     let manifest_path = source.join("manifest.json");
     if !manifest_path.exists() {
-        return Err(AppError::invalid_input("Source path does not contain manifest.json"));
+        return Err(AppError::invalid_input(
+            "Source path does not contain manifest.json",
+        ));
     }
 
     let content = fs::read_to_string(&manifest_path)
@@ -189,7 +196,8 @@ pub fn install_plugin(source_path: String) -> AppResult<bool> {
         }
 
         for entry in fs::read_dir(src)
-            .map_err(|e| AppError::io_error(format!("Failed to read directory: {}", e)))? {
+            .map_err(|e| AppError::io_error(format!("Failed to read directory: {}", e)))?
+        {
             let entry = entry.map_err(|e| AppError::io_error(e.to_string()))?;
             let src_path = entry.path();
             let dst_path = dst.join(entry.file_name());
@@ -236,7 +244,10 @@ pub fn uninstall_plugin(plugin_id: String) -> AppResult<bool> {
 
 #[command]
 pub fn launch_item(path: String, item_type: Option<String>) -> AppResult<()> {
-    if item_type.as_deref() == Some("url") || path.starts_with("http://") || path.starts_with("https://") {
+    if item_type.as_deref() == Some("url")
+        || path.starts_with("http://")
+        || path.starts_with("https://")
+    {
         return crate::system::open_url(path);
     }
 
@@ -255,9 +266,7 @@ pub fn launch_item(path: String, item_type: Option<String>) -> AppResult<()> {
         const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
 
         std::process::Command::new(&path)
-            .creation_flags(
-                DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB,
-            )
+            .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())

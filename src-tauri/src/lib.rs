@@ -1,20 +1,20 @@
-mod tray;
-mod drag;
 mod app_settings;
 mod autostart_service;
 mod clipboard;
 mod clipboard_listener;
-mod plugins;
-mod config;
-mod window_effects;
-mod corner_hotspot;
-mod error;
-mod search;
-mod pinyin;
 mod commands;
-mod system;
+mod config;
+mod corner_hotspot;
 mod db;
+mod drag;
+mod error;
 mod keyboard_hook;
+mod pinyin;
+mod plugins;
+mod search;
+mod system;
+mod tray;
+mod window_effects;
 use tauri::tray::TrayIcon;
 use tauri::Manager;
 
@@ -61,7 +61,8 @@ pub fn run() {
                     .unwrap_or(("alt+space".to_string(), "alt+v".to_string()));
 
                 let _ = app_settings::register_toggle_shortcut(&handle, toggle.as_str());
-                let _ = app_settings::register_clipboard_shortcut(&handle, clipboard_shortcut.as_str());
+                let _ =
+                    app_settings::register_clipboard_shortcut(&handle, clipboard_shortcut.as_str());
 
                 if let Some(config) = keyboard_hook::parse_hotkey(toggle.as_str()) {
                     keyboard_hook::register_hotkey(config);

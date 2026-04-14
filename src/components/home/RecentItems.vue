@@ -7,6 +7,7 @@
             <HomeCard v-for="item in items" :key="item.key" :item-id="item.recent.itemId"
                 :category-id="item.recent.categoryId" :name="item.item.name" :icon-base64="item.item.iconBase64"
                 :item-type="item.item.itemType"
+                :has-dependencies="item.item.launchDependencies.length > 0"
                 :launch-status="getLaunchStatus(item.recent.itemId)" :cols="layout.cols" menu-type="Icon-Item" home-section="recent"
                 @click="$emit('select', item)" />
         </div>

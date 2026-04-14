@@ -1,7 +1,9 @@
 use chrono::Local;
 use std::path::Path;
 
-use crate::clipboard::platform::{encode_rgba_to_png, get_clipboard_image_windows, set_clipboard_image_windows};
+use crate::clipboard::platform::{
+    encode_rgba_to_png, get_clipboard_image_windows, set_clipboard_image_windows,
+};
 
 pub fn set_clipboard_image_from_png(png_data: &[u8]) -> bool {
     #[cfg(target_os = "windows")]

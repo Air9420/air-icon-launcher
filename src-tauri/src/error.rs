@@ -201,8 +201,7 @@ mod tests {
 
     #[test]
     fn test_serialize_deserialize_roundtrip() {
-        let original = AppError::new("TEST", "hello")
-            .with_details(serde_json::json!({"n": 42}));
+        let original = AppError::new("TEST", "hello").with_details(serde_json::json!({"n": 42}));
         let json = serde_json::to_string(&original).unwrap();
         let restored: AppError = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.code, original.code);

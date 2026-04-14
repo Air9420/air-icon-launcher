@@ -9,9 +9,9 @@ use windows::Win32::System::DataExchange::{
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW,
-    WM_CLIPBOARDUPDATE, WNDCLASSW, MSG, GWLP_USERDATA, SetWindowLongPtrW, GetWindowLongPtrW,
-    HWND_MESSAGE,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetWindowLongPtrW,
+    RegisterClassW, SetWindowLongPtrW, GWLP_USERDATA, HWND_MESSAGE, MSG, WM_CLIPBOARDUPDATE,
+    WNDCLASSW,
 };
 
 #[cfg(target_os = "windows")]
@@ -21,59 +21,63 @@ extern "system" {
 
 pub fn listen_clipboard(callback: Arc<dyn Fn() + Send + Sync + 'static>) {
     #[cfg(target_os = "windows")]
-    std::thread::spawn(move || {
-        unsafe {
-            let instance = GetModuleHandleW(PCWSTR::null());
+    std::thread::spawn(move || unsafe {
+        let instance = GetModuleHandleW(PCWSTR::null());
 
-            let window_class = "AirIconClipboardListener";
-            let window_class_w: Vec<u16> = window_class.encode_utf16().chain(std::iter::once(0)).collect();
+        let window_class = "AirIconClipboardListener";
+        let window_class_w: Vec<u16> = window_class
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
 
-            let wnd_class = WNDCLASSW {
-                lpfnWndProc: Some(wnd_proc),
-                hInstance: instance,
-                lpszClassName: PCWSTR(window_class_w.as_ptr()),
-                ..Default::default()
-            };
+        let wnd_class = WNDCLASSW {
+            lpfnWndProc: Some(wnd_proc),
+            hInstance: instance,
+            lpszClassName: PCWSTR(window_class_w.as_ptr()),
+            ..Default::default()
+        };
 
-            RegisterClassW(&wnd_class);
+        RegisterClassW(&wnd_class);
 
-            let hwnd: HWND = CreateWindowExW(
-                Default::default(),
-                PCWSTR(window_class_w.as_ptr()),
-                PCWSTR::null(),
-                Default::default(),
-                0, 0, 0, 0,
-                HWND_MESSAGE,
-                None,
-                instance,
-                None,
-            );
+        let hwnd: HWND = CreateWindowExW(
+            Default::default(),
+            PCWSTR(window_class_w.as_ptr()),
+            PCWSTR::null(),
+            Default::default(),
+            0,
+            0,
+            0,
+            0,
+            HWND_MESSAGE,
+            None,
+            instance,
+            None,
+        );
 
-            if hwnd.0 as isize == 0 {
-                eprintln!("[ERROR] Failed to create clipboard listener window");
-                return;
-            }
-
-            let boxed_callback = Box::new(callback);
-            let ptr = Box::into_raw(boxed_callback);
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, ptr as isize);
-
-            if AddClipboardFormatListener(hwnd).is_err() {
-                eprintln!("[ERROR] Failed to add clipboard listener");
-                let _ = Box::from_raw(ptr);
-                return;
-            }
-
-            println!(">>> [CLIPBOARD] Windows event-driven listener started.");
-
-            let mut msg = MSG::default();
-            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                DispatchMessageW(&msg);
-            }
-
-            let _ = RemoveClipboardFormatListener(hwnd);
-            let _ = Box::from_raw(ptr);
+        if hwnd.0 as isize == 0 {
+            eprintln!("[ERROR] Failed to create clipboard listener window");
+            return;
         }
+
+        let boxed_callback = Box::new(callback);
+        let ptr = Box::into_raw(boxed_callback);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, ptr as isize);
+
+        if AddClipboardFormatListener(hwnd).is_err() {
+            eprintln!("[ERROR] Failed to add clipboard listener");
+            let _ = Box::from_raw(ptr);
+            return;
+        }
+
+        println!(">>> [CLIPBOARD] Windows event-driven listener started.");
+
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            DispatchMessageW(&msg);
+        }
+
+        let _ = RemoveClipboardFormatListener(hwnd);
+        let _ = Box::from_raw(ptr);
     });
 
     #[cfg(not(target_os = "windows"))]
@@ -102,7 +106,12 @@ pub fn listen_clipboard(callback: Arc<dyn Fn() + Send + Sync + 'static>) {
 }
 
 #[cfg(target_os = "windows")]
-unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     match msg {
         WM_CLIPBOARDUPDATE => {
             let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
