@@ -39,7 +39,7 @@ import { listen } from "@tauri-apps/api/event";
 import { safeInvoke } from "../utils/invoke-wrapper";
 import { Store } from "../stores";
 import { useCategoryStore } from "../stores/categoryStore";
-import { enumContextMenuType } from "../stores/uiStore";
+import { enumContextMenuType } from "../menus/contextMenuTypes";
 import type { DropRecord, DropTargetInfo } from "./types";
 
 /**
@@ -140,7 +140,7 @@ export function useDragDrop(options: UseDragDropOptions) {
             if (
                 (menuType === enumContextMenuType.IconView ||
                     menuType === enumContextMenuType.IconItem ||
-                    menuType === enumContextMenuType.CategorieItem) &&
+                    menuType === enumContextMenuType.HomeGroupItem) &&
                 categoryId &&
                 paths?.length &&
                 !processedDropIds.has(drop_id)

@@ -1,5 +1,9 @@
-import type { enumContextMenuType } from "../stores";
-import type { MenuContext, MenuLabel, MenuPredicate } from "../menus/contextMenuTypes";
+import type { enumContextMenuType } from "../menus/contextMenuTypes";
+import type { MenuContext } from "../menus/contextMenuTypes";
+import type { VisibilityCondition, LabelValue } from "../menus/conditions";
+
+type MenuLabel = LabelValue;
+type MenuPredicate = VisibilityCondition;
 
 export type ContextMenuItemInput =
     | {

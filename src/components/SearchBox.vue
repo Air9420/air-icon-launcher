@@ -12,6 +12,9 @@
             :placeholder="placeholder"
             @input="onInput"
             @keydown.escape="onClear"
+            @keydown.up="onNavUp"
+            @keydown.down="onNavDown"
+            @keydown.enter="onNavEnter"
         />
         <button
             v-show="modelValue"
@@ -37,6 +40,7 @@ defineProps<{
 
 const emit = defineEmits<{
     (e: "update:modelValue", value: string): void;
+    (e: "nav", direction: "up" | "down" | "enter"): void;
 }>();
 
 const inputRef = ref<HTMLInputElement | null>(null);
@@ -48,6 +52,21 @@ function onInput(event: Event) {
 
 function onClear() {
     emit("update:modelValue", "");
+}
+
+function onNavUp(e: Event) {
+    e.stopPropagation();
+    emit("nav", "up");
+}
+
+function onNavDown(e: Event) {
+    e.stopPropagation();
+    emit("nav", "down");
+}
+
+function onNavEnter(e: Event) {
+    e.stopPropagation();
+    emit("nav", "enter");
 }
 
 function focus() {

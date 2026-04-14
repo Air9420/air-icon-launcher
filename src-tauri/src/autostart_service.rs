@@ -89,17 +89,24 @@ pub fn get_autostart_service_status() -> AppResult<AutostartServiceStatus> {
 pub fn set_autostart(method: AutostartType, enabled: bool) -> AppResult<()> {
     #[cfg(windows)]
     {
-        match method {
-            AutostartType::Service => {
-                set_service_autostart(enabled)
+        if enabled {
+            let _ = set_registry_autostart(false);
+            let _ = set_task_scheduler_autostart(false);
+            let _ = set_service_autostart_internal(false);
+
+            match method {
+                AutostartType::Service => set_service_autostart_internal(true)?,
+                AutostartType::Registry => set_registry_autostart(true)?,
+                AutostartType::TaskScheduler => set_task_scheduler_autostart(true)?,
             }
-            AutostartType::Registry => {
-                set_registry_autostart(enabled)
-            }
-            AutostartType::TaskScheduler => {
-                set_task_scheduler_autostart(enabled)
+        } else {
+            match method {
+                AutostartType::Service => set_service_autostart_internal(false)?,
+                AutostartType::Registry => set_registry_autostart(false)?,
+                AutostartType::TaskScheduler => set_task_scheduler_autostart(false)?,
             }
         }
+        Ok(())
     }
 
     #[cfg(not(windows))]
@@ -118,7 +125,7 @@ pub fn set_autostart_service_enabled(enabled: bool) -> AppResult<()> {
 // ==================== Service ====================
 
 #[cfg(windows)]
-fn set_service_autostart(enabled: bool) -> AppResult<()> {
+fn set_service_autostart_internal(enabled: bool) -> AppResult<()> {
     if enabled {
         if is_running_as_admin_windows()? {
             install_service()?;
@@ -297,6 +304,7 @@ fn is_running_as_admin_windows() -> AppResult<bool> {
 }
 
 #[cfg(windows)]
+#[allow(dead_code)]
 fn run_child_and_wait_windows(arg: &str) -> AppResult<()> {
     use std::process::Command;
 
@@ -473,21 +481,25 @@ fn uninstall_service() -> AppResult<()> {
 }
 
 #[cfg(windows)]
+#[allow(dead_code)]
 pub fn get_service_name() -> &'static str {
     SERVICE_NAME
 }
 
 #[cfg(windows)]
+#[allow(dead_code)]
 pub fn get_task_name() -> &'static str {
     TASK_NAME
 }
 
 #[cfg(not(windows))]
+#[allow(dead_code)]
 pub fn get_service_name() -> &'static str {
     ""
 }
 
 #[cfg(not(windows))]
+#[allow(dead_code)]
 pub fn get_task_name() -> &'static str {
     ""
 }

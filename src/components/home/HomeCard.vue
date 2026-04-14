@@ -3,7 +3,9 @@
         'is-launching': isLaunching,
         'is-success': isSuccess
     }" :data-menu-type="menuType" :data-home-section="homeSection" :data-category-id="categoryId"
-        :data-item-id="itemId" v-on="longpressHandlers" @click="$emit('click')">
+        :data-item-id="itemId" v-on="longpressHandlers" @pointerdown="onPointerDown" @pointerup="onPointerUp"
+        @pointerleave="onPointerLeave" data-no-drag>
+        <div v-if="itemType === 'url'" class="url-badge">URL</div>
         <div class="home-card-main">
             <div class="home-card-icon">
                 <img v-if="iconBase64" class="icon-real" :src="getIconSrc(iconBase64)" alt="" draggable="false" />
@@ -21,7 +23,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useLongPress } from "../../composables/useLongPress";
 
 const props = defineProps<{
@@ -29,6 +31,7 @@ const props = defineProps<{
     categoryId: string;
     name: string;
     iconBase64?: string | null;
+    itemType?: 'file' | 'url';
     menuType?: string;
     homeSection?: string;
     launchStatus?: "launching" | "success" | undefined;
@@ -45,6 +48,31 @@ const { handlers: longpressHandlers } = useLongPress({
         emit("longpress");
     },
 });
+
+const PRESS_THRESHOLD = 200;
+const pressTimer = ref<ReturnType<typeof setTimeout> | null>(null);
+
+function onPointerDown(e: PointerEvent) {
+    if (e.button !== 0) return;
+    pressTimer.value = setTimeout(() => {
+        pressTimer.value = null;
+    }, PRESS_THRESHOLD);
+}
+
+function onPointerUp() {
+    if (pressTimer.value) {
+        clearTimeout(pressTimer.value);
+        pressTimer.value = null;
+        emit("click");
+    }
+}
+
+function onPointerLeave() {
+    if (pressTimer.value) {
+        clearTimeout(pressTimer.value);
+        pressTimer.value = null;
+    }
+}
 
 const isLaunching = computed(() => props.launchStatus === "launching");
 const isSuccess = computed(() => props.launchStatus === "success");
@@ -71,7 +99,7 @@ function getIconSrc(iconBase64: string) {
     background: var(--card-bg-solid);
     border-radius: 10px;
     cursor: pointer;
-    transition: background 0.15s ease;
+    transition: background 0.15s ease, transform 0.2s ease, box-shadow 0.2s ease;
     box-shadow: var(--card-shadow-light);
     border: 1px solid var(--border-color, transparent);
     min-width: 0;
@@ -79,6 +107,11 @@ function getIconSrc(iconBase64: string) {
 
     &:hover {
         background: var(--card-bg-hover);
+
+        @media (hover: hover) {
+            transform: scale(calc(1 + 0.05 * (1 - var(--performance-mode, 0))));
+            box-shadow: var(--card-shadow-light), 0 4px 12px calc(0px * var(--performance-mode, 0)) rgba(0, 0, 0, 0.15);
+        }
     }
 
     &.is-launching {
@@ -88,6 +121,19 @@ function getIconSrc(iconBase64: string) {
     &.is-success {
         animation: success-shadow 1.2s ease-in-out infinite;
     }
+}
+
+.url-badge {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    padding: 1px 4px;
+    font-size: 8px;
+    font-weight: 600;
+    color: #fff;
+    background: #3b82f6;
+    border-radius: 4px;
+    z-index: 1;
 }
 
 .home-card-main {
@@ -101,13 +147,12 @@ function getIconSrc(iconBase64: string) {
 }
 
 .home-card-icon {
-    // width: 34px;
-    // height: 34px;
     aspect-ratio: 1 / 1;
     display: flex;
     align-items: center;
     justify-content: center;
     position: relative;
+    overflow: hidden;
 
     .icon-real {
         width: 100%;

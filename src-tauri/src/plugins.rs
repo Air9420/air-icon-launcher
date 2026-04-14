@@ -28,6 +28,7 @@ pub struct PluginManifest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct PluginInfo {
     pub manifest: PluginManifest,
     pub path: String,
@@ -234,7 +235,11 @@ pub fn uninstall_plugin(plugin_id: String) -> AppResult<bool> {
 }
 
 #[command]
-pub fn launch_item(path: String) -> AppResult<()> {
+pub fn launch_item(path: String, item_type: Option<String>) -> AppResult<()> {
+    if item_type.as_deref() == Some("url") || path.starts_with("http://") || path.starts_with("https://") {
+        return crate::system::open_url(path);
+    }
+
     let path = PathBuf::from(&path);
 
     if !path.exists() {
@@ -243,8 +248,19 @@ pub fn launch_item(path: String) -> AppResult<()> {
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", &path.to_string_lossy()])
+        use std::os::windows::process::CommandExt;
+        use std::process::Stdio;
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
+
+        std::process::Command::new(&path)
+            .creation_flags(
+                DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB,
+            )
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
             .map_err(|e| AppError::internal(format!("Failed to launch: {}", e)))?;
     }

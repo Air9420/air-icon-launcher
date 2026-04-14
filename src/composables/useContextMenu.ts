@@ -29,7 +29,8 @@
  */
 
 import { ref, nextTick } from "vue";
-import { useUIStore, enumContextMenuType } from "../stores/uiStore";
+import { useUIStore } from "../stores/uiStore";
+import { enumContextMenuType } from "../menus/contextMenuTypes";
 import { useCategoryStore } from "../stores/categoryStore";
 import type { HomeLayoutSectionKey } from "../stores/uiStore";
 import type { DropTargetInfo } from "./types";
@@ -318,7 +319,7 @@ export function useContextMenu() {
         uiStore.ContextMenuType = menuType;
 
         currentCategoryId.value =
-            menuType === enumContextMenuType.CategorieItem ||
+            menuType === enumContextMenuType.HomeGroupItem ||
                 menuType === enumContextMenuType.IconView ||
                 menuType === enumContextMenuType.IconItem
                 ? menuTarget.dataset.categoryId || null

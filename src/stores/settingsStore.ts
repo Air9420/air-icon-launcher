@@ -1,8 +1,11 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { invoke as safeInvoke } from "../utils/invoke-wrapper";
+import { invokeOrThrow } from "../utils/invoke-wrapper";
+import { getAppConfig, saveAppConfigPatch, type AppConfigSnapshot } from "../utils/config-sync";
 import { createVersionedPersistConfig } from "../utils/versioned-persist";
+import { useUIStore } from "./uiStore";
+import { useClipboardStore } from "./clipboardStore";
 
 export type ThemeMode = "light" | "dark" | "system" | "transparent";
 
@@ -12,16 +15,22 @@ type AppSettings = {
     follow_mouse_y_anchor: "top" | "center" | "bottom";
 };
 
-type AutostartServiceStatus = {
-    installed: boolean;
-};
-
 export type AutostartType = "Service" | "Registry" | "TaskScheduler";
 
 export type AutostartStatus = {
     enabled: boolean;
     method: AutostartType | null;
 };
+
+export type WindowPosition = {
+    x: number;
+    y: number;
+    monitorId: string | null;
+    monitorName?: string;
+    savedAt: number;
+};
+
+export type WindowEffectType = "blur" | "acrylic";
 
 export const useSettingsStore = defineStore(
     "settings",
@@ -43,9 +52,14 @@ export const useSettingsStore = defineStore(
         const autostartLoading = ref<boolean>(false);
         const autostartError = ref<string>("");
         const hideOnCtrlRightClick = ref<boolean>(false);
+        const windowPosition = ref<WindowPosition | null>(null);
+        const performanceMode = ref<boolean>(false);
+        const windowEffectType = ref<WindowEffectType>("blur");
+        const strongShortcutMode = ref<boolean>(true);
 
-        function setTheme(newTheme: ThemeMode) {
+        async function setTheme(newTheme: ThemeMode) {
             theme.value = newTheme;
+            await saveAppConfigPatch({ theme: newTheme });
         }
 
         function setWindowEffectsEnabled(enabled: boolean) {
@@ -80,10 +94,12 @@ export const useSettingsStore = defineStore(
             const next = shortcut.trim();
             if (!next) return;
             try {
-                await safeInvoke("set_toggle_shortcut", { shortcut: next });
+                await invokeOrThrow("set_toggle_shortcut", { shortcut: next });
+                await saveAppConfigPatch({ toggle_shortcut: next });
                 toggleShortcut.value = next;
             } catch (e) {
                 console.error(e);
+                throw e;
             }
         }
 
@@ -91,7 +107,8 @@ export const useSettingsStore = defineStore(
             const next = shortcut.trim();
             if (!next) return;
             try {
-                await safeInvoke("set_clipboard_shortcut", { shortcut: next });
+                await invokeOrThrow("set_clipboard_shortcut", { shortcut: next });
+                await saveAppConfigPatch({ clipboard_shortcut: next });
                 clipboardShortcut.value = next;
             } catch (e) {
                 console.error(e);
@@ -101,17 +118,41 @@ export const useSettingsStore = defineStore(
 
         async function setFollowMouseOnShow(enabled: boolean) {
             try {
-                await safeInvoke("set_follow_mouse_on_show", { enabled });
+                await invokeOrThrow("set_follow_mouse_on_show", { enabled });
+                await saveAppConfigPatch({ follow_mouse_on_show: enabled });
                 followMouseOnShow.value = enabled;
             } catch (e) {
                 console.error(e);
+                throw e;
             }
         }
 
         async function setFollowMouseYAnchor(anchor: "top" | "center" | "bottom") {
             try {
-                await safeInvoke("set_follow_mouse_y_anchor", { anchor });
+                await invokeOrThrow("set_follow_mouse_y_anchor", { anchor });
+                await saveAppConfigPatch({ follow_mouse_y_anchor: anchor });
                 followMouseYAnchor.value = anchor;
+            } catch (e) {
+                console.error(e);
+                throw e;
+            }
+        }
+
+        function applyPersistedConfig(config: AppConfigSnapshot) {
+            const uiStore = useUIStore();
+            const clipboardStore = useClipboardStore();
+            theme.value = (config.theme as ThemeMode) || "system";
+            uiStore.setCategoryCols(config.category_cols);
+            uiStore.setLauncherCols(config.launcher_cols);
+            uiStore.setHomeSectionLayouts(config.home_section_layouts);
+            clipboardStore.setClipboardHistoryEnabled(config.clipboard_history_enabled);
+            clipboardStore.setMaxRecords(config.clipboard_max_records);
+        }
+
+        async function hydratePersistedConfig() {
+            try {
+                const config = await getAppConfig();
+                applyPersistedConfig(config);
             } catch (e) {
                 console.error(e);
             }
@@ -120,33 +161,11 @@ export const useSettingsStore = defineStore(
         async function hydrateAppSettings() {
             try {
                 const settings = await invoke<AppSettings>("get_app_settings");
-                const backendShortcut = settings?.toggle_shortcut || "alt+space";
-                const backendFollow = !!settings?.follow_mouse_on_show;
-                const backendAnchor = settings?.follow_mouse_y_anchor || "center";
+                if (!settings) return;
 
-                const desiredShortcut = toggleShortcut.value?.trim() || backendShortcut;
-                const desiredFollow = !!followMouseOnShow.value;
-                const desiredAnchor = followMouseYAnchor.value || backendAnchor;
-
-                if (desiredShortcut !== backendShortcut) {
-                    await safeInvoke("set_toggle_shortcut", { shortcut: desiredShortcut });
-                    toggleShortcut.value = desiredShortcut;
-                } else {
-                    toggleShortcut.value = backendShortcut;
-                }
-
-                if (desiredFollow !== backendFollow) {
-                    await safeInvoke("set_follow_mouse_on_show", { enabled: desiredFollow });
-                } else {
-                    followMouseOnShow.value = backendFollow;
-                }
-
-                if (desiredAnchor !== backendAnchor) {
-                    await safeInvoke("set_follow_mouse_y_anchor", { anchor: desiredAnchor });
-                    followMouseYAnchor.value = desiredAnchor;
-                } else {
-                    followMouseYAnchor.value = backendAnchor;
-                }
+                toggleShortcut.value = settings?.toggle_shortcut || "alt+space";
+                followMouseOnShow.value = !!settings?.follow_mouse_on_show;
+                followMouseYAnchor.value = settings?.follow_mouse_y_anchor || "center";
             } catch (e) {
                 console.error(e);
             }
@@ -168,13 +187,13 @@ export const useSettingsStore = defineStore(
             autostartLoading.value = true;
             autostartError.value = "";
             try {
-                await safeInvoke("set_autostart", { method, enabled });
+                await invokeOrThrow("set_autostart", { method, enabled });
                 await refreshAutostartStatus();
-            } catch (e: any) {
+            } catch (e: unknown) {
                 const message =
                     typeof e === "string"
                         ? e
-                        : e?.message
+                        : e instanceof Error && e.message
                           ? String(e.message)
                           : "开机自启设置失败";
                 autostartError.value = message;
@@ -187,6 +206,50 @@ export const useSettingsStore = defineStore(
 
         function setHideOnCtrlRightClick(enabled: boolean) {
             hideOnCtrlRightClick.value = enabled;
+        }
+
+        function setWindowPosition(position: WindowPosition | null) {
+            windowPosition.value = position;
+        }
+
+        async function setPerformanceMode(enabled: boolean) {
+            try {
+                if (enabled) {
+                    if (theme.value === "transparent") {
+                        theme.value = "system";
+                    }
+                    await invokeOrThrow("set_window_effects", { enabled: false });
+                    windowEffectsEnabled.value = false;
+                } else {
+                    windowEffectsEnabled.value = true;
+                    await invokeOrThrow("set_window_effects", { enabled: true });
+                    await invokeOrThrow("set_window_effect_type", { effectType: windowEffectType.value });
+                }
+                performanceMode.value = enabled;
+            } catch (e) {
+                console.error(e);
+                throw e;
+            }
+        }
+
+        async function setWindowEffectType(type: WindowEffectType) {
+            try {
+                await invokeOrThrow("set_window_effect_type", { effectType: type });
+                windowEffectType.value = type;
+            } catch (e) {
+                console.error(e);
+                throw e;
+            }
+        }
+
+        async function setStrongShortcutMode(enabled: boolean) {
+            try {
+                await invokeOrThrow("set_strong_shortcut_mode", { enabled });
+                strongShortcutMode.value = enabled;
+            } catch (e) {
+                console.error(e);
+                throw e;
+            }
         }
 
         return {
@@ -207,6 +270,10 @@ export const useSettingsStore = defineStore(
             autostartLoading,
             autostartError,
             hideOnCtrlRightClick,
+            windowPosition,
+            performanceMode,
+            windowEffectType,
+            strongShortcutMode,
             setTheme,
             setWindowEffectsEnabled,
             setCtrlDragEnabled,
@@ -219,10 +286,16 @@ export const useSettingsStore = defineStore(
             setClipboardShortcut,
             setFollowMouseOnShow,
             setFollowMouseYAnchor,
+            applyPersistedConfig,
+            hydratePersistedConfig,
             hydrateAppSettings,
             refreshAutostartStatus,
             setAutostartEnabled,
             setHideOnCtrlRightClick,
+            setWindowPosition,
+            setPerformanceMode,
+            setWindowEffectType,
+            setStrongShortcutMode,
         };
     },
     { persist: createVersionedPersistConfig("settings", [
@@ -241,5 +314,9 @@ export const useSettingsStore = defineStore(
         "autostartEnabled",
         "autostartMethod",
         "hideOnCtrlRightClick",
-    ]) as any }
+        "windowPosition",
+        "performanceMode",
+        "windowEffectType",
+        "strongShortcutMode",
+    ]) }
 );

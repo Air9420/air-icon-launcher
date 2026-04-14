@@ -5,17 +5,19 @@
         </div>
         <div class="search-result-list">
             <div
-                v-for="result in results"
+                v-for="(result, index) in results"
                 :key="result.key"
+                :ref="el => setItemRef(el, index)"
                 class="search-result-item"
                 :class="{
                     'is-launching': getLaunchStatus(result.item.id) === 'launching',
-                    'is-success': getLaunchStatus(result.item.id) === 'success'
+                    'is-success': getLaunchStatus(result.item.id) === 'success',
+                    'is-selected': selectedIndex === index
                 }"
-                :data-menu-type="'icon-item'"
+                :data-menu-type="'Icon-Item'"
                 :data-item-id="result.item.id"
                 :data-category-id="result.categories[0]?.id || ''"
-                @click="$emit('select', result)"
+                @mousedown="$emit('select', result)"
             >
                 <div class="result-icon">
                     <img
@@ -50,16 +52,34 @@
 </template>
 
 <script setup lang="ts">
+import { ref, watch, nextTick, type ComponentPublicInstance } from "vue";
 import type { GlobalSearchMergedResult } from "../../stores";
 
-defineProps<{
+const props = defineProps<{
     results: GlobalSearchMergedResult[];
     getLaunchStatus: (itemId: string) => "launching" | "success" | undefined;
+    selectedIndex: number;
 }>();
 
 defineEmits<{
     (e: "select", result: GlobalSearchMergedResult): void;
 }>();
+
+const itemRefs = ref<(HTMLElement | null)[]>([]);
+
+function setItemRef(el: Element | ComponentPublicInstance | null, index: number) {
+    itemRefs.value[index] = el as HTMLElement | null;
+}
+
+watch(() => props.selectedIndex, async (newIndex) => {
+    if (newIndex >= 0 && newIndex < props.results.length) {
+        await nextTick();
+        const el = itemRefs.value[newIndex];
+        if (el) {
+            el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
+    }
+});
 
 function getIconSrc(iconBase64: string) {
     if (iconBase64.startsWith("data:")) return iconBase64;
@@ -105,11 +125,15 @@ function getFallbackText(name: string) {
     background: var(--card-bg-solid);
     border-radius: 12px;
     cursor: pointer;
-    transition: background 0.15s ease;
+    transition: background 0.15s ease, transform 0.2s ease, box-shadow 0.2s ease;
     box-shadow: var(--card-shadow-light);
 
     &:hover {
-        background: var(--card-bg-hover);
+        @media (hover: hover) {
+            background: var(--card-bg-hover);
+            transform: scale(calc(1 + 0.02 * (1 - var(--performance-mode, 0))));
+            box-shadow: var(--card-shadow-light), 0 4px 12px calc(0px * var(--performance-mode, 0)) rgba(0, 0, 0, 0.15);
+        }
     }
 
     &.is-launching {
@@ -118,6 +142,11 @@ function getFallbackText(name: string) {
 
     &.is-success {
         animation: success-shadow 1.2s ease-in-out infinite;
+    }
+
+    &.is-selected {
+        background: var(--card-bg-hover);
+        box-shadow: 0 0 0 2px var(--primary-color, #0078d4), var(--card-shadow-light);
     }
 }
 

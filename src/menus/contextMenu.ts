@@ -1,7 +1,8 @@
-import { enumContextMenuType, HOME_LAYOUT_PRESETS } from "../stores";
+import { enumContextMenuType } from "./contextMenuTypes";
+import { HOME_LAYOUT_PRESETS } from "../stores";
 import { getContextMenuContributions } from "../plugins/contextMenuRegistry";
 import type { MenuContext, MenuItem } from "./contextMenuTypes";
-import { evaluateCondition, resolveLabel } from "./conditions";
+import { evaluateCondition } from "./conditions";
 
 /**
  * 构建当前右键上下文下的菜单模型（内置 + 插件贡献项）。
@@ -18,7 +19,7 @@ export function buildContextMenuModel(ctx: MenuContext): MenuItem[] {
 /**
  * 构建应用内置的右键菜单模型（不含插件项）。
  */
-function buildBuiltinMenuModel(ctx: MenuContext): MenuItem[] {
+function buildBuiltinMenuModel(_ctx: MenuContext): MenuItem[] {
   const items: MenuItem[] = [
     {
       type: "item",
@@ -83,7 +84,7 @@ function buildBuiltinMenuModel(ctx: MenuContext): MenuItem[] {
       label: "添加类目",
       action: { kind: "add-category" },
       order: 70,
-      visible: { menuType: enumContextMenuType.CategorieView },
+      visible: { menuType: enumContextMenuType.HomeGroupView },
     },
     {
       type: "item",
@@ -91,7 +92,7 @@ function buildBuiltinMenuModel(ctx: MenuContext): MenuItem[] {
       label: "重命名",
       action: { kind: "rename-category" },
       order: 80,
-      visible: { menuType: enumContextMenuType.CategorieItem },
+      visible: { menuType: enumContextMenuType.HomeGroupItem },
     },
     {
       type: "item",
@@ -99,7 +100,7 @@ function buildBuiltinMenuModel(ctx: MenuContext): MenuItem[] {
       label: "更换图标",
       action: { kind: "change-category-icon" },
       order: 90,
-      visible: { menuType: enumContextMenuType.CategorieItem },
+      visible: { menuType: enumContextMenuType.HomeGroupItem },
     },
     {
       type: "item",
@@ -107,7 +108,7 @@ function buildBuiltinMenuModel(ctx: MenuContext): MenuItem[] {
       label: "重置图标",
       action: { kind: "reset-category-icon" },
       order: 100,
-      visible: { menuType: enumContextMenuType.CategorieItem },
+      visible: { menuType: enumContextMenuType.HomeGroupItem },
     },
     {
       type: "item",
@@ -115,7 +116,7 @@ function buildBuiltinMenuModel(ctx: MenuContext): MenuItem[] {
       label: "删除",
       action: { kind: "delete-category" },
       order: 110,
-      visible: { menuType: enumContextMenuType.CategorieItem },
+      visible: { menuType: enumContextMenuType.HomeGroupItem },
     },
     {
       type: "separator",
@@ -123,8 +124,8 @@ function buildBuiltinMenuModel(ctx: MenuContext): MenuItem[] {
       order: 111,
       visible: {
         menuType: [
-          enumContextMenuType.CategorieView,
-          enumContextMenuType.CategorieItem,
+          enumContextMenuType.HomeGroupView,
+          enumContextMenuType.HomeGroupItem,
           enumContextMenuType.IconView,
           enumContextMenuType.IconItem,
         ],
@@ -136,7 +137,14 @@ function buildBuiltinMenuModel(ctx: MenuContext): MenuItem[] {
       label: "隐藏启动台",
       action: { kind: "hide-window" },
       order: 120,
-      visible: { menuType: enumContextMenuType.CategorieView },
+      visible: {
+        menuType: [
+          enumContextMenuType.HomeGroupView,
+          enumContextMenuType.Home,
+          enumContextMenuType.HomePinnedView,
+          enumContextMenuType.HomeRecentUsedView,
+        ],
+      },
     },
     {
       type: "item",
@@ -165,8 +173,8 @@ function buildBuiltinMenuModel(ctx: MenuContext): MenuItem[] {
       order: 200,
       visible: {
         menuType: [
-          enumContextMenuType.CategorieView,
-          enumContextMenuType.CategorieItem,
+          enumContextMenuType.HomeGroupView,
+          enumContextMenuType.HomeGroupItem,
           enumContextMenuType.IconView,
           enumContextMenuType.IconItem,
         ],
@@ -179,8 +187,8 @@ function buildBuiltinMenuModel(ctx: MenuContext): MenuItem[] {
       order: 210,
       visible: {
         menuType: [
-          enumContextMenuType.CategorieView,
-          enumContextMenuType.CategorieItem,
+          enumContextMenuType.HomeGroupView,
+          enumContextMenuType.HomeGroupItem,
         ],
       },
       children: [4, 5, 6, 7].map((cols) => ({

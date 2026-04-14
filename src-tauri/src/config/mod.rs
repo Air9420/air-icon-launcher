@@ -1,164 +1,20 @@
-use serde::{Deserialize, Serialize};
+pub mod types;
+
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 use crate::error::{AppError, AppResult};
+pub use types::*;
 
 pub const CONFIG_VERSION: &str = "1.0";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct HomeSectionLayout {
-    pub preset: String,
-    pub rows: u32,
-    pub cols: u32,
+fn write_atomically(path: &Path, data: &[u8]) -> Result<(), String> {
+    let temp_path = path.with_extension("tmp");
+    fs::write(&temp_path, data).map_err(|e| e.to_string())?;
+    fs::rename(&temp_path, path).map_err(|e| e.to_string())
 }
 
-impl Default for HomeSectionLayout {
-    fn default() -> Self {
-        Self {
-            preset: "1x5".to_string(),
-            rows: 1,
-            cols: 5,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct HomeSectionLayouts {
-    pub pinned: HomeSectionLayout,
-    pub recent: HomeSectionLayout,
-}
-
-impl Default for HomeSectionLayouts {
-    fn default() -> Self {
-        Self {
-            pinned: HomeSectionLayout::default(),
-            recent: HomeSectionLayout::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct AppConfig {
-    pub version: String,
-    pub theme: String,
-    pub category_cols: u32,
-    pub launcher_cols: u32,
-    pub toggle_shortcut: String,
-    pub clipboard_shortcut: String,
-    pub follow_mouse_on_show: bool,
-    pub follow_mouse_y_anchor: String,
-    pub clipboard_history_enabled: bool,
-    pub home_section_layouts: HomeSectionLayouts,
-    pub clipboard_max_records: usize,
-    pub clipboard_max_image_size_mb: f64,
-    pub clipboard_encrypted: bool,
-    pub clipboard_storage_path: Option<String>,
-    pub backup_on_exit: bool,
-    pub backup_frequency: String,
-    pub backup_retention: usize,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            version: CONFIG_VERSION.to_string(),
-            theme: "system".to_string(),
-            category_cols: 5,
-            launcher_cols: 5,
-            toggle_shortcut: "alt+space".to_string(),
-            clipboard_shortcut: "alt+v".to_string(),
-            follow_mouse_on_show: false,
-            follow_mouse_y_anchor: "center".to_string(),
-            clipboard_history_enabled: true,
-            home_section_layouts: HomeSectionLayouts::default(),
-            clipboard_max_records: 100,
-            clipboard_max_image_size_mb: 1.0,
-            clipboard_encrypted: false,
-            clipboard_storage_path: None,
-            backup_on_exit: false,
-            backup_frequency: "none".to_string(),
-            backup_retention: 10,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LauncherData {
-    pub version: String,
-    pub categories: Vec<CategoryData>,
-    pub favorite_item_ids: Vec<String>,
-    pub recent_used_items: Vec<RecentUsedItemData>,
-}
-
-impl Default for LauncherData {
-    fn default() -> Self {
-        Self {
-            version: CONFIG_VERSION.to_string(),
-            categories: Vec::new(),
-            favorite_item_ids: Vec::new(),
-            recent_used_items: Vec::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CategoryData {
-    pub id: String,
-    pub name: String,
-    pub custom_icon_base64: Option<String>,
-    pub items: Vec<LauncherItemData>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LauncherItemData {
-    pub id: String,
-    pub name: String,
-    pub path: String,
-    pub is_directory: bool,
-    pub icon_base64: Option<String>,
-    pub original_icon_base64: Option<String>,
-    pub is_favorite: bool,
-    pub last_used_at: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RecentUsedItemData {
-    pub category_id: String,
-    pub item_id: String,
-    pub used_at: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExportData {
-    pub version: String,
-    pub export_time: u64,
-    pub launcher_data: Option<LauncherData>,
-    pub settings: Option<AppConfig>,
-    pub clipboard_history: Option<Vec<ClipboardRecordData>>,
-    pub plugins: Option<Vec<PluginData>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClipboardRecordData {
-    pub id: String,
-    pub content: String,
-    pub record_type: String,
-    pub timestamp: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginData {
-    pub id: String,
-    pub name: String,
-    pub enabled: bool,
-    pub config: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ConfigManager {
     app_data_dir: PathBuf,
     config_path: PathBuf,
@@ -172,15 +28,15 @@ impl ConfigManager {
             .path()
             .app_data_dir()
             .unwrap_or_else(|_| std::env::temp_dir());
-        
+
         let _ = fs::create_dir_all(&app_data_dir);
-        
+
         let config_path = app_data_dir.join("config.json");
         let launcher_data_path = app_data_dir.join("launcher_data.json");
         let backups_dir = app_data_dir.join("backups");
-        
+
         let _ = fs::create_dir_all(&backups_dir);
-        
+
         Self {
             app_data_dir,
             config_path,
@@ -200,12 +56,12 @@ impl ConfigManager {
     pub fn launcher_data_path(&self) -> PathBuf {
         self.launcher_data_path.clone()
     }
-    
+
     pub fn load_config(&self) -> AppConfig {
         if !self.config_path.exists() {
             return AppConfig::default();
         }
-        
+
         match fs::read_to_string(&self.config_path) {
             Ok(content) => {
                 match serde_json::from_str::<AppConfig>(&content) {
@@ -244,19 +100,18 @@ impl ConfigManager {
             .with_file_name(format!("config.bad.{}.json", timestamp));
         fs::rename(&self.config_path, backup_path).map_err(|e| e.to_string())
     }
-    
+
     pub fn save_config(&self, config: &AppConfig) -> Result<(), String> {
         let content = serde_json::to_string_pretty(config)
             .map_err(|e| e.to_string())?;
-        fs::write(&self.config_path, content)
-            .map_err(|e| e.to_string())
+        write_atomically(&self.config_path, content.as_bytes())
     }
-    
+
     pub fn load_launcher_data(&self) -> LauncherData {
         if !self.launcher_data_path.exists() {
             return LauncherData::default();
         }
-        
+
         match fs::read_to_string(&self.launcher_data_path) {
             Ok(content) => {
                 match serde_json::from_str::<LauncherData>(&content) {
@@ -267,45 +122,47 @@ impl ConfigManager {
             Err(_) => LauncherData::default(),
         }
     }
-    
+
     pub fn save_launcher_data(&self, data: &LauncherData) -> Result<(), String> {
         let content = serde_json::to_string_pretty(data)
             .map_err(|e| e.to_string())?;
-        fs::write(&self.launcher_data_path, content)
-            .map_err(|e| e.to_string())
+        write_atomically(&self.launcher_data_path, content.as_bytes())
     }
-    
+
+    pub fn get_backups_dir(&self) -> PathBuf {
+        self.backups_dir.clone()
+    }
+
     pub fn create_backup(&self, config: &AppConfig, launcher_data: &LauncherData) -> Result<String, String> {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        
+
         let backup_name = format!("backup_{}.json", timestamp);
         let backup_path = self.backups_dir.join(&backup_name);
-        
+
         let backup_data = serde_json::json!({
             "version": CONFIG_VERSION,
             "backup_time": timestamp,
             "config": config,
             "launcher_data": launcher_data,
         });
-        
+
         let content = serde_json::to_string_pretty(&backup_data)
             .map_err(|e| e.to_string())?;
-        
-        fs::write(&backup_path, &content)
-            .map_err(|e| e.to_string())?;
-        
+
+        write_atomically(&backup_path, content.as_bytes())?;
+
         Ok(backup_path.to_string_lossy().to_string())
     }
-    
+
     pub fn list_backups(&self) -> Result<Vec<BackupInfo>, String> {
         let mut backups = Vec::new();
-        
+
         let entries = fs::read_dir(&self.backups_dir)
             .map_err(|e| e.to_string())?;
-        
+
         for entry in entries {
             if let Ok(entry) = entry {
                 let path = entry.path();
@@ -319,7 +176,7 @@ impl ConfigManager {
                                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                                         .map(|d| d.as_secs())
                                         .unwrap_or(0);
-                                    
+
                                     backups.push(BackupInfo {
                                         filename: name_str.to_string(),
                                         path: path.to_string_lossy().to_string(),
@@ -333,76 +190,55 @@ impl ConfigManager {
                 }
             }
         }
-        
+
         backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         Ok(backups)
     }
-    
+
     pub fn restore_backup(&self, filename: &str) -> Result<(AppConfig, LauncherData), String> {
         let backup_path = self.backups_dir.join(filename);
-        
+
         if !backup_path.exists() {
             return Err("Backup file not found".to_string());
         }
-        
+
         let content = fs::read_to_string(&backup_path)
             .map_err(|e| e.to_string())?;
-        
+
         let backup: serde_json::Value = serde_json::from_str(&content)
             .map_err(|e| e.to_string())?;
-        
+
         let config: AppConfig = backup.get("config")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
-        
+
         let launcher_data: LauncherData = backup.get("launcher_data")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
-        
+
         Ok((config, launcher_data))
     }
-    
+
     pub fn delete_backup(&self, filename: &str) -> Result<(), String> {
         let backup_path = self.backups_dir.join(filename);
         fs::remove_file(&backup_path)
             .map_err(|e| e.to_string())
     }
-    
-    pub fn cleanup_old_backups(&self, retention: usize) -> Result<(), String> {
-        let mut backups = self.list_backups()?;
-        
+
+    pub fn cleanup_old_backups(&self, retention: usize) -> AppResult<()> {
+        let backups = self.list_backups().map_err(|e| AppError::internal(e))?;
+
         if backups.len() > retention {
-            backups.truncate(retention);
-            for backup in backups.into_iter().skip(retention) {
-                let _ = self.delete_backup(&backup.filename);
+            let to_delete: Vec<_> = backups.into_iter().skip(retention).collect();
+            for backup in to_delete {
+                self.delete_backup(&backup.filename).map_err(|e| AppError::internal(e))?;
             }
         }
-        
+
         Ok(())
     }
-    
-    pub fn get_backups_dir(&self) -> PathBuf {
-        self.backups_dir.clone()
-    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BackupInfo {
-    pub filename: String,
-    pub path: String,
-    pub created_at: u64,
-    pub size: u64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ConfigPaths {
-    pub app_data_dir: String,
-    pub config_path: String,
-    pub launcher_data_path: String,
-    pub backups_dir: String,
-}
-
-/// 获取应用配置文件的实际路径信息。
 #[tauri::command]
 pub fn get_config_paths(manager: tauri::State<'_, ConfigManager>) -> AppResult<ConfigPaths> {
     Ok(ConfigPaths {
@@ -413,7 +249,6 @@ pub fn get_config_paths(manager: tauri::State<'_, ConfigManager>) -> AppResult<C
     })
 }
 
-/// 读取当前 config.json 的原始文本（用于诊断）。
 #[tauri::command]
 pub fn read_raw_config_json(manager: tauri::State<'_, ConfigManager>) -> AppResult<String> {
     let path = manager.config_path();
@@ -477,7 +312,6 @@ pub fn export_data(
     manager: tauri::State<'_, ConfigManager>,
     include_launcher_data: bool,
     include_settings: bool,
-    include_clipboard: bool,
     include_plugins: bool,
 ) -> AppResult<ExportData> {
     let export_time = std::time::SystemTime::now()
@@ -497,12 +331,6 @@ pub fn export_data(
         None
     };
 
-    let clipboard_history = if include_clipboard {
-        None
-    } else {
-        None
-    };
-
     let plugins = if include_plugins {
         Some(Vec::new())
     } else {
@@ -514,7 +342,6 @@ pub fn export_data(
         export_time,
         launcher_data,
         settings,
-        clipboard_history,
         plugins,
     })
 }
@@ -530,9 +357,22 @@ pub fn import_data(
             manager.save_config(&settings).map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))?;
         } else {
             let mut current = manager.load_config();
-            if settings.theme != "system" {
-                current.theme = settings.theme;
-            }
+            current.theme = settings.theme;
+            current.category_cols = settings.category_cols;
+            current.launcher_cols = settings.launcher_cols;
+            current.toggle_shortcut = settings.toggle_shortcut;
+            current.clipboard_shortcut = settings.clipboard_shortcut;
+            current.follow_mouse_on_show = settings.follow_mouse_on_show;
+            current.follow_mouse_y_anchor = settings.follow_mouse_y_anchor;
+            current.clipboard_history_enabled = settings.clipboard_history_enabled;
+            current.home_section_layouts = settings.home_section_layouts;
+            current.clipboard_max_records = settings.clipboard_max_records;
+            current.clipboard_max_image_size_mb = settings.clipboard_max_image_size_mb;
+            current.clipboard_encrypted = settings.clipboard_encrypted;
+            current.clipboard_storage_path = settings.clipboard_storage_path;
+            current.backup_on_exit = settings.backup_on_exit;
+            current.backup_frequency = settings.backup_frequency;
+            current.backup_retention = settings.backup_retention;
             manager.save_config(&current).map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))?;
         }
     }
@@ -553,6 +393,24 @@ pub fn import_data(
                     current.categories.push(category);
                 }
             }
+            for pinned_id in launcher_data.favorite_item_ids {
+                if !current.favorite_item_ids.iter().any(|id| id == &pinned_id) {
+                    current.favorite_item_ids.push(pinned_id);
+                }
+            }
+            for recent_item in launcher_data.recent_used_items {
+                if let Some(existing) = current
+                    .recent_used_items
+                    .iter_mut()
+                    .find(|item| item.category_id == recent_item.category_id && item.item_id == recent_item.item_id)
+                {
+                    if recent_item.used_at > existing.used_at {
+                        existing.used_at = recent_item.used_at;
+                    }
+                } else {
+                    current.recent_used_items.push(recent_item);
+                }
+            }
             manager.save_launcher_data(&current).map_err(|e| AppError::new("LAUNCHER_DATA_SAVE_ERROR", e))?;
         }
     }
@@ -567,14 +425,12 @@ pub fn export_to_file(
     format: String,
     include_launcher_data: bool,
     include_settings: bool,
-    include_clipboard: bool,
     include_plugins: bool,
 ) -> AppResult<()> {
     let data = export_data(
         manager,
         include_launcher_data,
         include_settings,
-        include_clipboard,
         include_plugins,
     )?;
 
@@ -681,9 +537,9 @@ pub fn import_from_file(
         serde_json::from_str(&content)
             .map_err(|e| AppError::new("PARSE_ERROR", e.to_string()))?
     };
-    
+
     import_data(manager, data.clone(), merge_mode)?;
-    
+
     Ok(data)
 }
 
@@ -714,10 +570,10 @@ mod tests {
                 .map(|d| d.as_secs())
                 .unwrap_or(0)
         ));
-        fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&base).unwrap();
 
         let config_path = base.join("config.json");
-        fs::write(&config_path, "{ this is not json").unwrap();
+        std::fs::write(&config_path, "{ this is not json").unwrap();
 
         let manager = ConfigManager {
             app_data_dir: base.clone(),
@@ -730,11 +586,11 @@ mod tests {
         assert_eq!(loaded.theme, "system");
         assert!(manager.config_path.exists());
 
-        let content = fs::read_to_string(&manager.config_path).unwrap();
+        let content = std::fs::read_to_string(&manager.config_path).unwrap();
         let reparsed: AppConfig = serde_json::from_str(&content).unwrap();
         assert_eq!(reparsed.theme, "system");
 
-        let entries = fs::read_dir(&base).unwrap();
+        let entries = std::fs::read_dir(&base).unwrap();
         let mut found_backup = false;
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
@@ -745,6 +601,6 @@ mod tests {
         }
         assert!(found_backup);
 
-        let _ = fs::remove_dir_all(&base);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

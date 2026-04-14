@@ -1,12 +1,24 @@
 import type {
-    enumContextMenuType,
     HomeLayoutPresetKey,
     HomeLayoutSectionKey,
 } from "../stores";
 import type { VisibilityCondition, ResolveContext, LabelValue, ConditionValue } from "./conditions";
 
 export type { VisibilityCondition, ResolveContext, LabelValue, ConditionValue };
+
 export { evaluateCondition, resolveConditionValue, resolveLabel, resolveLabel as resolveMenuLabel } from "./conditions";
+
+export enum enumContextMenuType {
+    Home = "Home",
+    HomeGroupItem = "Home-Group-Item",
+    HomeGroupView = "Home-Group-View",
+    HomePinnedView = "Home-Pinned-View",
+    HomeRecentUsedView = "Home-Recent-Used-View",
+    SettingsView = "Settings-View",
+    ClipboardHistoryView = "Clipboard-History-View",
+    IconView = "Icon-View",
+    IconItem = "Icon-Item",
+}
 
 export type MenuContext = ResolveContext;
 

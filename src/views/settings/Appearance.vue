@@ -3,12 +3,33 @@
         <div class="section">
             <div class="section-title">窗口效果</div>
             <label class="check">
-                <input v-model="windowEffectsDraft" type="checkbox" @change="onWindowEffectsChange" />
-                <span>毛玻璃特效</span>
+                <input v-model="performanceModeDraft" type="checkbox" @change="onPerformanceModeChange" />
+                <span>性能模式</span>
             </label>
-            <div class="hint">
-                关闭毛玻璃特效后将使用纯色背景，透明主题将不可用。需要重启程序生效。
+            <div v-if="performanceMode" class="hint">
+                性能模式已启用，透明效果已关闭
             </div>
+            <template v-else>
+                <div class="effect-type-row">
+                    <span class="effect-type-label">效果类型</span>
+                    <div class="segmented effect-type-segmented">
+                        <button class="seg-btn" type="button" :class="{ active: windowEffectType === 'blur' }"
+                            @click="onWindowEffectTypeChange('blur')">
+                            Blur
+                        </button>
+                        <button class="seg-btn" type="button" :class="{ active: windowEffectType === 'acrylic' }"
+                            @click="onWindowEffectTypeChange('acrylic')">
+                            Acrylic
+                        </button>
+                    </div>
+                </div>
+                <div class="hint">
+                    Blur 效果更轻量, Acrylic 更耗性能但更美观
+                </div>
+                <div class="hint">
+                    拖拽窗口卡顿时建议切换为 Blur 效果
+                </div>
+            </template>
         </div>
 
         <div class="section">
@@ -41,30 +62,18 @@
             <div class="icon-size-row">
                 <span class="icon-size-label">分类</span>
                 <div class="segmented icon-size-segmented">
-                    <button class="seg-btn" type="button" :class="{ active: categoryCols === 4 }"
-                        @click="onSetCategoryCols(4)">
-                        4
-                    </button>
-                    <button class="seg-btn" type="button" :class="{ active: categoryCols === 5 }"
-                        @click="onSetCategoryCols(5)">
-                        5
+                    <button v-for="cols in CATEGORY_COLS_PRESETS" :key="`cat-${cols}`" class="seg-btn" type="button"
+                        :class="{ active: categoryCols === cols }" @click="onSetCategoryCols(cols)">
+                        {{ cols }}
                     </button>
                 </div>
             </div>
             <div class="icon-size-row">
                 <span class="icon-size-label">启动项</span>
                 <div class="segmented icon-size-segmented">
-                    <button class="seg-btn" type="button" :class="{ active: launcherCols === 4 }"
-                        @click="onSetLauncherCols(4)">
-                        4
-                    </button>
-                    <button class="seg-btn" type="button" :class="{ active: launcherCols === 5 }"
-                        @click="onSetLauncherCols(5)">
-                        5
-                    </button>
-                    <button class="seg-btn" type="button" :class="{ active: launcherCols === 6 }"
-                        @click="onSetLauncherCols(6)">
-                        6
+                    <button v-for="cols in LAUNCHER_COLS_PRESETS" :key="`launcher-${cols}`" class="seg-btn" type="button"
+                        :class="{ active: launcherCols === cols }" @click="onSetLauncherCols(cols)">
+                        {{ cols }}
                     </button>
                 </div>
             </div>
@@ -151,12 +160,10 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import { storeToRefs } from "pinia";
-import { invoke } from "@tauri-apps/api/core";
-import { safeInvoke } from "../../utils/invoke-wrapper";
-import { Store, useSettingsStore } from "../../stores";
-import { useUIStore, HOME_LAYOUT_PRESETS, HomeLayoutPresetKey } from "../../stores/uiStore";
+import { useSettingsStore } from "../../stores";
+import { useUIStore, HOME_LAYOUT_PRESETS, CATEGORY_COLS_PRESETS, LAUNCHER_COLS_PRESETS, HomeLayoutPresetKey } from "../../stores/uiStore";
+import { showToast } from "../../composables/useGlobalToast";
 
-const store = Store();
 const settingsStore = useSettingsStore();
 const uiStore = useUIStore();
 const {
@@ -167,13 +174,15 @@ const {
 const {
     theme,
     windowEffectsEnabled,
+    performanceMode,
+    windowEffectType,
 } = storeToRefs(settingsStore);
 
-const windowEffectsDraft = ref<boolean>(true);
+const performanceModeDraft = ref<boolean>(false);
 const homeLayoutPresetOptions = HOME_LAYOUT_PRESETS.map((x) => x.preset);
 
-watch(windowEffectsEnabled, (val) => {
-    windowEffectsDraft.value = val;
+watch(performanceMode, (val) => {
+    performanceModeDraft.value = val;
 }, { immediate: true });
 
 function onSetCategoryCols(cols: number) {
@@ -191,36 +200,29 @@ function onSetHomeSectionLayoutPreset(
     uiStore.setHomeSectionLayoutPreset(section, preset);
 }
 
-function onSetTheme(newTheme: "light" | "dark" | "transparent" | "system") {
+async function onSetTheme(newTheme: "light" | "dark" | "transparent" | "system") {
     if (newTheme === "transparent" && !windowEffectsEnabled.value) {
         return;
     }
-    settingsStore.setTheme(newTheme);
+    await settingsStore.setTheme(newTheme);
 }
 
-async function onWindowEffectsChange() {
-    const enabled = windowEffectsDraft.value;
-
-    const shouldRestart = windowEffectsEnabled.value !== enabled;
-
-    if (!enabled && theme.value === "transparent") {
-        settingsStore.setTheme("system");
-    }
-
-    settingsStore.setWindowEffectsEnabled(enabled);
-
+async function onPerformanceModeChange() {
+    const enabled = performanceModeDraft.value;
     try {
-        await safeInvoke("set_window_effects", { enabled });
-
-        if (shouldRestart) {
-            if (confirm("毛玻璃特效设置已更改，需要重启程序才能完全生效。是否立即重启？")) {
-                safeInvoke("restart_app");
-            }
-        }
+        await settingsStore.setPerformanceMode(enabled);
     } catch (e) {
-        console.error("Failed to set window effects:", e);
-        windowEffectsDraft.value = !enabled;
-        alert("设置失败：" + e);
+        console.error("设置失败:", e);
+        showToast("设置失败，可能需要重启应用以完全生效", { type: "error" });
+    }
+}
+
+async function onWindowEffectTypeChange(type: "blur" | "acrylic") {
+    try {
+        await settingsStore.setWindowEffectType(type);
+    } catch (e) {
+        console.error("设置失败:", e);
+        showToast("设置失败，可能需要重启应用以完全生效", { type: "error" });
     }
 }
 </script>
@@ -346,5 +348,22 @@ async function onWindowEffectsChange() {
     font-size: 12px;
     color: var(--text-hint);
     -webkit-app-region: no-drag;
+}
+
+.effect-type-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.effect-type-label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    min-width: 70px;
+}
+
+.effect-type-segmented {
+    flex: 1;
 }
 </style>

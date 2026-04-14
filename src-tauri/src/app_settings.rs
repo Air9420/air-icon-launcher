@@ -36,6 +36,24 @@ impl Default for AppSettingsState {
     }
 }
 
+impl AppSettingsState {
+    pub fn from_config(config: &crate::config::AppConfig) -> Self {
+        let anchor = match config.follow_mouse_y_anchor.as_str() {
+            "top" => FollowMouseYAnchor::Top,
+            "bottom" => FollowMouseYAnchor::Bottom,
+            _ => FollowMouseYAnchor::Center,
+        };
+        Self {
+            inner: Mutex::new(AppSettings {
+                toggle_shortcut: config.toggle_shortcut.clone(),
+                clipboard_shortcut: config.clipboard_shortcut.clone(),
+                follow_mouse_on_show: config.follow_mouse_on_show,
+                follow_mouse_y_anchor: anchor,
+            }),
+        }
+    }
+}
+
 pub fn show_main_window(app: &AppHandle, follow_mouse_on_show: bool, anchor: FollowMouseYAnchor) {
     let Some(window) = app.get_webview_window("main") else {
         return;
@@ -84,6 +102,7 @@ pub fn show_main_window(app: &AppHandle, follow_mouse_on_show: bool, anchor: Fol
 }
 
 /// 切换主窗口显示：已可见且已聚焦则隐藏；已可见但未聚焦则前置并聚焦；不可见则显示并聚焦。
+#[allow(dead_code)]
 pub fn toggle_main_window(app: &AppHandle, follow_mouse_on_show: bool, anchor: FollowMouseYAnchor) {
     let Some(window) = app.get_webview_window("main") else {
         return;
@@ -223,6 +242,11 @@ pub fn set_toggle_shortcut(
     if !old.is_empty() {
         use tauri_plugin_global_shortcut::GlobalShortcutExt;
         let _ = app.global_shortcut().unregister(old.as_str());
+    }
+
+    if let Some(config) = crate::keyboard_hook::parse_hotkey(shortcut.as_str()) {
+        crate::keyboard_hook::register_hotkey(config);
+        crate::keyboard_hook::enable_hook(true);
     }
 
     {

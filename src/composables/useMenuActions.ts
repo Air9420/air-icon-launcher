@@ -46,6 +46,8 @@ import type { DropRecord } from "./types";
 import { selectAndConvertIcon } from "../utils/iconUtils";
 import { executePluginCommand } from "../plugins/api";
 import type { useConfirmDialog } from "./useConfirmDialog";
+import type { useInputDialog } from "./useInputDialog";
+import { useGlobalToast } from "./useGlobalToast";
 
 export interface UseMenuActionsOptions {
     currentCategoryId: Ref<string | null>;
@@ -55,6 +57,7 @@ export interface UseMenuActionsOptions {
     processedDropIds: Set<string>;
     closeContextMenu: () => void;
     confirm: ReturnType<typeof useConfirmDialog>["confirm"];
+    inputDialog: ReturnType<typeof useInputDialog>["input"];
 }
 
 /**
@@ -90,10 +93,9 @@ export function useMenuActions(options: UseMenuActionsOptions) {
     const {
         currentCategoryId,
         currentLauncherItemId,
-        lastDrop,
-        processedDropIds,
         closeContextMenu,
         confirm,
+        inputDialog,
     } = options;
 
     const store = Store();
@@ -101,6 +103,7 @@ export function useMenuActions(options: UseMenuActionsOptions) {
     const categoryStore = useCategoryStore();
     const router = useRouter();
     const lastAction = ref<string>("");
+    const { showToast } = useGlobalToast();
 
     /**
      * 处理"添加项目"菜单动作
@@ -127,6 +130,19 @@ export function useMenuActions(options: UseMenuActionsOptions) {
             return;
         }
 
+        const addType = await confirm({
+            title: "添加项目",
+            message: "请选择添加类型",
+            confirmText: "网址",
+            cancelText: "文件",
+        });
+
+        if (addType) {
+            await onAddUrlItem();
+            closeContextMenu();
+            return;
+        }
+
         const selected = await open({
             multiple: true,
             filters: [
@@ -147,7 +163,7 @@ export function useMenuActions(options: UseMenuActionsOptions) {
         }
 
         const paths = Array.isArray(selected) ? selected : [selected];
-        
+
         try {
             const iconBase64s = await invoke<Array<string | null>>("extract_icons_from_paths", {
                 paths: paths,
@@ -171,6 +187,76 @@ export function useMenuActions(options: UseMenuActionsOptions) {
         }
 
         closeContextMenu();
+    }
+
+    async function onAddUrlItem() {
+        if (!currentCategoryId.value) {
+            lastAction.value = "添加网址：请先选择一个类目";
+            return;
+        }
+
+        const values = await inputDialog({
+            title: "添加网址",
+            message: "请输入网址和名称",
+            confirmText: "添加",
+            cancelText: "取消",
+            defaultValue: "https://",
+            placeholder: "https://example.com",
+            inputType: "url",
+            secondInputLabel: "名称",
+            secondInputPlaceholder: "输入名称（可选）",
+            secondInputType: "text",
+            secondDefaultValue: "",
+        });
+
+        if (!values) {
+            lastAction.value = "添加网址：已取消";
+            return;
+        }
+
+        const [url, name] = values;
+        let trimmedUrl = (url || "").trim();
+        const trimmedName = (name || "").trim();
+
+        if (!trimmedUrl) {
+            lastAction.value = "添加网址失败：网址不能为空";
+            return;
+        }
+
+        if (!trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
+            trimmedUrl = "https://" + trimmedUrl;
+        }
+
+        const finalName = trimmedName || (() => {
+            try {
+                return new URL(trimmedUrl).hostname;
+            } catch {
+                return trimmedUrl;
+            }
+        })();
+
+        const pendingItemId = store.addUrlLauncherItemToCategory(currentCategoryId.value, {
+            name: finalName,
+            url: trimmedUrl,
+            icon_base64: null,
+        });
+
+        lastAction.value = `已添加网址：${finalName}`;
+
+        fetchFaviconAsync(trimmedUrl, pendingItemId, currentCategoryId.value);
+    }
+
+    async function fetchFaviconAsync(url: string, itemId: string, categoryId: string) {
+        try {
+            const iconBase64 = await invoke<string | null>("fetch_favicon_from_url", { url });
+            if (iconBase64) {
+                store.updateLauncherItemIcon(categoryId, itemId, iconBase64);
+            } else {
+                showToast("已添加（该网址无favicon.ico图标）");
+            }
+        } catch {
+            showToast("已添加（图标获取失败）");
+        }
     }
 
     /**

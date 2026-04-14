@@ -43,6 +43,23 @@
                 {{ shortcutError }}
             </div>
         </div>
+
+        <div class="section">
+            <div class="shortcut-row">
+                <span class="shortcut-label">⚡ 强力模式</span>
+                <label class="toggle-switch">
+                    <input
+                        type="checkbox"
+                        :checked="strongShortcutMode"
+                        @change="onStrongShortcutModeChange"
+                    />
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="hint">
+                强力模式使用低级键盘钩子，可抢占其他应用的热键（如 WPS/Office）。可能影响游戏、远程桌面等场景。
+            </div>
+        </div>
     </div>
 </template>
 
@@ -50,14 +67,14 @@
 import { storeToRefs } from "pinia";
 import { onBeforeUnmount, ref, watchEffect } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { safeInvoke } from "../../utils/invoke-wrapper";
-import { Store, useSettingsStore } from "../../stores";
+import { invokeOrThrow } from "../../utils/invoke-wrapper";
+import { useSettingsStore } from "../../stores";
 
-const store = Store();
 const settingsStore = useSettingsStore();
 const {
     toggleShortcut,
     clipboardShortcut,
+    strongShortcutMode,
 } = storeToRefs(settingsStore);
 
 const shortcutDraft = ref<string>("");
@@ -98,7 +115,7 @@ async function cancelRecording() {
     shortcutError.value = "";
     if (recordingTarget.value === "main" && suspendedMainShortcut.value) {
         try {
-            await safeInvoke("resume_toggle_shortcut", { shortcut: suspendedMainShortcut.value });
+            await invokeOrThrow("resume_toggle_shortcut", { shortcut: suspendedMainShortcut.value });
         } finally {
             suspendedMainShortcut.value = "";
         }
@@ -152,7 +169,7 @@ async function onRecordKeyDown(ev: KeyboardEvent) {
             shortcutDraft.value = toggleShortcut.value;
             if (suspendedMainShortcut.value) {
                 try {
-                    await safeInvoke("resume_toggle_shortcut", { shortcut: suspendedMainShortcut.value });
+                    await invokeOrThrow("resume_toggle_shortcut", { shortcut: suspendedMainShortcut.value });
                 } finally {
                     suspendedMainShortcut.value = "";
                 }
@@ -162,22 +179,22 @@ async function onRecordKeyDown(ev: KeyboardEvent) {
         shortcutDraft.value = next;
         if (suspendedMainShortcut.value && next === suspendedMainShortcut.value) {
             try {
-                await safeInvoke("resume_toggle_shortcut", { shortcut: suspendedMainShortcut.value });
+                await invokeOrThrow("resume_toggle_shortcut", { shortcut: suspendedMainShortcut.value });
             } finally {
                 suspendedMainShortcut.value = "";
             }
             return;
         }
         try {
-            await safeInvoke("set_toggle_shortcut", { shortcut: next });
+            await invokeOrThrow("set_toggle_shortcut", { shortcut: next });
             toggleShortcut.value = next;
             suspendedMainShortcut.value = "";
-        } catch (e: any) {
-            shortcutError.value = typeof e === "string" ? e : e?.message || "设置失败";
+        } catch (e: unknown) {
+            shortcutError.value = typeof e === "string" ? e : e instanceof Error ? e.message || "设置失败" : "设置失败";
             shortcutDraft.value = toggleShortcut.value;
             if (suspendedMainShortcut.value) {
                 try {
-                    await safeInvoke("resume_toggle_shortcut", { shortcut: suspendedMainShortcut.value });
+                    await invokeOrThrow("resume_toggle_shortcut", { shortcut: suspendedMainShortcut.value });
                 } finally {
                     suspendedMainShortcut.value = "";
                 }
@@ -192,10 +209,19 @@ async function onRecordKeyDown(ev: KeyboardEvent) {
         clipboardShortcutDraft.value = next;
         try {
             await settingsStore.setClipboardShortcut(next);
-        } catch (e: any) {
-            shortcutError.value = typeof e === "string" ? e : e?.message || "设置失败";
+        } catch (e: unknown) {
+            shortcutError.value = typeof e === "string" ? e : e instanceof Error ? e.message || "设置失败" : "设置失败";
             clipboardShortcutDraft.value = clipboardShortcut.value;
         }
+    }
+}
+
+async function onStrongShortcutModeChange(e: Event) {
+    const target = e.target as HTMLInputElement;
+    try {
+        await settingsStore.setStrongShortcutMode(target.checked);
+    } catch (err) {
+        console.error(err);
     }
 }
 
@@ -273,5 +299,50 @@ onBeforeUnmount(() => {
 
 .hint.error {
     color: var(--error-color);
+}
+
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--border-color-strong);
+    transition: 0.2s;
+    border-radius: 24px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.2s;
+    border-radius: 50%;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background-color: var(--primary-color);
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+    transform: translateX(20px);
 }
 </style>

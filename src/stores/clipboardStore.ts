@@ -12,16 +12,26 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { createVersionedPersistConfig } from "../utils/versioned-persist";
+import { convertFileSrc } from "@tauri-apps/api/core";
 
 /**
  * 剪贴板记录类型
  */
 export type ClipboardRecord = {
     id: string;
-    content: string;
-    type: "text" | "image";
+    content_type: "text" | "image";
+    text_content: string | null;
+    image_path: string | null;
+    hash: string;
     timestamp: number;
 };
+
+export function getRecordContent(record: ClipboardRecord): string {
+    if (record.content_type === "image" && record.image_path) {
+        return convertFileSrc(record.image_path);
+    }
+    return record.text_content || "";
+}
 
 /**
  * 剪贴板历史管理 Store
@@ -48,24 +58,25 @@ export const useClipboardStore = defineStore("clipboard", () => {
     const clipboardHistory = ref<ClipboardRecord[]>([]);
     const clipboardHistoryEnabled = ref<boolean>(true);
     const maxRecords = ref<number>(100);
+    const currentClipboardHash = ref<string | null>(null);
 
-    /**
-     * 添加剪贴板记录
-     *
-     * @param record - 剪贴板记录对象
-     *
-     * @remarks
-     * - 如果内容已存在，不会重复添加
-     * - 最多保留 maxRecords 条记录
-     */
-    function addClipboardRecord(record: ClipboardRecord) {
-        const exists = clipboardHistory.value.some(r => r.content === record.content);
-        if (!exists) {
+    function addClipboardRecord(record: ClipboardRecord, forcePromote: boolean = false) {
+        const existingIndex = clipboardHistory.value.findIndex(r => r.hash === record.hash);
+        if (existingIndex !== -1) {
+            if (forcePromote) {
+                clipboardHistory.value.splice(existingIndex, 1);
+                clipboardHistory.value.unshift(record);
+            }
+        } else {
             clipboardHistory.value.unshift(record);
             if (maxRecords.value > 0 && clipboardHistory.value.length > maxRecords.value) {
                 clipboardHistory.value = clipboardHistory.value.slice(0, maxRecords.value);
             }
         }
+    }
+
+    function setCurrentClipboardHash(hash: string | null) {
+        currentClipboardHash.value = hash;
     }
 
     /**
@@ -112,10 +123,12 @@ export const useClipboardStore = defineStore("clipboard", () => {
         clipboardHistory,
         clipboardHistoryEnabled,
         maxRecords,
+        currentClipboardHash,
         addClipboardRecord,
         removeClipboardRecord,
         clearClipboardHistory,
         setClipboardHistoryEnabled,
         setMaxRecords,
+        setCurrentClipboardHash,
     };
-}, { persist: createVersionedPersistConfig("clipboard", ["clipboardHistory", "clipboardHistoryEnabled"]) as any });
+}, { persist: createVersionedPersistConfig("clipboard", ["clipboardHistory", "clipboardHistoryEnabled"]) });

@@ -1,8 +1,5 @@
-import type { enumContextMenuType } from "../stores";
-import type { ContextMenuItemInput } from "./contextMenuRegistry";
 import type { Permission } from "./permissions";
 import type { PluginAPIv1 } from "./api-v1";
-import type { PluginCategory, PluginLauncherItem } from "./dto";
 
 export interface PluginManifest {
   id: string;

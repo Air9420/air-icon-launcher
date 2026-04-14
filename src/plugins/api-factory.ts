@@ -15,6 +15,7 @@ import {
   unregisterContextMenuItems,
   clearContextMenuItemsByPlugin,
 } from "./contextMenuRegistry";
+import { launchStoredItem } from "../utils/launcher-service";
 
 type ToastType = "info" | "success" | "error";
 
@@ -81,11 +82,15 @@ export function createVersionedAPI(
             `Item ${itemId} not found in category ${categoryId}`
           );
         }
-        const result = await invoke<null>("launch_item", { path: item.path });
-        if (!result.ok) {
-          throw new Error(`Failed to launch: ${result.error.message}`);
-        }
-        store.recordItemUsage(categoryId, itemId);
+        await launchStoredItem(
+          {
+            categoryId,
+            itemId,
+          },
+          {
+            store,
+          }
+        );
       },
     },
 

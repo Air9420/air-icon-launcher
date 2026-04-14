@@ -1,18 +1,36 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
+import { invoke } from "../utils/invoke-wrapper";
 import { useCategoryStore, type Category } from "./categoryStore";
 import { useUIStore } from "./uiStore";
+import { useStatsStore } from "./statsStore";
 import { createVersionedPersistConfig } from "../utils/versioned-persist";
+import {
+    fuzzyMatchLauncherText,
+    mergeLauncherItems,
+    mergeRustSearchResults,
+    normalizeLauncherItemKey,
+} from "./launcher-search";
 
 export type LauncherItem = {
     id: string;
     name: string;
     path: string;
+    url?: string;
+    itemType: 'file' | 'url';
     isDirectory: boolean;
     iconBase64: string | null;
     originalIconBase64?: string | null;
     isFavorite?: boolean;
     lastUsedAt?: number;
+    launchDependencies: LaunchDependency[];
+    launchDelaySeconds: number;
+};
+
+export type LaunchDependency = {
+    categoryId: string;
+    itemId: string;
+    delayAfterSeconds: number;
 };
 
 export type GlobalSearchResult = {
@@ -32,6 +50,7 @@ export type RecentUsedItem = {
     categoryId: string;
     itemId: string;
     usedAt: number;
+    usageCount: number;
 };
 
 export type RecentUsedMergedItem = {
@@ -49,17 +68,68 @@ export type PinnedMergedItem = {
     categories: Category[];
 };
 
+export type RustSearchResult = {
+    id: string;
+    name: string;
+    path: string;
+    category_id: string;
+    fuzzy_score: number;
+    matched_pinyin_initial: boolean;
+    matched_pinyin_full: boolean;
+    rank_score: number;
+};
+
 export const useLauncherStore = defineStore(
     "launcher",
     () => {
         const searchKeyword = ref<string>("");
-        const favoriteItemIds = ref<string[]>([]);
-        const pinnedItemIds = computed<string[]>(() => favoriteItemIds.value);
+        const pinnedItemIds = ref<string[]>([]);
         const recentUsedItems = ref<RecentUsedItem[]>([]);
         const launcherItemsByCategoryId = ref<Record<string, LauncherItem[]>>({});
 
+        const rustSearchResults = ref<RustSearchResult[]>([]);
+        const isRustSearchReady = ref(false);
+
         function createLauncherItemId() {
             return `item-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        }
+
+        function normalizeDelaySeconds(value: number | undefined): number {
+            if (!Number.isFinite(value)) return 0;
+            return Math.max(0, Math.floor(value ?? 0));
+        }
+
+        function normalizeLaunchDependencies(
+            dependencies: LaunchDependency[] | undefined,
+            currentRef?: { categoryId: string; itemId: string }
+        ): LaunchDependency[] {
+            if (!Array.isArray(dependencies)) return [];
+
+            const seen = new Set<string>();
+            const normalized: LaunchDependency[] = [];
+
+            for (const dependency of dependencies) {
+                if (!dependency?.categoryId || !dependency?.itemId) continue;
+                if (
+                    currentRef &&
+                    dependency.categoryId === currentRef.categoryId &&
+                    dependency.itemId === currentRef.itemId
+                ) {
+                    continue;
+                }
+
+                const key = `${dependency.categoryId}:${dependency.itemId}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+
+                normalized.push({
+                    categoryId: dependency.categoryId,
+                    itemId: dependency.itemId,
+                    delayAfterSeconds: normalizeDelaySeconds(dependency.delayAfterSeconds),
+                });
+            }
+
+            return normalized;
         }
 
         function getNameFromPath(path: string) {
@@ -90,14 +160,50 @@ export const useLauncherStore = defineStore(
         function updateLauncherItem(
             categoryId: string,
             itemId: string,
-            patch: Partial<Pick<LauncherItem, "name">>
+            patch: Partial<Pick<LauncherItem, "name" | "url" | "path" | "launchDependencies" | "launchDelaySeconds">>
         ) {
             const list = getLauncherItemsByCategoryId(categoryId);
             const index = list.findIndex((x) => x.id === itemId);
             if (index === -1) return;
             const next = [...list];
-            next[index] = { ...next[index], ...patch };
+            next[index] = {
+                ...next[index],
+                ...patch,
+                launchDependencies:
+                    patch.launchDependencies !== undefined
+                        ? normalizeLaunchDependencies(patch.launchDependencies, { categoryId, itemId })
+                        : next[index].launchDependencies,
+                launchDelaySeconds:
+                    patch.launchDelaySeconds !== undefined
+                        ? normalizeDelaySeconds(patch.launchDelaySeconds)
+                        : next[index].launchDelaySeconds,
+            };
             setLauncherItemsByCategoryId(categoryId, next);
+        }
+
+        function removeDependenciesMatching(
+            predicate: (dependency: LaunchDependency) => boolean
+        ) {
+            const nextByCategoryId: Record<string, LauncherItem[]> = {};
+
+            for (const [categoryId, items] of Object.entries(launcherItemsByCategoryId.value)) {
+                nextByCategoryId[categoryId] = items.map((item) => {
+                    const nextDependencies = item.launchDependencies.filter(
+                        (dependency) => !predicate(dependency)
+                    );
+
+                    if (nextDependencies.length === item.launchDependencies.length) {
+                        return item;
+                    }
+
+                    return {
+                        ...item,
+                        launchDependencies: nextDependencies,
+                    };
+                });
+            }
+
+            launcherItemsByCategoryId.value = nextByCategoryId;
         }
 
         function deleteLauncherItem(categoryId: string, itemId: string) {
@@ -107,9 +213,13 @@ export const useLauncherStore = defineStore(
             const next = [...list];
             next.splice(index, 1);
             setLauncherItemsByCategoryId(categoryId, next);
-            favoriteItemIds.value = favoriteItemIds.value.filter((id) => id !== itemId);
+            pinnedItemIds.value = pinnedItemIds.value.filter((id) => id !== itemId);
             recentUsedItems.value = recentUsedItems.value.filter(
                 (x) => !(x.categoryId === categoryId && x.itemId === itemId)
+            );
+            removeDependenciesMatching(
+                (dependency) =>
+                    dependency.categoryId === categoryId && dependency.itemId === itemId
             );
         }
 
@@ -119,6 +229,7 @@ export const useLauncherStore = defineStore(
                 paths: string[];
                 directories: string[];
                 icon_base64s: Array<string | null>;
+                itemTypes?: Array<'file' | 'url'>;
             }
         ) {
             const existing = getLauncherItemsByCategoryId(categoryId);
@@ -129,17 +240,61 @@ export const useLauncherStore = defineStore(
                     payload.icon_base64s[index] !== undefined
                         ? payload.icon_base64s[index]
                         : null;
+                const itemType = payload.itemTypes?.[index] ?? 'file';
                 return {
                     id: createLauncherItemId(),
                     name: getNameFromPath(path),
-                    path,
+                    path: itemType === 'url' ? '' : path,
+                    url: itemType === 'url' ? path : undefined,
+                    itemType,
                     isDirectory: directorySet.has(path),
                     iconBase64,
                     originalIconBase64: iconBase64,
+                    launchDependencies: [],
+                    launchDelaySeconds: 0,
                 };
             });
 
             setLauncherItemsByCategoryId(categoryId, [...existing, ...nextItems]);
+        }
+
+        function addUrlLauncherItemToCategory(
+            categoryId: string,
+            payload: {
+                name: string;
+                url: string;
+                icon_base64?: string | null;
+            }
+        ): string {
+            const existing = getLauncherItemsByCategoryId(categoryId);
+            const iconBase64 = payload.icon_base64 ?? null;
+            const newItem: LauncherItem = {
+                id: createLauncherItemId(),
+                name: payload.name,
+                path: '',
+                url: payload.url,
+                itemType: 'url',
+                isDirectory: false,
+                iconBase64,
+                originalIconBase64: iconBase64,
+                launchDependencies: [],
+                launchDelaySeconds: 0,
+            };
+            setLauncherItemsByCategoryId(categoryId, [...existing, newItem]);
+            return newItem.id;
+        }
+
+        function updateLauncherItemIcon(categoryId: string, itemId: string, iconBase64: string) {
+            const list = getLauncherItemsByCategoryId(categoryId);
+            const index = list.findIndex((x) => x.id === itemId);
+            if (index === -1) return;
+            const next = [...list];
+            next[index] = {
+                ...next[index],
+                iconBase64,
+                originalIconBase64: iconBase64,
+            };
+            setLauncherItemsByCategoryId(categoryId, next);
         }
 
         function deleteCategoryCleanup(categoryId: string) {
@@ -149,12 +304,15 @@ export const useLauncherStore = defineStore(
             launcherItemsByCategoryId.value = next;
             if (removedItemIds.length) {
                 const removedSet = new Set(removedItemIds);
-                favoriteItemIds.value = favoriteItemIds.value.filter(
+                pinnedItemIds.value = pinnedItemIds.value.filter(
                     (id) => !removedSet.has(id)
                 );
             }
             recentUsedItems.value = recentUsedItems.value.filter(
                 (x) => x.categoryId !== categoryId
+            );
+            removeDependenciesMatching(
+                (dependency) => dependency.categoryId === categoryId
             );
         }
 
@@ -185,91 +343,117 @@ export const useLauncherStore = defineStore(
             return item.iconBase64 !== item.originalIconBase64;
         }
 
-        function fuzzyMatch(text: string, keyword: string): boolean {
-            const lowerText = text.toLowerCase();
-            const lowerKeyword = keyword.toLowerCase();
-            if (lowerText.includes(lowerKeyword)) return true;
-            let keywordIndex = 0;
-            for (let i = 0; i < lowerText.length && keywordIndex < lowerKeyword.length; i++) {
-                if (lowerText[i] === lowerKeyword[keywordIndex]) {
-                    keywordIndex++;
-                }
-            }
-            return keywordIndex === lowerKeyword.length;
-        }
+        async function syncSearchIndex() {
+            try {
+                const categoryStore = useCategoryStore();
+                const items: Array<{
+                    id: string;
+                    name: string;
+                    path: string;
+                    category_id: string;
+                    usage_count: number;
+                    last_used_at: number;
+                    is_pinned: boolean;
+                    search_tokens: string[];
+                    rank_score: number;
+                }> = [];
 
-        const globalSearchResults = computed<GlobalSearchResult[]>(() => {
-            const keyword = searchKeyword.value.trim();
-            if (!keyword) return [];
-            const results: GlobalSearchResult[] = [];
-            const categoryStore = useCategoryStore();
-            for (const cat of categoryStore.categories) {
-                const items = getLauncherItemsByCategoryId(cat.id);
-                for (const item of items) {
-                    const matchName = fuzzyMatch(item.name, keyword);
-                    const matchPath = item.path ? fuzzyMatch(item.path, keyword) : false;
-                    if (matchName || matchPath) {
-                        results.push({
-                            item,
-                            categoryId: cat.id,
-                            categoryName: cat.name,
+                const pinnedSet = new Set(pinnedItemIds.value);
+                const usageMap = new Map<string, number>();
+                const lastUsedMap = new Map<string, number>();
+
+                for (const recent of recentUsedItems.value) {
+                    const key = `${recent.categoryId}-${recent.itemId}`;
+                    const existingUsage = usageMap.get(key) || 0;
+                    usageMap.set(key, existingUsage + recent.usageCount);
+                    if (!lastUsedMap.has(key) || lastUsedMap.get(key)! < recent.usedAt) {
+                        lastUsedMap.set(key, recent.usedAt);
+                    }
+                }
+
+                for (const cat of categoryStore.categories) {
+                    const catItems = getLauncherItemsByCategoryId(cat.id);
+                    for (const item of catItems) {
+                        const key = `${cat.id}-${item.id}`;
+                        items.push({
+                            id: item.id,
+                            name: item.name,
+                            path: item.path,
+                            category_id: cat.id,
+                            usage_count: usageMap.get(key) || 0,
+                            last_used_at: lastUsedMap.get(key) || 0,
+                            is_pinned: pinnedSet.has(item.id),
+                            search_tokens: [],
+                            rank_score: 0,
                         });
                     }
                 }
+
+                const result = await invoke("update_search_items", { items });
+                if (!result.ok) {
+                    console.error("Failed to sync search index:", result.error);
+                    isRustSearchReady.value = false;
+                    return;
+                }
+                isRustSearchReady.value = true;
+            } catch (e) {
+                console.error("Failed to sync search index:", e);
+                isRustSearchReady.value = false;
             }
-            return results;
-        });
+        }
+
+        async function rustSearch(keyword: string, limit: number = 20): Promise<void> {
+            if (!keyword.trim()) {
+                rustSearchResults.value = [];
+                return;
+            }
+            try {
+                const result = await invoke<RustSearchResult[]>("search_apps", {
+                    query: { keyword, limit },
+                });
+                if (!result.ok) {
+                    console.error("Rust search failed:", result.error);
+                    rustSearchResults.value = [];
+                    return;
+                }
+                rustSearchResults.value = result.value;
+            } catch (e) {
+                console.error("Rust search failed:", e);
+                rustSearchResults.value = [];
+            }
+        }
 
         const globalSearchMergedResults = computed<GlobalSearchMergedResult[]>(() => {
             const keyword = searchKeyword.value.trim();
             if (!keyword) return [];
 
             const categoryStore = useCategoryStore();
-
-            const map = new Map<
-                string,
-                {
-                    key: string;
-                    item: LauncherItem;
-                    primaryCategoryId: string;
-                    categoryIds: string[];
-                }
-            >();
+            const matches: Array<{ item: LauncherItem; categoryId: string }> = [];
 
             for (const cat of categoryStore.categories) {
                 const items = getLauncherItemsByCategoryId(cat.id);
                 for (const item of items) {
-                    const matchName = fuzzyMatch(item.name, keyword);
-                    const matchPath = item.path ? fuzzyMatch(item.path, keyword) : false;
+                    const matchName = fuzzyMatchLauncherText(item.name, keyword);
+                    const matchPath = item.path
+                        ? fuzzyMatchLauncherText(item.path, keyword)
+                        : false;
                     if (!matchName && !matchPath) continue;
-
-                    const normalizedPath = item.path?.trim().replace(/\\/g, "/").toLowerCase();
-                    const normalizedName = item.name?.trim().toLowerCase();
-                    const key = normalizedPath || normalizedName;
-                    if (!key) continue;
-
-                    const existing = map.get(key);
-                    if (!existing) {
-                        map.set(key, {
-                            key,
-                            item,
-                            primaryCategoryId: cat.id,
-                            categoryIds: [cat.id],
-                        });
-                    } else if (!existing.categoryIds.includes(cat.id)) {
-                        existing.categoryIds.push(cat.id);
-                    }
+                    matches.push({ item, categoryId: cat.id });
                 }
             }
 
-            return [...map.values()].map((x) => ({
-                key: x.key,
-                item: x.item,
-                primaryCategoryId: x.primaryCategoryId,
-                categories: x.categoryIds
-                    .map((id) => categoryStore.getCategoryById(id))
-                    .filter((c): c is Category => c !== null),
-            }));
+            return mergeLauncherItems(matches, (categoryId) =>
+                categoryStore.getCategoryById(categoryId)
+            );
+        });
+
+        const rustSearchMergedResults = computed<GlobalSearchMergedResult[]>(() => {
+            const categoryStore = useCategoryStore();
+            return mergeRustSearchResults(
+                rustSearchResults.value,
+                (categoryId) => categoryStore.getCategoryById(categoryId),
+                getLauncherItemById
+            );
         });
 
         function clearSearch() {
@@ -277,32 +461,22 @@ export const useLauncherStore = defineStore(
         }
 
         function getLauncherItemMergeKey(item: LauncherItem): string | null {
-            const normalizedPath = item.path?.trim().replace(/\\/g, "/").toLowerCase();
-            const normalizedName = item.name?.trim().toLowerCase();
-            return normalizedPath || normalizedName || null;
+            return normalizeLauncherItemKey(item);
         }
 
         function togglePinned(categoryId: string, itemId: string) {
             const item = getLauncherItemById(categoryId, itemId);
             if (!item) return;
-            const isPinned = favoriteItemIds.value.includes(itemId);
+            const isPinned = pinnedItemIds.value.includes(itemId);
             if (isPinned) {
-                favoriteItemIds.value = favoriteItemIds.value.filter((id) => id !== itemId);
+                pinnedItemIds.value = pinnedItemIds.value.filter((id) => id !== itemId);
             } else {
-                favoriteItemIds.value = [...favoriteItemIds.value, itemId];
+                pinnedItemIds.value = [...pinnedItemIds.value, itemId];
             }
         }
 
         function isItemPinned(itemId: string): boolean {
-            return favoriteItemIds.value.includes(itemId);
-        }
-
-        function toggleFavorite(categoryId: string, itemId: string) {
-            togglePinned(categoryId, itemId);
-        }
-
-        function isItemFavorite(itemId: string): boolean {
-            return isItemPinned(itemId);
+            return pinnedItemIds.value.includes(itemId);
         }
 
         function recordItemUsage(categoryId: string, itemId: string) {
@@ -310,10 +484,24 @@ export const useLauncherStore = defineStore(
             const existingIndex = recentUsedItems.value.findIndex(
                 r => r.categoryId === categoryId && r.itemId === itemId
             );
+            
             if (existingIndex !== -1) {
-                recentUsedItems.value.splice(existingIndex, 1);
+                const existing = recentUsedItems.value[existingIndex];
+                const newList = recentUsedItems.value.filter((_, i) => i !== existingIndex);
+                newList.unshift({
+                    categoryId,
+                    itemId,
+                    usedAt: now,
+                    usageCount: existing.usageCount + 1,
+                });
+                recentUsedItems.value = newList;
+            } else {
+                recentUsedItems.value = [
+                    { categoryId, itemId, usedAt: now, usageCount: 1 },
+                    ...recentUsedItems.value,
+                ];
             }
-            recentUsedItems.value.unshift({ categoryId, itemId, usedAt: now });
+            
             if (recentUsedItems.value.length > 50) {
                 recentUsedItems.value = recentUsedItems.value.slice(0, 50);
             }
@@ -327,18 +515,14 @@ export const useLauncherStore = defineStore(
             launcherItemsByCategoryId.value = items;
         }
 
-        function importFavoriteItemIds(newIds: string[]) {
-            favoriteItemIds.value = [...new Set(newIds)];
-        }
-
         function importPinnedItemIds(newIds: string[]) {
-            favoriteItemIds.value = [...new Set(newIds)];
+            pinnedItemIds.value = [...new Set(newIds)];
         }
 
         function reorderPinnedItemIds(newOrder: string[]) {
-            const validIds = newOrder.filter(id => favoriteItemIds.value.includes(id));
-            const otherIds = favoriteItemIds.value.filter(id => !newOrder.includes(id));
-            favoriteItemIds.value = [...validIds, ...otherIds];
+            const validIds = newOrder.filter(id => pinnedItemIds.value.includes(id));
+            const otherIds = pinnedItemIds.value.filter(id => !newOrder.includes(id));
+            pinnedItemIds.value = [...validIds, ...otherIds];
         }
 
         function importRecentUsedItems(newItems: RecentUsedItem[]) {
@@ -500,19 +684,47 @@ export const useLauncherStore = defineStore(
             }
             const invalidIds = pinnedItemIds.value.filter(id => !allValidIds.has(id));
             if (invalidIds.length > 0) {
-                console.log("[PinnedItems] removing invalid ids:", invalidIds);
-                favoriteItemIds.value = pinnedItemIds.value.filter(id => allValidIds.has(id));
+                pinnedItemIds.value = pinnedItemIds.value.filter(id => allValidIds.has(id));
             }
 
             return result;
         }
 
+        function getSmartSortedItems(categoryId: string): LauncherItem[] {
+            const raw = launcherItemsByCategoryId.value[categoryId];
+            if (!raw || raw.length === 0) return [];
+
+            const stats = useStatsStore();
+            const pinnedSet = new Set(pinnedItemIds.value);
+            const orderMap = new Map(stats.getSmartSortOrder(categoryId, raw.map(i => i.id)).map((id, idx) => [id, idx]));
+
+            return [...raw].sort((a, b) => {
+                const aPinned = pinnedSet.has(a.id);
+                const bPinned = pinnedSet.has(b.id);
+                if (aPinned && !bPinned) return -1;
+                if (!aPinned && bPinned) return 1;
+
+                const aOrder = orderMap.get(a.id) ?? 9999;
+                const bOrder = orderMap.get(b.id) ?? 9999;
+                return aOrder - bOrder;
+            });
+        }
+
+        function recordConfirmedSearch() {
+            const keyword = searchKeyword.value.trim();
+            if (keyword.length >= 2) {
+                const stats = useStatsStore();
+                stats.recordSearch(keyword);
+            }
+        }
+
         return {
             searchKeyword,
-            favoriteItemIds,
             pinnedItemIds,
             recentUsedItems,
             launcherItemsByCategoryId,
+            rustSearchResults,
+            isRustSearchReady,
             createLauncherItemId,
             getNameFromPath,
             getLauncherItemsByCategoryId,
@@ -521,23 +733,21 @@ export const useLauncherStore = defineStore(
             updateLauncherItem,
             deleteLauncherItem,
             addLauncherItemsToCategory,
+            addUrlLauncherItemToCategory,
+            updateLauncherItemIcon,
             deleteCategoryCleanup,
             setLauncherItemIcon,
             resetLauncherItemIcon,
             hasCustomIcon,
-            fuzzyMatch,
-            globalSearchResults,
             globalSearchMergedResults,
+            rustSearchMergedResults,
             clearSearch,
             getLauncherItemMergeKey,
             togglePinned,
             isItemPinned,
-            toggleFavorite,
-            isItemFavorite,
             recordItemUsage,
             clearRecentUsed,
             importLauncherItems,
-            importFavoriteItemIds,
             importPinnedItemIds,
             reorderPinnedItemIds,
             importRecentUsedItems,
@@ -545,7 +755,11 @@ export const useLauncherStore = defineStore(
             getRecentUsedItemInfo,
             getRecentUsedMergedItems,
             getPinnedMergedItems,
+            syncSearchIndex,
+            rustSearch,
+            getSmartSortedItems,
+            recordConfirmedSearch,
         };
     },
-    { persist: createVersionedPersistConfig("launcher", ["launcherItemsByCategoryId", "favoriteItemIds", "recentUsedItems"]) as any }
+    { persist: createVersionedPersistConfig("launcher", ["launcherItemsByCategoryId", "pinnedItemIds", "recentUsedItems"]) }
 );

@@ -54,3 +54,4 @@ export * from "./useTauriEvents";
 export * from "./useGlobalEvents";
 export * from "./useTheme";
 export * from "./useWindowDrag";
+export * from "./useWindowPosition";

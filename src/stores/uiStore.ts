@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-
+import { enumContextMenuType } from "../menus/contextMenuTypes";
+export type { enumContextMenuType };
 export type HomeLayoutSectionKey = "pinned" | "recent";
 export type HomeLayoutPresetKey =
   | "1x4"
@@ -11,6 +12,9 @@ export type HomeLayoutPresetKey =
   | "2x6"
   | "1x7"
   | "2x7";
+
+export const CATEGORY_COLS_PRESETS: ReadonlyArray<number> = [4, 5, 6, 7];
+export const LAUNCHER_COLS_PRESETS: ReadonlyArray<number> = [4, 5, 6];
 
 export type HomeSectionLayout = {
   preset: HomeLayoutPresetKey;
@@ -178,15 +182,6 @@ type ContextMenuState =
       y: number;
     };
 
-export enum enumContextMenuType {
-  CategorieItem = "categorie-item",
-  CategorieView = "categorie-view",
-  PinnedView = "pinned-view",
-  RecentUsedView = "recent-used-view",
-  IconView = "icon-view",
-  IconItem = "icon-item",
-}
-
 export const useUIStore = defineStore(
   "ui",
   () => {
@@ -196,7 +191,7 @@ export const useUIStore = defineStore(
       y: 0,
     });
     const ContextMenuType = ref<enumContextMenuType>(
-      enumContextMenuType.CategorieView,
+      enumContextMenuType.HomeGroupView,
     );
     const categoryCols = ref<number>(5);
     const launcherCols = ref<number>(5);

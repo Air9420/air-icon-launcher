@@ -3,9 +3,6 @@
         <div class="section">
             <div class="section-title">功能</div>
             <div class="action-buttons">
-                <button class="action-btn" type="button" @click="onOpenClipboard">
-                    剪贴板历史
-                </button>
                 <button class="action-btn" type="button" @click="onOpenPlugins">
                     插件管理
                 </button>
@@ -23,10 +20,6 @@ import { Store } from "../../stores";
 
 const router = useRouter();
 const store = Store();
-
-function onOpenClipboard() {
-    router.push("/clipboard");
-}
 
 function onOpenPlugins() {
     router.push("/plugins");

@@ -1,4 +1,4 @@
-import { enumContextMenuType } from "../stores";
+import { enumContextMenuType } from "./contextMenuTypes";
 import type { HomeLayoutPresetKey } from "../stores";
 
 export type VisibilityCondition =
@@ -73,7 +73,7 @@ function isItemMatch(
 }
 
 function isCategoryMatch(
-  condition: { category: true },
+  _condition: { category: true },
   ctx: ResolveContext,
 ): boolean {
   return ctx.categoryId !== null;

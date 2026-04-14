@@ -1,11 +1,11 @@
+/// <reference types="vitest" />
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
-// https://vite.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig({
   plugins: [vue()],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
@@ -29,4 +29,31 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
-}));
+
+  // 环境区分配置
+  envPrefix: ["VITE_"],
+
+  // 生产环境构建优化
+  build: {
+    target: "esnext",
+    minify: "esbuild",
+    cssMinify: true,
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ["vue", "vue-router", "pinia"],
+          tauri: ["@tauri-apps/api/core", "@tauri-apps/api/event"],
+          utils: ["@vueuse/core"],
+        },
+      },
+    },
+    chunkSizeWarningLimit: 500,
+    reportCompressedSize: false,
+  },
+
+  // 依赖优化
+  optimizeDeps: {
+    include: ["vue", "vue-router", "pinia", "@vueuse/core"],
+  },
+});

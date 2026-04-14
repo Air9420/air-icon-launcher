@@ -11,12 +11,60 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
     const { autoHideAfterLaunch } = options;
     const launchStatusMap = ref<Map<string, LaunchStatus>>(new Map());
 
+    let isCtrlPressed = false;
+    let hasLaunchedWhileCtrlPressed = false;
+    let hideTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    function onKeyDown(e: KeyboardEvent) {
+        if (e.key === "Control" || e.ctrlKey) {
+            isCtrlPressed = true;
+        }
+    }
+
+    function onKeyUp(e: KeyboardEvent) {
+        if (e.key === "Control" || e.ctrlKey) {
+            isCtrlPressed = false;
+            if (hideTimeout) {
+                clearTimeout(hideTimeout);
+                hideTimeout = null;
+            }
+            if (hasLaunchedWhileCtrlPressed && autoHideAfterLaunch?.value) {
+                getCurrentWindow().hide();
+            }
+            hasLaunchedWhileCtrlPressed = false;
+        }
+    }
+
+    if (typeof window !== "undefined") {
+        window.addEventListener("keydown", onKeyDown);
+        window.addEventListener("keyup", onKeyUp);
+    }
+
     function setLaunchStatus(itemId: string, status: LaunchStatus) {
         launchStatusMap.value.set(itemId, status);
         launchStatusMap.value = new Map(launchStatusMap.value);
         if (status === "success") {
+            if (isCtrlPressed) {
+                hasLaunchedWhileCtrlPressed = true;
+            }
             if (autoHideAfterLaunch?.value) {
-                getCurrentWindow().hide();
+                if (isCtrlPressed) {
+                    if (hideTimeout) {
+                        clearTimeout(hideTimeout);
+                    }
+                    hideTimeout = setTimeout(() => {
+                        if (!isCtrlPressed && hasLaunchedWhileCtrlPressed) {
+                            getCurrentWindow().hide();
+                        }
+                        hideTimeout = null;
+                    }, 500);
+                } else {
+                    if (hideTimeout) {
+                        clearTimeout(hideTimeout);
+                        hideTimeout = null;
+                    }
+                    getCurrentWindow().hide();
+                }
             }
             setTimeout(() => {
                 launchStatusMap.value.delete(itemId);
@@ -42,6 +90,17 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
         return launchStatusMap.value.get(itemId) === "success";
     }
 
+    function cleanup() {
+        if (typeof window !== "undefined") {
+            window.removeEventListener("keydown", onKeyDown);
+            window.removeEventListener("keyup", onKeyUp);
+        }
+        if (hideTimeout) {
+            clearTimeout(hideTimeout);
+            hideTimeout = null;
+        }
+    }
+
     return {
         launchStatusMap,
         setLaunchStatus,
@@ -49,6 +108,7 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
         getLaunchStatus,
         isLaunching,
         isSuccess,
+        cleanup,
     };
 }
 

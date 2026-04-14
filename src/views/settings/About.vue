@@ -4,7 +4,7 @@
             <div class="app-icon">
                 <img :src="appIcon" alt="Air Icon Launcher" />
             </div>
-            <div class="app-name">Air Icon Launcher</div>
+            <div class="app-name">Air Launch</div>
             <div class="app-version">v{{ version }}</div>
         </div>
 
@@ -82,12 +82,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, onMounted } from "vue";
+import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
-const version = ref("0.1.1");
+const version = ref("...");
 const currentYear = computed(() => new Date().getFullYear());
 const appIcon = ref("/icon.png");
+
+onMounted(async () => {
+    try {
+        version.value = await getVersion();
+    } catch (e) {
+        console.error("Failed to get version:", e);
+        version.value = "unknown";
+    }
+});
 
 async function onOpenGitHub() {
     try {

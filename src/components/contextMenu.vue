@@ -69,7 +69,6 @@
 </template>
 
 <script setup lang="ts">
-import { Store } from "../stores/index";
 import { HomeLayoutPresetKey, useUIStore } from "../stores/uiStore";
 import { storeToRefs } from "pinia";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -78,7 +77,6 @@ import { buildContextMenuModel } from "../menus/contextMenu";
 import type { MenuContext, MenuItem, MenuAction } from "../menus/contextMenuTypes";
 import { resolveLabel as resolveMenuLabel, resolveConditionValue, evaluateCondition } from "../menus/contextMenuTypes";
 
-const store = Store();
 const uiStore = useUIStore();
 const { ContextMenu, ContextMenuType } = storeToRefs(uiStore);
 

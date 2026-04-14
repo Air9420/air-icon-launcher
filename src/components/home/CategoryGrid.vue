@@ -13,7 +13,7 @@
         :force-fallback="true"
         fallback-class="categorie-drag"
         :fallback-tolerance="5"
-        data-menu-type="categorie-view"
+        data-menu-type="Home-Group-View"
         :disabled="isEditing"
         @update:model-value="$emit('update:categories', $event)"
     >
@@ -23,7 +23,7 @@
                 :class="{
                     editing: isEditing && element.id === editingCategoryId,
                 }"
-                data-menu-type="categorie-item"
+                data-menu-type="Home-Group-Item"
                 :data-category-id="element.id"
                 @click="$emit('select', element)"
                 data-no-drag
@@ -199,7 +199,6 @@ function getNameFontSize(name: string): number {
     grid-template-columns: repeat(var(--cols), 1fr);
     grid-auto-rows: max-content;
     padding: 16px;
-    padding-bottom: 24px;
     flex-wrap: wrap;
     flex: 1;
     min-height: 0;
@@ -228,6 +227,15 @@ function getNameFontSize(name: string): number {
         background-color: var(--card-bg-solid);
         user-select: none;
         box-shadow: var(--card-shadow-light);
+        transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+
+        &:hover {
+            @media (hover: hover) {
+                transform: scale(calc(1 + 0.05 * (1 - var(--performance-mode, 0))));
+                box-shadow: var(--card-shadow-light), 0 4px 12px calc(0px * var(--performance-mode, 0)) rgba(0, 0, 0, 0.15);
+                opacity: 1;
+            }
+        }
     }
     .categorie-item.editing {
         pointer-events: auto;
@@ -269,6 +277,11 @@ function getNameFontSize(name: string): number {
 
 .categorie-drag {
     cursor: grabbing;
+    transition: none !important;
+
+    .categorie-item {
+        transition: none !important;
+    }
 }
 
 .categorie-input {

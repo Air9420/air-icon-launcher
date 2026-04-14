@@ -126,7 +126,7 @@
   function registerContextMenu() {
     console.log('[Plugin: ' + manifest.name + '] 注册右键菜单项...');
     
-    savedApi.ui.registerContextMenuItems('icon-item', [
+    savedApi.ui.registerContextMenuItems('Icon-Item', [
       { type: 'separator', id: 'sep', order: 1000 },
       { 
         type: 'item', 

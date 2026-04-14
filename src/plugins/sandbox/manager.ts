@@ -9,6 +9,7 @@ import { Store, useCategoryStore } from "../../stores";
 import { toPluginCategories, toPluginLauncherItems } from "../dto";
 import type { SandboxMessage, SandboxConfig, SandboxStatus, SandboxInstance } from "./types";
 import { SANDBOX_HTML } from "./types";
+import { launchStoredItem } from "../../utils/launcher-service";
 
 type ToastType = "info" | "success" | "error";
 
@@ -47,11 +48,15 @@ class SandboxManagerImpl {
       if (!item) {
         throw new Error(`Item ${itemId} not found in category ${categoryId}`);
       }
-      const result = await invoke<null>("launch_item", { path: item.path });
-      if (!result.ok) {
-        throw new Error(`Failed to launch: ${result.error.message}`);
-      }
-      store.recordItemUsage(categoryId as string, itemId as string);
+      await launchStoredItem(
+        {
+          categoryId: categoryId as string,
+          itemId: itemId as string,
+        },
+        {
+          store,
+        }
+      );
     });
     
     this.commandHandlers.set("clipboard.readText", async () => {
@@ -75,10 +80,21 @@ class SandboxManagerImpl {
       }
     });
     
+interface SandboxContextMenuItem {
+  type?: string;
+  id: string;
+  label: string;
+  icon?: string;
+  order?: number;
+  commandId?: string;
+  handler?: () => void;
+  onClick?: () => void;
+}
+
     this.commandHandlers.set("ui.registerContextMenuItems", (pluginId, menuType, items) => {
       resourceTracker.trackContextMenu(pluginId, menuType as string);
       const sandbox = this.sandboxes.get(pluginId);
-      const convertedItems = (items as any[]).map((item: any) => {
+      const convertedItems = (items as SandboxContextMenuItem[]).map((item: SandboxContextMenuItem) => {
         if (item.commandId) {
           return {
             type: item.type || "item",
@@ -99,7 +115,7 @@ class SandboxManagerImpl {
         }
         return item;
       });
-      registerContextMenuItems(pluginId, menuType as any, convertedItems);
+      registerContextMenuItems(pluginId, menuType as any, convertedItems as any);
     });
     
     this.commandHandlers.set("ui.unregisterContextMenuItems", (pluginId, menuType) => {

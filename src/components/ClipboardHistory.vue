@@ -1,5 +1,5 @@
 <template>
-    <div class="clipboard-history" data-tauri-drag-region>
+    <div class="clipboard-history" data-tauri-drag-region data-menu-type="Clipboard-History-View">
         <header class="clipboard-header" data-tauri-drag-region>
             <button class="back-btn" type="button" @click="onBack" @mousedown.stop>
                 返回
@@ -21,14 +21,15 @@
                 v-for="item in history"
                 :key="item.id"
                 class="history-item"
+                :class="{ 'is-current': item.hash === currentHash }"
                 @click="onCopyItem(item)"
             >
                 <div class="item-content">
-                    <template v-if="item.type === 'image'">
-                        <img :src="item.content" class="item-image" alt="剪贴板图片" />
+                    <template v-if="item.content_type === 'image'">
+                        <img :src="getRecordContent(item)" class="item-image" alt="剪贴板图片" />
                     </template>
                     <template v-else>
-                        <div class="item-text">{{ truncateText(item.content) }}</div>
+                        <div class="item-text">{{ truncateText(getRecordContent(item)) }}</div>
                     </template>
                     <div class="item-time">{{ formatTime(item.timestamp) }}</div>
                 </div>
@@ -55,149 +56,32 @@
             <div class="empty-text">暂无剪贴板历史</div>
             <div class="empty-hint">复制文本后会自动记录到这里</div>
         </div>
-
-        <Transition name="toast">
-            <div v-if="showToast" class="toast">
-                {{ toastMessage }}
-            </div>
-        </Transition>
     </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref } from "vue";
+import { computed } from "vue";
 import { useRouter } from "vue-router";
-import { invoke } from "@tauri-apps/api/core";
-import { safeInvoke } from "../utils/invoke-wrapper";
-import { listen } from "@tauri-apps/api/event";
-import { useClipboardStore, type ClipboardRecord } from "../stores/clipboardStore";
-import { storeToRefs } from "pinia";
+import { getRecordContent } from "../stores/clipboardStore";
+import { useClipboardStore } from "../stores/clipboardStore";
+import { useClipboardEvents } from "../composables/useClipboardEvents";
 
 const router = useRouter();
 const clipboardStore = useClipboardStore();
-const { clipboardHistory: history } = storeToRefs(clipboardStore);
-const currentTime = ref(Date.now());
-const showToast = ref(false);
-const toastMessage = ref("");
-let toastTimeout: number | null = null;
-let timeUpdateInterval: number | null = null;
+const {
+    history,
+    onCopyItem,
+    onDeleteItem,
+    onClearAll,
+    truncateText,
+    formatTime,
+} = useClipboardEvents();
+
+const currentHash = computed(() => clipboardStore.currentClipboardHash);
 
 function onBack() {
-    router.push("/categories");
+    router.back();
 }
-
-function showToastMessage(message: string) {
-    toastMessage.value = message;
-    showToast.value = true;
-    
-    if (toastTimeout) {
-        clearTimeout(toastTimeout);
-    }
-    
-    toastTimeout = window.setTimeout(() => {
-        showToast.value = false;
-    }, 1500);
-}
-
-async function onCopyItem(item: ClipboardRecord) {
-    try {
-        await safeInvoke("set_clipboard_content", { content: item.content });
-        showToastMessage("已复制");
-    } catch (e) {
-        console.error("Failed to copy to clipboard:", e);
-        showToastMessage("复制失败");
-    }
-}
-
-async function onDeleteItem(id: string) {
-    try {
-        await safeInvoke("delete_clipboard_record", { id });
-        clipboardStore.removeClipboardRecord(id);
-    } catch (e) {
-        console.error("Failed to delete record:", e);
-    }
-}
-
-async function onClearAll() {
-    try {
-        await safeInvoke("clear_clipboard_history");
-        clipboardStore.clearClipboardHistory();
-    } catch (e) {
-        console.error("Failed to clear history:", e);
-    }
-}
-
-function truncateText(text: string, maxLength: number = 100): string {
-    if (text.length <= maxLength) return text;
-    return text.slice(0, maxLength) + "...";
-}
-
-function formatTime(timestamp: number): string {
-    const date = new Date(timestamp);
-    const now = new Date(currentTime.value);
-    const diff = now.getTime() - date.getTime();
-
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
-
-    if (minutes < 1) return "刚刚";
-    if (minutes < 60) return `${minutes} 分钟前`;
-    if (hours < 24) return `${hours} 小时前`;
-    if (days < 7) return `${days} 天前`;
-
-    return date.toLocaleDateString("zh-CN", {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-    });
-}
-
-let unlisten: (() => void) | null = null;
-
-onMounted(async () => {
-    try {
-        const backendHistory = await invoke<ClipboardRecord[]>("get_clipboard_history");
-        const sortedHistory = backendHistory.sort((a, b) => b.timestamp - a.timestamp);
-        sortedHistory.reverse().forEach(record => {
-            clipboardStore.addClipboardRecord({
-                id: record.id,
-                content: record.content,
-                type: record.type as "text" | "image",
-                timestamp: record.timestamp,
-            });
-        });
-    } catch (e) {
-        console.error("Failed to load clipboard history:", e);
-    }
-
-    unlisten = await listen<ClipboardRecord>("clipboard-changed", (event) => {
-        const record = event.payload;
-        clipboardStore.addClipboardRecord({
-            id: record.id,
-            content: record.content,
-            type: record.type as "text" | "image",
-            timestamp: record.timestamp,
-        });
-    });
-
-    timeUpdateInterval = window.setInterval(() => {
-        currentTime.value = Date.now();
-    }, 60000);
-});
-
-onBeforeUnmount(() => {
-    if (unlisten) {
-        unlisten();
-    }
-    if (timeUpdateInterval) {
-        clearInterval(timeUpdateInterval);
-    }
-    if (toastTimeout) {
-        clearTimeout(toastTimeout);
-    }
-});
 </script>
 
 <style scoped>
@@ -290,6 +174,12 @@ onBeforeUnmount(() => {
     box-shadow: var(--card-shadow);
 }
 
+.history-item.is-current {
+    background: var(--primary-bg);
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 1px var(--primary-color);
+}
+
 .item-content {
     flex: 1;
     min-width: 0;
@@ -359,32 +249,5 @@ onBeforeUnmount(() => {
 .empty-hint {
     font-size: 13px;
     color: var(--text-hint);
-}
-
-.toast {
-    position: fixed;
-    bottom: 24px;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 10px 20px;
-    background: var(--card-bg-solid);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    box-shadow: var(--card-shadow);
-    font-size: 14px;
-    color: var(--text-color);
-    z-index: 1000;
-    pointer-events: none;
-}
-
-.toast-enter-active,
-.toast-leave-active {
-    transition: all 0.2s ease;
-}
-
-.toast-enter-from,
-.toast-leave-to {
-    opacity: 0;
-    transform: translateX(-50%) translateY(10px);
 }
 </style>

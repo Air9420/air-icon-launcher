@@ -50,21 +50,6 @@ const groupedPermissions = computed(() => {
   return groups;
 });
 
-function getRiskLabel(risk: RiskLevel): string {
-  switch (risk) {
-    case "low":
-      return "低风险";
-    case "medium":
-      return "中风险";
-    case "high":
-      return "高风险";
-  }
-}
-
-function getRiskClass(risk: RiskLevel): string {
-  return `risk-${risk}`;
-}
-
 function handleConfirm() {
   emit("confirm");
 }

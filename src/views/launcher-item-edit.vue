@@ -1,19 +1,19 @@
 <template>
     <div
         class="item-edit-view"
-        data-menu-type="icon-view"
+        data-menu-type="Icon-View"
         :data-category-id="categoryId"
     >
         <header
             class="item-edit-header"
-            data-menu-type="icon-view"
+            data-menu-type="Icon-View"
             :data-category-id="categoryId"
             data-tauri-drag-region
         >
             <button
                 class="back-btn"
                 type="button"
-                data-menu-type="icon-view"
+                data-menu-type="Icon-View"
                 :data-category-id="categoryId"
                 @click="onBack"
                 @mousedown.stop
@@ -22,26 +22,31 @@
             </button>
             <div
                 class="title"
-                data-menu-type="icon-view"
+                data-menu-type="Icon-View"
                 :data-category-id="categoryId"
                 data-tauri-drag-region
             >
-                编辑
+                {{ isCreateMode ? '新建' : '编辑' }}
             </div>
         </header>
 
         <div class="content">
-            <div class="preview">
-                <img
-                    v-if="item?.iconBase64"
-                    class="preview-img"
-                    :src="getIconSrc(item.iconBase64)"
-                    alt=""
-                    draggable="false"
-                />
-                <div v-else class="preview-fallback">
-                    {{ getFallbackText(item?.name || "") }}
+            <div class="preview-wrapper">
+                <div class="preview">
+                    <img
+                        v-if="item?.iconBase64"
+                        class="preview-img"
+                        :src="getIconSrc(item.iconBase64)"
+                        alt=""
+                        draggable="false"
+                    />
+                    <div v-else class="preview-fallback">
+                        {{ getFallbackText(item?.name || "") }}
+                    </div>
                 </div>
+                <button class="change-icon-btn" type="button" @click="onChangeIcon">
+                    更换图标
+                </button>
             </div>
 
             <div class="form">
@@ -56,8 +61,16 @@
                 </label>
 
                 <label class="field">
-                    <div class="label">路径</div>
+                    <div class="label">{{ item?.itemType === 'url' ? '网址' : '路径' }}</div>
                     <input
+                        v-if="item?.itemType === 'url'"
+                        v-model="url"
+                        class="input url-input"
+                        type="url"
+                        placeholder="https://..."
+                    />
+                    <input
+                        v-else
                         class="input"
                         type="text"
                         :value="item?.path || ''"
@@ -65,11 +78,109 @@
                     />
                 </label>
 
+                <label v-if="item" class="field">
+                    <div class="label">主项启动前等待（秒）</div>
+                    <input
+                        class="input"
+                        type="number"
+                        min="0"
+                        step="1"
+                        :value="launchDelaySeconds"
+                        @input="onLaunchDelayInput"
+                    />
+                </label>
+
+                <div v-if="item" class="field">
+                    <div class="label">启动依赖</div>
+                    <div class="dependency-picker">
+                        <select
+                            class="input dependency-select"
+                            :value="selectedDependencyKey"
+                            @change="onSelectedDependencyChange"
+                        >
+                            <option value="" disabled>
+                                {{ availableDependencyCandidates.length > 0 ? "选择要添加的启动项" : "没有可添加的启动项" }}
+                            </option>
+                            <option
+                                v-for="candidate in availableDependencyCandidates"
+                                :key="candidate.key"
+                                :value="candidate.key"
+                            >
+                                {{ candidate.label }}
+                            </option>
+                        </select>
+                        <button
+                            class="btn neutral"
+                            type="button"
+                            :disabled="!selectedDependencyKey || availableDependencyCandidates.length === 0"
+                            @click="onAddDependency"
+                        >
+                            添加依赖
+                        </button>
+                    </div>
+
+                    <div v-if="launchDependencies.length === 0" class="dependency-empty">
+                        未配置启动依赖
+                    </div>
+
+                    <div v-else class="dependency-list">
+                        <div
+                            v-for="(dependency, index) in launchDependencies"
+                            :key="`${dependency.categoryId}:${dependency.itemId}`"
+                            class="dependency-item"
+                        >
+                            <div class="dependency-header">
+                                <div class="dependency-name">
+                                    {{ getDependencyLabel(dependency) }}
+                                </div>
+                                <div class="dependency-actions">
+                                    <button
+                                        class="btn neutral small"
+                                        type="button"
+                                        :disabled="index === 0"
+                                        @click="moveDependency(index, -1)"
+                                    >
+                                        上移
+                                    </button>
+                                    <button
+                                        class="btn neutral small"
+                                        type="button"
+                                        :disabled="index === launchDependencies.length - 1"
+                                        @click="moveDependency(index, 1)"
+                                    >
+                                        下移
+                                    </button>
+                                    <button
+                                        class="btn neutral small"
+                                        type="button"
+                                        @click="removeDependency(index)"
+                                    >
+                                        移除
+                                    </button>
+                                </div>
+                            </div>
+
+                            <label class="dependency-delay">
+                                <span>启动后等待</span>
+                                <input
+                                    class="input dependency-delay-input"
+                                    type="number"
+                                    min="0"
+                                    step="1"
+                                    :value="dependency.delayAfterSeconds"
+                                    @input="onDependencyDelayInput(index, $event)"
+                                />
+                                <span>秒</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="actions">
                     <button class="btn primary" type="button" @click="onSave">
                         保存
                     </button>
-                    <button class="btn danger" type="button" @click="onDelete">
+                    <button v-if="!isCreateMode" class="btn danger" type="button" @click="onDelete">
                         删除
                     </button>
                 </div>
@@ -81,54 +192,182 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watchEffect } from "vue";
+import { computed, ref, watch, watchEffect } from "vue";
 import { useRouter } from "vue-router";
-import { Store } from "../stores";
-import type { LauncherItem } from "../stores";
+import { open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
+import { Store, useCategoryStore } from "../stores";
+import type { LaunchDependency, LauncherItem } from "../stores";
 
 const props = defineProps<{
     categoryId: string;
-    itemId: string;
+    itemId?: string;
 }>();
 
 const router = useRouter();
 const store = Store();
+const categoryStore = useCategoryStore();
 const name = ref<string>("");
+const url = ref<string>("");
+const launchDelaySeconds = ref<number>(0);
+const launchDependencies = ref<LaunchDependency[]>([]);
+const selectedDependencyKey = ref<string>("");
+const isCreateMode = computed(() => !props.itemId || props.itemId === "new");
+const hasCustomIcon = ref<boolean>(false);
 
 const item = computed<LauncherItem | null>(() => {
-    return store.getLauncherItemById(props.categoryId, props.itemId);
+    if (isCreateMode.value) return null;
+    return store.getLauncherItemById(props.categoryId, props.itemId!);
 });
+
+const dependencyCandidates = computed(() => {
+    if (!item.value) return [];
+
+    return categoryStore.categories.flatMap((category) =>
+        store
+            .getLauncherItemsByCategoryId(category.id)
+            .filter(
+                (candidate) =>
+                    !(category.id === props.categoryId && candidate.id === props.itemId)
+            )
+            .map((candidate) => ({
+                key: `${category.id}:${candidate.id}`,
+                categoryId: category.id,
+                itemId: candidate.id,
+                label: `${category.name} / ${candidate.name}`,
+            }))
+    );
+});
+
+const dependencyLabelMap = computed(() => {
+    const map = new Map<string, string>();
+    for (const candidate of dependencyCandidates.value) {
+        map.set(candidate.key, candidate.label);
+    }
+    return map;
+});
+
+const availableDependencyCandidates = computed(() => {
+    const selectedKeys = new Set(
+        launchDependencies.value.map(
+            (dependency: LaunchDependency) => `${dependency.categoryId}:${dependency.itemId}`
+        )
+    );
+    return dependencyCandidates.value.filter((candidate) => !selectedKeys.has(candidate.key));
+});
+
+function normalizeDelaySeconds(value: string | number): number {
+    const parsed = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.max(0, Math.floor(parsed));
+}
+
+function syncSelectedDependencyKey() {
+    if (availableDependencyCandidates.value.length === 0) {
+        selectedDependencyKey.value = "";
+        return;
+    }
+
+    const stillAvailable = availableDependencyCandidates.value.some(
+        (candidate) => candidate.key === selectedDependencyKey.value
+    );
+    if (!stillAvailable) {
+        selectedDependencyKey.value = availableDependencyCandidates.value[0].key;
+    }
+}
+
+watch(
+    () => [props.categoryId, props.itemId, item.value?.id],
+    () => {
+        if (!item.value) return;
+        name.value = item.value.name;
+        url.value = item.value.url || "";
+        launchDelaySeconds.value = item.value.launchDelaySeconds;
+        launchDependencies.value = item.value.launchDependencies.map((dependency) => ({
+            ...dependency,
+        }));
+        syncSelectedDependencyKey();
+    },
+    { immediate: true }
+);
 
 watchEffect(() => {
     if (item.value) {
-        name.value = item.value.name;
+        hasCustomIcon.value = store.hasCustomIcon(props.categoryId, props.itemId!);
     }
+});
+
+watch(availableDependencyCandidates, () => {
+    syncSelectedDependencyKey();
 });
 
 /**
  * 返回到类目启动台页面。
  */
 function onBack() {
-    router.push({ name: "category", params: { categoryId: props.categoryId } });
+    // router.push({ name: "category", params: { categoryId: props.categoryId } });
+    router.back();
 }
 
 /**
  * 保存启动项编辑结果。
  */
 function onSave() {
+    if (isCreateMode.value) {
+        return;
+    }
     if (!item.value) return;
-    store.updateLauncherItem(props.categoryId, props.itemId, {
+
+    const patch: {
+        name: string;
+        url?: string;
+        path?: string;
+        launchDependencies: LaunchDependency[];
+        launchDelaySeconds: number;
+    } = {
         name: name.value.trim(),
-    });
+        launchDependencies: launchDependencies.value.map((dependency: LaunchDependency) => ({
+            ...dependency,
+            delayAfterSeconds: normalizeDelaySeconds(dependency.delayAfterSeconds),
+        })),
+        launchDelaySeconds: normalizeDelaySeconds(launchDelaySeconds.value),
+    };
+
+    if (item.value.itemType === 'url') {
+        patch.url = url.value.trim();
+        patch.path = '';
+    }
+
+    store.updateLauncherItem(props.categoryId, props.itemId!, patch);
+
+    if (item.value.itemType === 'url' && !hasCustomIcon.value) {
+        const currentUrl = url.value.trim();
+        if (currentUrl && (currentUrl.startsWith("http://") || currentUrl.startsWith("https://"))) {
+            fetchFaviconAsync(props.categoryId, props.itemId!, currentUrl);
+        }
+    }
+
     onBack();
+}
+
+function fetchFaviconAsync(categoryId: string, itemId: string, currentUrl: string) {
+    invoke<string | null>("fetch_favicon_from_url", { url: currentUrl })
+        .then((iconBase64) => {
+            if (iconBase64) {
+                store.updateLauncherItemIcon(categoryId, itemId, iconBase64);
+            }
+        })
+        .catch((e) => {
+            console.warn("Failed to fetch favicon:", e);
+        });
 }
 
 /**
  * 删除当前启动项。
  */
 function onDelete() {
-    if (!item.value) return;
-    store.deleteLauncherItem(props.categoryId, props.itemId);
+    if (isCreateMode.value || !item.value) return;
+    store.deleteLauncherItem(props.categoryId, props.itemId!);
     onBack();
 }
 
@@ -147,6 +386,90 @@ function getFallbackText(name: string) {
     const text = name.trim();
     if (!text) return "?";
     return text.slice(0, 1).toUpperCase();
+}
+
+function onLaunchDelayInput(event: Event) {
+    const target = event.target as HTMLInputElement;
+    launchDelaySeconds.value = normalizeDelaySeconds(target.value);
+}
+
+function onSelectedDependencyChange(event: Event) {
+    const target = event.target as HTMLSelectElement;
+    selectedDependencyKey.value = target.value;
+}
+
+function onAddDependency() {
+    const candidate = availableDependencyCandidates.value.find(
+        (item) => item.key === selectedDependencyKey.value
+    );
+    if (!candidate) return;
+
+    launchDependencies.value = [
+        ...launchDependencies.value,
+        {
+            categoryId: candidate.categoryId,
+            itemId: candidate.itemId,
+            delayAfterSeconds: 0,
+        },
+    ];
+    syncSelectedDependencyKey();
+}
+
+function removeDependency(index: number) {
+    launchDependencies.value = launchDependencies.value.filter(
+        (_dependency: LaunchDependency, currentIndex: number) => currentIndex !== index
+    );
+    syncSelectedDependencyKey();
+}
+
+function moveDependency(index: number, direction: -1 | 1) {
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= launchDependencies.value.length) return;
+
+    const next = [...launchDependencies.value];
+    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+    launchDependencies.value = next;
+}
+
+function onDependencyDelayInput(index: number, event: Event) {
+    const target = event.target as HTMLInputElement;
+    const next = [...launchDependencies.value];
+    next[index] = {
+        ...next[index],
+        delayAfterSeconds: normalizeDelaySeconds(target.value),
+    };
+    launchDependencies.value = next;
+}
+
+function getDependencyLabel(dependency: LaunchDependency) {
+    return (
+        dependencyLabelMap.value.get(`${dependency.categoryId}:${dependency.itemId}`) ||
+        `已删除启动项 (${dependency.categoryId}/${dependency.itemId})`
+    );
+}
+
+async function onChangeIcon() {
+    if (!item.value) return;
+
+    const selected = await open({
+        multiple: false,
+        filters: [
+            { name: "图片文件", extensions: ["png", "jpg", "jpeg", "ico", "bmp", "svg"] },
+            { name: "所有文件", extensions: ["*"] },
+        ],
+    });
+
+    if (!selected || typeof selected !== "string") return;
+
+    try {
+        const iconBase64 = await invoke<string | null>("extract_icon_from_file", { path: selected });
+        if (iconBase64) {
+            store.updateLauncherItemIcon(props.categoryId, props.itemId!, iconBase64);
+            hasCustomIcon.value = true;
+        }
+    } catch (e) {
+        console.error("Failed to extract icon:", e);
+    }
 }
 </script>
 
@@ -209,6 +532,29 @@ function getFallbackText(name: string) {
     user-select: none;
 }
 
+.preview-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.change-icon-btn {
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color-strong);
+    background: var(--hover-bg);
+    color: var(--text-secondary);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.change-icon-btn:hover {
+    background: var(--hover-bg-strong);
+    color: var(--text-color);
+}
+
 .preview-img {
     width: 56px;
     height: 56px;
@@ -246,6 +592,7 @@ function getFallbackText(name: string) {
 }
 
 .input {
+    width: 100%;
     height: 36px;
     padding: 0 10px;
     border-radius: 12px;
@@ -254,6 +601,72 @@ function getFallbackText(name: string) {
     outline: none;
     -webkit-app-region: no-drag;
     color: var(--text-color);
+    box-sizing: border-box;
+}
+
+.dependency-picker {
+    display: flex;
+    gap: 8px;
+}
+
+.dependency-select {
+    flex: 1;
+}
+
+.dependency-empty {
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px dashed var(--border-color-strong);
+    color: var(--text-tertiary);
+    font-size: 12px;
+}
+
+.dependency-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.dependency-item {
+    padding: 12px;
+    border-radius: 14px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.dependency-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.dependency-name {
+    font-size: 13px;
+    color: var(--text-color);
+    font-weight: 600;
+}
+
+.dependency-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.dependency-delay {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.dependency-delay-input {
+    width: 96px;
 }
 
 .actions {
@@ -280,6 +693,15 @@ function getFallbackText(name: string) {
     opacity: 0.9;
 }
 
+.btn.neutral {
+    background: var(--hover-bg);
+    color: var(--text-color);
+}
+
+.btn.neutral:hover:not(:disabled) {
+    background: var(--hover-bg-strong);
+}
+
 .btn.danger {
     background: var(--hover-bg);
     color: var(--text-secondary);
@@ -287,6 +709,18 @@ function getFallbackText(name: string) {
 
 .btn.danger:hover {
     background: var(--hover-bg-strong);
+}
+
+.btn.small {
+    height: 30px;
+    padding: 0 10px;
+    border-radius: 10px;
+    font-size: 12px;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 .empty {
@@ -303,4 +737,3 @@ function getFallbackText(name: string) {
     pointer-events: none;
 }
 </style>
-

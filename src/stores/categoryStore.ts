@@ -132,5 +132,5 @@ export const useCategoryStore = defineStore(
             reorderCategories,
         };
     },
-    { persist: createVersionedPersistConfig("category", ["categories", "currentCategoryId"]) as any }
+    { persist: createVersionedPersistConfig("category", ["categories", "currentCategoryId"]) }
 );

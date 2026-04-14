@@ -1,5 +1,5 @@
 <template>
-    <div v-if="items.length > 0" class="home-section" data-menu-type="pinned-view">
+    <div v-if="items.length > 0" class="home-section" data-menu-type="Home-Pinned-View">
         <div class="home-section-header">
             <span class="home-section-title">固定启动项</span>
         </div>
@@ -8,10 +8,13 @@
             :force-fallback="true" fallback-class="pinned-drag" @update:model-value="onReorder">
             <template #item="{ element }">
                 <HomeCard :item-id="element.item.id" :category-id="element.primaryCategoryId" :name="element.item.name"
-                    :icon-base64="element.item.iconBase64" :launch-status="getLaunchStatus(element.item.id)"
-                    :cols="layout.cols" menu-type="icon-item" home-section="pinned" @click="onItemClick(element)" />
+                    :icon-base64="element.item.iconBase64" :item-type="element.item.itemType"
+                    :launch-status="getLaunchStatus(element.item.id)"
+                    :cols="layout.cols" menu-type="Icon-Item" home-section="pinned" @click="onItemClick(element)">
+                </HomeCard>
             </template>
         </draggable>
+
     </div>
 </template>
 
@@ -20,7 +23,7 @@ import draggable from "vuedraggable";
 import HomeCard from "./HomeCard.vue";
 import type { PinnedMergedItem } from "../../stores";
 
-const props = defineProps<{
+defineProps<{
     items: PinnedMergedItem[];
     layout: { cols: number; rows: number };
     getLaunchStatus: (itemId: string) => "launching" | "success" | undefined;
@@ -58,6 +61,8 @@ function onItemClick(item: PinnedMergedItem) {
     display: grid;
     grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
     gap: 8px;
+
+
 }
 
 .pinned-ghost {
@@ -70,5 +75,10 @@ function onItemClick(item: PinnedMergedItem) {
 
 .pinned-drag {
     cursor: grabbing;
+    transition: none !important;
+
+    :deep(.home-card) {
+        transition: none !important;
+    }
 }
 </style>

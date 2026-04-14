@@ -8,8 +8,24 @@ export type InvokeResult<T> =
     | { ok: true; value: T }
     | { ok: false; error: AppError };
 
+let isPageUnloading = false;
+
+export function setPageUnloading(value: boolean): void {
+    isPageUnloading = value;
+}
+
+export function isPageUnloadingCheck(): boolean {
+    return isPageUnloading;
+}
+
 export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<InvokeResult<T>> {
     try {
+        if (isPageUnloading) {
+            return {
+                ok: false,
+                error: { code: "CANCELLED", message: "页面正在卸载，操作已取消" } as AppError,
+            };
+        }
         const result = await tauriInvoke<T>(cmd, args);
         return { ok: true, value: result };
     } catch (err) {

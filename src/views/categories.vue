@@ -2,39 +2,43 @@
     <div
         class="categorie-view"
         :class="{ 'is-editing': isEditingCategory }"
+        @keydown="onKeydown"
+        tabindex="0"
     >
         <div class="search-header">
             <SearchBox
                 ref="searchBoxRef"
                 v-model="searchKeyword"
                 placeholder="搜索启动项..."
+                @nav="onSearchNav"
             />
         </div>
 
         <SearchResults
-            v-if="searchKeyword.trim() && globalSearchMergedResults.length > 0"
-            :results="globalSearchMergedResults"
+            v-if="searchKeyword.trim() && (isRustSearchReady ? rustSearchMergedResults.length > 0 : globalSearchMergedResults.length > 0)"
+            :results="isRustSearchReady ? rustSearchMergedResults : globalSearchMergedResults"
             :get-launch-status="getLaunchStatus"
-            @select="throttledOnOpenSearchResult"
+            :selected-index="selectedIndex"
+            @select="launchSearchWithCd"
         />
 
-        <div
-            v-else-if="searchKeyword.trim() && globalSearchMergedResults.length === 0"
-            class="no-results"
-        >
-            未找到匹配的启动项
-        </div>
+        <SearchFallback
+            v-else-if="searchKeyword.trim() && (isRustSearchReady ? rustSearchMergedResults.length === 0 : globalSearchMergedResults.length === 0)"
+            :keyword="searchKeyword"
+            @browser-search="onBrowserSearch"
+        />
 
         <template v-else>
             <div
                 v-if="pinnedMergedItems.length > 0 || recentMergedItems.length > 0"
                 class="home-sections"
+                data-menu-type="Home"
             >
                 <PinnedItems
                     :items="pinnedMergedItems"
                     :layout="pinnedLayout"
                     :get-launch-status="getLaunchStatus"
-                    @select="throttledOnOpenPinnedItem"
+                    @select="launchPinnedWithCd"
                     @reorder="onReorderPinnedItems"
                 />
 
@@ -42,7 +46,7 @@
                     :items="recentMergedItems"
                     :layout="recentLayout"
                     :get-launch-status="getLaunchStatus"
-                    @select="throttledOnOpenRecentItem"
+                    @select="launchRecentWithCd"
                 />
             </div>
 
@@ -67,13 +71,14 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { useThrottleFn } from "@vueuse/core";
+import { useLaunchCooldown } from "../composables/useLaunchCooldown";
 
 import SearchBox from "../components/SearchBox.vue";
 import SearchResults from "../components/home/SearchResults.vue";
+import SearchFallback from "../components/SearchFallback.vue";
 import PinnedItems from "../components/home/PinnedItems.vue";
 import RecentItems from "../components/home/RecentItems.vue";
 import CategoryGrid from "../components/home/CategoryGrid.vue";
@@ -89,6 +94,8 @@ import {
     type Category as CategoryType,
 } from "../stores";
 import { useLaunchStatus } from "../composables/useLaunchStatus";
+import { showToast } from "../composables/useGlobalToast";
+import { launchStoredItem } from "../utils/launcher-service";
 
 const store = Store();
 const settingsStore = useSettingsStore();
@@ -96,7 +103,12 @@ const uiStore = useUIStore();
 const categoryStore = useCategoryStore();
 const router = useRouter();
 
-const { searchKeyword, globalSearchMergedResults } = storeToRefs(store);
+const {
+    searchKeyword,
+    globalSearchMergedResults,
+    rustSearchMergedResults,
+    isRustSearchReady,
+} = storeToRefs(store);
 const { categoryCols } = storeToRefs(uiStore);
 const {
     categories,
@@ -109,7 +121,9 @@ const { autoHideAfterLaunch } = storeToRefs(settingsStore);
 
 const searchBoxRef = ref<InstanceType<typeof SearchBox> | null>(null);
 
-const { launchStatusMap, setLaunchStatus, clearLaunchStatus, getLaunchStatus } = useLaunchStatus({
+const selectedIndex = ref(-1);
+
+const { setLaunchStatus, clearLaunchStatus, getLaunchStatus } = useLaunchStatus({
     autoHideAfterLaunch,
 });
 
@@ -118,6 +132,8 @@ let unlistenShow: (() => void) | null = null;
 
 onMounted(async () => {
     const win = getCurrentWindow();
+
+    await store.syncSearchIndex();
 
     unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
         if (focused) {
@@ -165,6 +181,10 @@ function onUpdateCategories(newCategories: CategoryType[]) {
 }
 
 function onConfirmCategoryEdit() {
+    if (!editingCategoryName.value.trim()) {
+        showToast("分类名称不能为空");
+        return;
+    }
     categoryStore.confirmCategoryEdit(editingCategoryName.value);
 }
 
@@ -172,36 +192,72 @@ function onCancelCategoryEdit() {
     categoryStore.cancelCategoryEdit();
 }
 
+function onBrowserSearch() {
+    store.recordConfirmedSearch();
+    const url = `https://www.google.com/search?q=${encodeURIComponent(searchKeyword.value)}`;
+    openUrl(url);
+}
+
 async function onOpenSearchResult(result: GlobalSearchMergedResult) {
-    store.recordItemUsage(result.primaryCategoryId, result.item.id);
+    store.recordConfirmedSearch();
+
+    if (!result?.item || !result?.primaryCategoryId) return;
+    const item = result.item;
     store.clearSearch();
-    setLaunchStatus(result.item.id, "launching");
+    setLaunchStatus(item.id, "launching");
     try {
-        await openPath(result.item.path);
-        setLaunchStatus(result.item.id, "success");
+        await launchStoredItem(
+            {
+                categoryId: result.primaryCategoryId,
+                itemId: item.id,
+            },
+            {
+                store,
+                notifyError: true,
+            }
+        );
+        setLaunchStatus(item.id, "success");
     } catch (e) {
         console.error(e);
-        clearLaunchStatus(result.item.id);
+        clearLaunchStatus(item.id);
     }
 }
 
 async function onOpenRecentItem(item: RecentUsedMergedItem) {
-    store.recordItemUsage(item.recent.categoryId, item.recent.itemId);
-    setLaunchStatus(item.recent.itemId, "launching");
+    if (!item?.item || !item?.recent?.categoryId) return;
+    setLaunchStatus(item.item.id, "launching");
     try {
-        await openPath(item.item.path);
-        setLaunchStatus(item.recent.itemId, "success");
+        await launchStoredItem(
+            {
+                categoryId: item.recent.categoryId,
+                itemId: item.item.id,
+            },
+            {
+                store,
+                notifyError: true,
+            }
+        );
+        setLaunchStatus(item.item.id, "success");
     } catch (e) {
         console.error(e);
-        clearLaunchStatus(item.recent.itemId);
+        clearLaunchStatus(item.item.id);
     }
 }
 
 async function onOpenPinnedItem(item: PinnedMergedItem) {
-    store.recordItemUsage(item.primaryCategoryId, item.item.id);
+    if (!item?.item || !item?.primaryCategoryId) return;
     setLaunchStatus(item.item.id, "launching");
     try {
-        await openPath(item.item.path);
+        await launchStoredItem(
+            {
+                categoryId: item.primaryCategoryId,
+                itemId: item.item.id,
+            },
+            {
+                store,
+                notifyError: true,
+            }
+        );
         setLaunchStatus(item.item.id, "success");
     } catch (e) {
         console.error(e);
@@ -213,14 +269,65 @@ function onReorderPinnedItems(newOrder: string[]) {
     store.reorderPinnedItemIds(newOrder);
 }
 
-const throttledOnOpenSearchResult = useThrottleFn(onOpenSearchResult, 2500, true, true);
-const throttledOnOpenRecentItem = useThrottleFn(onOpenRecentItem, 2500, true, true);
-const throttledOnOpenPinnedItem = useThrottleFn(onOpenPinnedItem, 2500, true, true);
+const { createCooldown } = useLaunchCooldown({ cooldown: 2500 });
+
+const launchSearchWithCd = createCooldown(onOpenSearchResult);
+const launchRecentWithCd = createCooldown(onOpenRecentItem);
+const launchPinnedWithCd = createCooldown(onOpenPinnedItem);
 
 watch(editingCategoryId, async (value) => {
     if (!value) return;
     await nextTick();
 });
+
+watch(searchKeyword, async (keyword) => {
+    if (!keyword.trim()) return;
+    if (!isRustSearchReady.value) return;
+    await store.rustSearch(keyword);
+});
+
+watch(searchKeyword, () => {
+    selectedIndex.value = -1;
+});
+
+const currentSearchResults = computed(() => {
+    return isRustSearchReady.value ? rustSearchMergedResults.value : globalSearchMergedResults.value;
+});
+
+function onKeydown(e: KeyboardEvent) {
+    if (!searchKeyword.value.trim() || currentSearchResults.value.length === 0) {
+        return;
+    }
+
+    if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter") {
+        return;
+    }
+}
+
+function onSearchNav(direction: "up" | "down" | "enter") {
+    if (!searchKeyword.value.trim() || currentSearchResults.value.length === 0) {
+        return;
+    }
+
+    if (direction === "down") {
+        if (selectedIndex.value < currentSearchResults.value.length - 1) {
+            selectedIndex.value++;
+        } else {
+            selectedIndex.value = 0;
+        }
+    } else if (direction === "up") {
+        if (selectedIndex.value > 0) {
+            selectedIndex.value--;
+        } else {
+            selectedIndex.value = currentSearchResults.value.length - 1;
+        }
+    } else if (direction === "enter") {
+        if (selectedIndex.value >= 0 && selectedIndex.value < currentSearchResults.value.length) {
+            const result = currentSearchResults.value[selectedIndex.value];
+            launchSearchWithCd(result);
+        }
+    }
+}
 </script>
 
 <style lang="scss" scoped>

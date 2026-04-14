@@ -36,10 +36,10 @@ import { useSettingsStore } from "../stores";
 
 /**
  * useGlobalEvents 配置选项
- * 
- * @interface UseGlobalEventsOptions
- * @property {Function} closeContextMenu - 关闭右键菜单的回调函数
  */
+interface UseGlobalEventsOptions {
+    closeContextMenu: () => void;
+}
 
 /**
  * 全局事件处理 Composable

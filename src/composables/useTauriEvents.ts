@@ -36,7 +36,9 @@ import { listen } from "@tauri-apps/api/event";
 import { safeInvoke } from "../utils/invoke-wrapper";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useRouter } from "vue-router";
+import { useWindowPosition } from "./useWindowPosition";
 import { useSettingsStore } from "../stores";
+import { storeToRefs } from "pinia";
 
 /**
  * Tauri 事件监听 Composable
@@ -93,8 +95,6 @@ export function useTauriEvents() {
      * - 所有监听器会被收集以便后续清理
      */
     async function initializeTauriEvents() {
-        const settingsStore = useSettingsStore();
-
         const unlistenTraySettings = await listen("tray-open-settings", async () => {
             router.push("/settings");
         });
@@ -110,15 +110,34 @@ export function useTauriEvents() {
             const win = getCurrentWindow();
             const isVisible = await win.isVisible();
             const isFocused = await win.isFocused();
+            const { saveWindowPosition, restoreWindowPosition } = useWindowPosition();
+            const settingsStore = useSettingsStore();
+            const { followMouseOnShow } = storeToRefs(settingsStore);
 
             if (currentRoute === "/categories" && isVisible && isFocused) {
+                await saveWindowPosition();
                 await win.hide();
             } else {
                 router.push("/categories");
-                await safeInvoke("show_window_with_follow_mouse");
+                if (followMouseOnShow.value) {
+                    await safeInvoke("show_window_with_follow_mouse");
+                } else {
+                    const restored = await restoreWindowPosition();
+                    if (!restored) {
+                        await safeInvoke("show_window_with_follow_mouse");
+                    } else {
+                        await win.show();
+                        await win.setFocus();
+                    }
+                }
             }
         });
         unlisteners.push(unlistenToggleMain);
+
+        const unlistenCornerHotspot = await listen("corner-hotspot-triggered", async () => {
+            router.push("/categories");
+        });
+        unlisteners.push(unlistenCornerHotspot);
     }
 
     /**

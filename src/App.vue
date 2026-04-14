@@ -1,14 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount } from "vue";
+import { computed, onMounted, onBeforeUnmount, defineAsyncComponent } from "vue";
 import { storeToRefs } from "pinia";
 import { invoke } from "@tauri-apps/api/core";
-import { safeInvoke } from "./utils/invoke-wrapper";
+import { safeInvoke, setPageUnloading } from "./utils/invoke-wrapper";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useRouter } from "vue-router";
+
 
 import ContextMenu from "./components/contextMenu.vue";
 import ConfirmDialog from "./components/common/ConfirmDialog.vue";
-import { Store, useSettingsStore } from "./stores";
+import InputDialog from "./components/common/InputDialog.vue";
+import GlobalToast from "./components/common/GlobalToast.vue";
+import FocusIndicator from "./components/common/FocusIndicator.vue";
+const OnboardingGuide = defineAsyncComponent(() => import("./components/OnboardingGuide.vue"));
+import { Store, useSettingsStore, useGuideStore } from "./stores";
 import { useUIStore } from "./stores/uiStore";
 
 import { useContextMenu } from "./composables/useContextMenu";
@@ -19,6 +23,8 @@ import { useGlobalEvents } from "./composables/useGlobalEvents";
 import { useTheme } from "./composables/useTheme";
 import { useWindowDrag } from "./composables/useWindowDrag";
 import { useConfirmDialog } from "./composables/useConfirmDialog";
+import { useInputDialog } from "./composables/useInputDialog";
+import { useWindowPosition } from "./composables/useWindowPosition";
 import { getPluginManager } from "./plugins";
 
 import "./styles/themes.css";
@@ -26,11 +32,14 @@ import "./styles/themes.css";
 const store = Store();
 const settingsStore = useSettingsStore();
 const uiStore = useUIStore();
-const router = useRouter();
+const guideStore = useGuideStore();
+const isDev = import.meta.env.DEV;
 
 const {
     theme,
     windowEffectsEnabled,
+    performanceMode,
+    windowEffectType,
     showGuideOnStartup,
     cornerHotspotEnabled,
     cornerHotspotPosition,
@@ -57,6 +66,7 @@ const { initializeDragDrop, lastDrop, processedDropIds } = useDragDrop({
 });
 
 const { state: confirmState, confirm, handleConfirm, handleCancel } = useConfirmDialog();
+const { state: inputState, input, handleConfirm: handleInputConfirm, handleCancel: handleInputCancel } = useInputDialog();
 
 const { onMenuAction } = useMenuActions({
     currentCategoryId,
@@ -66,6 +76,7 @@ const { onMenuAction } = useMenuActions({
     processedDropIds,
     closeContextMenu,
     confirm,
+    inputDialog: input,
 });
 
 const { initializeTauriEvents, cleanupTauriEvents } = useTauriEvents();
@@ -83,6 +94,13 @@ const {
 
 const { initializeWindowDrag, cleanupWindowDrag } = useWindowDrag();
 
+const {
+    saveWindowPosition,
+    restoreWindowPosition,
+    initializePositionTracking,
+    cleanupPositionTracking,
+} = useWindowPosition();
+
 const isCurrentItemPinned = computed(() => {
     if (!currentLauncherItemId.value) return false;
     return store.isItemPinned(currentLauncherItemId.value);
@@ -94,24 +112,33 @@ const hasCurrentItemCustomIcon = computed(() => {
 });
 
 onMounted(async () => {
+    await settingsStore.hydratePersistedConfig();
     await settingsStore.hydrateAppSettings();
     await settingsStore.refreshAutostartStatus();
 
     const pluginManager = getPluginManager();
     await pluginManager.refreshPlugins();
 
-    if (showGuideOnStartup.value) {
-        router.push("/guide");
+    if (showGuideOnStartup.value && !guideStore.hasSeenOnboarding) {
+        guideStore.startOnboarding();
     }
 
     initializeGlobalEvents();
     initializeDragDrop();
     await initializeTauriEvents();
     initializeWindowDrag();
+    await initializePositionTracking();
 
     applyTheme(theme.value);
     applyEffectsDisabled(!windowEffectsEnabled.value);
     watchThemeChanges();
+
+    if (performanceMode.value) {
+        await safeInvoke("set_window_effects", { enabled: false });
+    } else {
+        await safeInvoke("set_window_effects", { enabled: true });
+        await safeInvoke("set_window_effect_type", { effectType: windowEffectType.value });
+    }
 
     safeInvoke('set_corner_hotspot_config', {
         enabled: cornerHotspotEnabled.value,
@@ -122,6 +149,7 @@ onMounted(async () => {
     const isAutostart = await invoke<boolean>("check_is_autostart_launch");
     if (!isAutostart) {
         try {
+            await restoreWindowPosition();
             await getCurrentWindow().show();
         } catch (e) {
             console.error("Failed to show window:", e);
@@ -129,7 +157,10 @@ onMounted(async () => {
     }
 });
 
-onBeforeUnmount(() => {
+onBeforeUnmount(async () => {
+    setPageUnloading(true);
+    await saveWindowPosition();
+    cleanupPositionTracking();
     cleanupGlobalEvents();
     cleanupTauriEvents();
     cleanupWindowDrag();
@@ -138,7 +169,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <main class="main" @contextmenu="openContextMenu">
+    <main class="main" :style="{ '--performance-mode': performanceMode ? 1 : 0 }" @contextmenu="openContextMenu">
         <router-view></router-view>
     </main>
     <ContextMenu
@@ -162,6 +193,25 @@ onBeforeUnmount(() => {
         @confirm="handleConfirm"
         @cancel="handleCancel"
     />
+    <InputDialog
+        :visible="inputState.visible"
+        :title="inputState.title"
+        :message="inputState.message"
+        :confirm-text="inputState.confirmText"
+        :cancel-text="inputState.cancelText"
+        :default-value="inputState.defaultValue"
+        :placeholder="inputState.placeholder"
+        :input-type="inputState.inputType"
+        :second-input-label="inputState.secondInputLabel"
+        :second-input-placeholder="inputState.secondInputPlaceholder"
+        :second-input-type="inputState.secondInputType"
+        :second-default-value="inputState.secondDefaultValue"
+        @confirm="handleInputConfirm"
+        @cancel="handleInputCancel"
+    />
+    <GlobalToast />
+    <OnboardingGuide />
+    <FocusIndicator v-if="isDev" />
 </template>
 
 <style lang="scss" scoped>

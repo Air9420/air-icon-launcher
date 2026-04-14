@@ -1,67 +1,38 @@
 <template>
     <div class="category-view">
         <header class="category-header" data-tauri-drag-region>
-            <button
-                class="back-btn"
-                type="button"
-                @click="onBack"
-                @mousedown.stop
-            >
+            <button class="back-btn" type="button" @click="onBack" @mousedown.stop>
                 返回
             </button>
             <div class="category-title" data-tauri-drag-region>
                 {{ title }}
             </div>
             <div class="header-search">
-                <SearchBox
-                    ref="searchBoxRef"
-                    v-model="localSearchKeyword"
-                    placeholder="搜索启动项..."
-                />
+                <SearchBox ref="searchBoxRef" v-model="localSearchKeyword" placeholder="搜索启动项..." />
             </div>
         </header>
 
-        <draggable
-            v-model="items"
-            item-key="id"
-            class="icon-container"
-            :style="{ '--cols': launcherCols }"
-            ghost-class="icon-ghost"
-            chosen-class="icon-chosen"
-            drag-class="icon-drag"
-            :delay="200"
-            :delay-on-touch-only="false"
-            :animation="150"
-            :force-fallback="true"
-            fallback-class="icon-drag"
-            :fallback-tolerance="5"
-            data-menu-type="icon-view"
-            :data-category-id="categoryId"
-        >
+        <draggable v-model="items" item-key="id" class="icon-container" :style="{ '--cols': launcherCols }"
+            ghost-class="icon-ghost" chosen-class="icon-chosen" drag-class="icon-drag" :delay="200"
+            :delay-on-touch-only="false" :animation="150" :force-fallback="true" fallback-class="icon-drag"
+            :fallback-tolerance="5" data-menu-type="Icon-View" :data-category-id="categoryId">
             <template #item="{ element }">
-                <div
-                    v-show="
-                        !localSearchKeyword.trim() ||
-                        matchesSearch(element.name)
-                    "
-                    class="icon-item"
-                    :class="{ 'is-pinned': isItemPinned(element.id) }"
-                    data-menu-type="icon-item"
-                    :data-category-id="categoryId"
-                    :data-item-id="element.id"
-                    @dblclick="throttledOnOpenItem(element)"
-                >
+                <div v-show="!localSearchKeyword.trim() ||
+                    matchesSearch(element.name)
+                    " class="icon-item" :class="{ 'is-pinned': isItemPinned(element.id) }" data-menu-type="Icon-Item"
+                    :data-category-id="categoryId" :data-item-id="element.id"
+                    @pointerdown="onPointerDown(element.id, $event)" @pointerup="onPointerUp(element.id)"
+                    @pointerleave="onPointerLeave">
                     <div class="icon-img">
-                        <img
-                            v-if="element.iconBase64"
-                            class="icon-real"
-                            :src="getIconSrc(element.iconBase64)"
-                            alt=""
-                            draggable="false"
-                        />
+                        <img v-if="element.iconBase64" class="icon-real" :src="getIconSrc(element.iconBase64)" alt=""
+                            draggable="false" />
                         <div v-else class="icon-fallback">
                             {{ getFallbackText(element.name) }}
                         </div>
+
+                    </div>
+                    <div v-if="element.itemType === 'url'" class="url-badge">
+                        URL
                     </div>
                     <div v-if="isItemPinned(element.id)" class="pinned-badge">
                         📌
@@ -69,37 +40,22 @@
                     <div v-if="!hideName" class="icon-name" :title="element.name">
                         {{ element.name }}
                     </div>
-                    <div
-                        v-if="launchStatusMap.get(element.id) === 'launching'"
-                        class="launch-status launching"
-                    >
+                    <div v-if="launchStatusMap.get(element.id) === 'launching'" class="launch-status launching">
                         <span class="spinner"></span>
                     </div>
-                    <div
-                        v-if="launchStatusMap.get(element.id) === 'success'"
-                        class="launch-status success"
-                    >
+                    <div v-if="launchStatusMap.get(element.id) === 'success'" class="launch-status success">
                         <span class="check-icon">✓</span>
                     </div>
                 </div>
             </template>
         </draggable>
 
-        <div
-            v-if="items.length === 0"
-            class="empty-tip"
-            data-menu-type="icon-view"
-            :data-category-id="categoryId"
-        >
+        <div v-if="items.length === 0" class="empty-tip" data-menu-type="Icon-View" :data-category-id="categoryId">
             将文件/快捷方式拖进来即可添加到此类目
         </div>
 
-        <div
-            v-else-if="localSearchKeyword.trim() && filteredCount === 0"
-            class="empty-tip"
-            data-menu-type="icon-view"
-            :data-category-id="categoryId"
-        >
+        <div v-else-if="localSearchKeyword.trim() && filteredCount === 0" class="empty-tip" data-menu-type="Icon-View"
+            :data-category-id="categoryId">
             未找到匹配的启动项
         </div>
     </div>
@@ -117,15 +73,16 @@ import {
 import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
 import draggable from "vuedraggable";
-import { openPath } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { useThrottleFn } from "@vueuse/core";
+
+import { useLaunchCooldown } from "../composables/useLaunchCooldown";
 import { Store } from "../stores";
 import { useUIStore } from "../stores/uiStore";
 import { useCategoryStore } from "../stores/categoryStore";
 import type { LauncherItem } from "../stores";
 import SearchBox from "../components/SearchBox.vue";
+import { launchStoredItem } from "../utils/launcher-service";
 
 const props = defineProps<{
     categoryId: string;
@@ -244,10 +201,20 @@ function onBack() {
 }
 
 async function onOpenItem(item: LauncherItem) {
-    store.recordItemUsage(props.categoryId, item.id);
+    if (!item) return;
+
     setLaunchStatus(item.id, "launching");
     try {
-        await openPath(item.path);
+        await launchStoredItem(
+            {
+                categoryId: props.categoryId,
+                itemId: item.id,
+            },
+            {
+                store,
+                notifyError: true,
+            }
+        );
         setLaunchStatus(item.id, "success");
     } catch (e) {
         console.error(e);
@@ -256,7 +223,41 @@ async function onOpenItem(item: LauncherItem) {
     }
 }
 
-const throttledOnOpenItem = useThrottleFn(onOpenItem, 2500, true, true);
+const { createCooldown } = useLaunchCooldown({ cooldown: 2500 });
+const launchItemWithCd = createCooldown(onOpenItem);
+
+let pressTimer: ReturnType<typeof setTimeout> | null = null;
+let pressedItemId: string | null = null;
+const PRESS_THRESHOLD = 200;
+
+function onPointerDown(itemId: string, e: PointerEvent) {
+    if (e.button !== 0) return;
+    pressedItemId = itemId;
+    pressTimer = setTimeout(() => {
+        pressedItemId = null;
+        pressTimer = null;
+    }, PRESS_THRESHOLD);
+}
+
+function onPointerUp(itemId: string) {
+    if (pressTimer && pressedItemId === itemId) {
+        clearTimeout(pressTimer);
+        pressTimer = null;
+        const item = items.value.find(i => i.id === itemId);
+        if (item) {
+            launchItemWithCd(item);
+        }
+        pressedItemId = null;
+    }
+}
+
+function onPointerLeave() {
+    if (pressTimer) {
+        clearTimeout(pressTimer);
+        pressTimer = null;
+        pressedItemId = null;
+    }
+}
 
 function getIconSrc(iconBase64: string) {
     if (iconBase64.startsWith("data:")) return iconBase64;
@@ -331,6 +332,7 @@ function getFallbackText(name: string) {
     height: calc(100vh - 52px - 32px);
     overflow-y: scroll;
     -ms-overflow-style: none;
+
     &::-webkit-scrollbar {
         display: none;
     }
@@ -372,6 +374,19 @@ function getFallbackText(name: string) {
     font-size: 12px;
     line-height: 1;
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
+}
+
+.url-badge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    padding: 1px 4px;
+    font-size: 8px;
+    font-weight: 600;
+    color: #fff;
+    background: #3b82f6;
+    border-radius: 4px;
+    z-index: 1;
 }
 
 .icon-real {

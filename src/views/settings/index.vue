@@ -1,7 +1,7 @@
 <template>
     <div
         class="settings-view"
-        data-menu-type="categorie-view"
+        data-menu-type="Settings-View"
         data-tauri-drag-region
     >
         <header class="settings-header" data-tauri-drag-region>
@@ -79,6 +79,7 @@ const tabs = [
     { name: "数据", path: "/settings/data" },
     { name: "指南", path: "/settings/guide" },
     { name: "关于", path: "/settings/about" },
+    { name: "统计", path: "/settings/stats" },
 ];
 
 function onBack() {
@@ -189,6 +190,8 @@ function scrollTabs(direction: number) {
     display: flex;
     gap: 0;
     padding: 0 4px;
+    /* 不需要按shift键滚轮可横滚动 */
+    user-select: none;
 }
 
 .tab {

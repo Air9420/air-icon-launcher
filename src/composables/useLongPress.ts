@@ -1,4 +1,4 @@
-import { ref, onUnmounted } from "vue";
+import { ref } from "vue";
 
 export interface UseLongPressOptions {
     onLongPressStart?: (e: MouseEvent | TouchEvent) => void;

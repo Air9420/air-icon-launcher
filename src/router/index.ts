@@ -12,6 +12,7 @@ const SettingsClipboard = () => import('../views/settings/Clipboard.vue')
 const SettingsFeatures = () => import('../views/settings/Features.vue')
 const SettingsData = () => import('../views/settings/Data.vue')
 const SettingsAbout = () => import('../views/settings/About.vue')
+const SettingsStats = () => import('../views/settings/Stats.vue')
 const ClipboardHistory = () => import('../components/ClipboardHistory.vue')
 const Plugins = () => import('../views/plugins.vue')
 
@@ -21,6 +22,7 @@ const routes = [
     { path: '/categories', component: Categories },
     { path: '/category/:categoryId', name: 'category', component: Category, props: true },
     { path: '/category/:categoryId/item/:itemId/edit', name: 'launcher-item-edit', component: LauncherItemEdit, props: true },
+    { path: '/category/:categoryId/item/new', name: 'launcher-item-create', component: LauncherItemEdit, props: true },
     {
         path: '/settings',
         name: 'settings',
@@ -35,6 +37,7 @@ const routes = [
             { path: 'data', name: 'settings-data', component: SettingsData },
             { path: 'guide', name: 'settings-guide', component: Guide },
             { path: 'about', name: 'settings-about', component: SettingsAbout },
+            { path: 'stats', name: 'settings-stats', component: SettingsStats },
         ]
     },
     { path: '/clipboard', name: 'clipboard', component: ClipboardHistory },

@@ -111,6 +111,9 @@
             <div class="hint">
                 成功打开一个启动项后自动隐藏本程序窗口
             </div>
+            <div class="hint" style="margin-top: 4px; color: var(--text-hint);">
+                💡 按住 <kbd>Ctrl</kbd> 键可连续启动多个，松开后自动隐藏
+            </div>
         </div>
 
         <div class="section">
@@ -203,11 +206,9 @@
 <script setup lang="ts">
 import { storeToRefs } from "pinia";
 import { onMounted, ref, watchEffect, computed } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import { safeInvoke } from "../../utils/invoke-wrapper";
-import { Store, useSettingsStore, type AutostartType } from "../../stores";
+import { useSettingsStore, type AutostartType } from "../../stores";
 
-const store = Store();
 const settingsStore = useSettingsStore();
 const {
     followMouseOnShow,
@@ -234,7 +235,6 @@ const cornerHotspotEnabledDraft = ref<boolean>(false);
 const cornerHotspotPositionDraft = ref<string>("top-right");
 const cornerHotspotSensitivityDraft = ref<string>("medium");
 const hideOnCtrlRightClickDraft = ref<boolean>(false);
-const isDev = import.meta.env.DEV;
 
 const autostartMethods = [
     {
@@ -300,10 +300,6 @@ async function onSelectAutostartMethod(method: AutostartType) {
     }
 }
 
-async function onSimulateAutostart() {
-    await safeInvoke('simulate_autostart_launch');
-}
-
 function onCtrlDragChange() {
     settingsStore.setCtrlDragEnabled(ctrlDragDraft.value);
 }
@@ -323,7 +319,7 @@ async function onCornerHotspotChange() {
 
 async function onSetCornerPosition(position: string) {
     cornerHotspotPositionDraft.value = position;
-    settingsStore.setCornerHotspotPosition(position as any);
+    settingsStore.setCornerHotspotPosition(position as "top-left" | "top-right" | "bottom-left" | "bottom-right");
     await safeInvoke('set_corner_hotspot_config', {
         enabled: cornerHotspotEnabledDraft.value,
         position,
@@ -333,7 +329,7 @@ async function onSetCornerPosition(position: string) {
 
 async function onSetCornerSensitivity(sensitivity: string) {
     cornerHotspotSensitivityDraft.value = sensitivity;
-    settingsStore.setCornerHotspotSensitivity(sensitivity as any);
+    settingsStore.setCornerHotspotSensitivity(sensitivity as "low" | "medium" | "high");
     await safeInvoke('set_corner_hotspot_config', {
         enabled: cornerHotspotEnabledDraft.value,
         position: cornerHotspotPositionDraft.value,

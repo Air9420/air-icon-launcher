@@ -1,5 +1,5 @@
 import { ref, computed } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../utils/invoke-wrapper";
 import type {
   PluginManifest,
   PluginInstance,
@@ -13,7 +13,7 @@ import {
 } from "./permissions";
 import { resourceTracker } from "./resource-tracker";
 import { sandboxManager } from "./sandbox";
-import { invoke as safeInvoke } from "../utils/invoke-wrapper";
+import { invokeOrThrow } from "../utils/invoke-wrapper";
 
 const plugins = ref<Map<string, PluginInstance>>(new Map());
 
@@ -65,13 +65,18 @@ export function usePluginManager() {
   );
 
   async function getPluginDirectory(): Promise<string> {
-    return await invoke<string>("get_plugin_directory");
+    const result = await invoke<string>("get_plugin_directory");
+    return result.ok ? result.value : "";
   }
 
   async function scanPlugins(): Promise<PluginManifest[]> {
     try {
-      const manifests = await invoke<PluginManifest[]>("scan_plugins");
-      return manifests;
+      const result = await invoke<PluginManifest[]>("scan_plugins");
+      if (!result.ok) {
+        console.error("Failed to scan plugins:", result.error);
+        return [];
+      }
+      return result.value;
     } catch (error) {
       console.error("Failed to scan plugins:", error);
       return [];
@@ -80,10 +85,14 @@ export function usePluginManager() {
 
   async function loadPluginManifest(pluginPath: string): Promise<PluginManifest | null> {
     try {
-      const manifest = await invoke<PluginManifest>("read_plugin_manifest", {
+      const result = await invoke<PluginManifest>("read_plugin_manifest", {
         pluginPath,
       });
-      return manifest;
+      if (!result.ok) {
+        console.error(`Failed to load plugin manifest from ${pluginPath}:`, result.error);
+        return null;
+      }
+      return result.value;
     } catch (error) {
       console.error(`Failed to load plugin manifest from ${pluginPath}:`, error);
       return null;
@@ -92,11 +101,15 @@ export function usePluginManager() {
 
   async function loadPluginCode(pluginPath: string, mainFile: string): Promise<string | null> {
     try {
-      const code = await invoke<string>("read_plugin_file", {
+      const result = await invoke<string>("read_plugin_file", {
         pluginPath,
         fileName: mainFile,
       });
-      return code;
+      if (!result.ok) {
+        console.error(`Failed to load plugin code from ${pluginPath}/${mainFile}:`, result.error);
+        return null;
+      }
+      return result.value;
     } catch (error) {
       console.error(`Failed to load plugin code from ${pluginPath}/${mainFile}:`, error);
       return null;
@@ -115,8 +128,6 @@ export function usePluginManager() {
     api: ReturnType<typeof createVersionedAPI>
   ): Plugin | null {
     try {
-      console.log(`[PluginManager] Creating module factory for ${manifest.id}...`);
-      
       let cleanCode = code.trim();
       if (cleanCode.endsWith(";")) {
         cleanCode = cleanCode.slice(0, -1);
@@ -124,17 +135,10 @@ export function usePluginManager() {
       
       const wrappedCode = `return ${cleanCode}(manifest, api);`;
       
-      console.log(`[PluginManager] wrappedCode preview:`, wrappedCode.substring(0, 200) + '...');
-      
       const moduleFactory = new Function("manifest", "api", wrappedCode);
-      console.log(`[PluginManager] Executing module factory...`);
       const pluginExports = moduleFactory(manifest, api);
-      
-      console.log(`[PluginManager] Raw pluginExports:`, pluginExports);
-      console.log(`[PluginManager] Type:`, typeof pluginExports);
-      
+
       const exports = pluginExports || {};
-      console.log(`[PluginManager] Plugin exports keys:`, Object.keys(exports));
 
       const plugin: Plugin = {
         manifest,
@@ -161,15 +165,16 @@ export function usePluginManager() {
     }
 
     if (instance.status === "loaded" || instance.status === "enabled") {
-      console.log(`[PluginManager] Plugin ${pluginId} already loaded, skipping`);
       return true;
     }
 
-    console.log(`[PluginManager] Loading plugin ${pluginId}...`);
-
     try {
-      const pluginPath = await invoke<string>("get_plugin_path", { pluginId });
-      console.log(`[PluginManager] Plugin path: ${pluginPath}`);
+      const pathResult = await invoke<string>("get_plugin_path", { pluginId });
+      if (!pathResult.ok) {
+        console.error(`[PluginManager] Failed to get plugin path:`, pathResult.error);
+        return false;
+      }
+      const pluginPath = pathResult.value;
       
       const code = await loadPluginCode(pluginPath, instance.manifest.main);
 
@@ -179,13 +184,10 @@ export function usePluginManager() {
         return false;
       }
 
-      console.log(`[PluginManager] Plugin code loaded, length: ${code.length}`);
-
       const permissions = parsePermissions(instance.manifest);
       instance.permissions = permissions;
 
       const useSandbox = isSandboxModeEnabled();
-      console.log(`[PluginManager] Sandbox mode: ${useSandbox}`);
 
       if (useSandbox) {
         try {
@@ -296,7 +298,6 @@ export function usePluginManager() {
     const isRunningInSandbox = !!instance.sandbox;
     
     if (instance.status === "loaded" && isRunningInSandbox !== currentSandboxMode) {
-      console.log(`[PluginManager] Sandbox mode changed, reloading plugin ${pluginId}`);
       await unloadPlugin(pluginId);
     }
 
@@ -369,8 +370,8 @@ export function usePluginManager() {
       const manifest = await loadPluginManifest(sourcePath);
       if (!manifest || plugins.value.has(manifest.id)) return false;
 
-      const installed = await invoke<boolean>("install_plugin", { sourcePath });
-      if (installed) {
+      const installResult = await invoke<boolean>("install_plugin", { sourcePath });
+      if (installResult.ok && installResult.value) {
         const permissions = parsePermissions(manifest);
         plugins.value.set(manifest.id, {
           manifest,
@@ -394,11 +395,7 @@ export function usePluginManager() {
 
     try {
       await unloadPlugin(pluginId);
-      const result = await safeInvoke<boolean>("uninstall_plugin", { pluginId });
-      if (!result.ok) {
-        console.error(`Failed to uninstall plugin ${pluginId}: [${result.error.code}] ${result.error.message}`);
-        return false;
-      }
+      await invokeOrThrow<boolean>("uninstall_plugin", { pluginId });
       plugins.value.delete(pluginId);
 
       const states = getPluginStates();

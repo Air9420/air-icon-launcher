@@ -23,3 +23,28 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Tauri 构建产物
+src-tauri/target/
+
+# 环境变量
+.env
+.env.local
+.env.*.local
+
+# 编辑器临时文件
+*.swp
+*.swo
+*~
+
+# OS 文件
+Thumbs.db
+Desktop.ini
+
+# Tauri 特有构建产物
+src-tauri/binaries/
+src-tauri/*.exe
+src-tauri/*.msi
+src-tauri/*.appimage
+src-tauri/*.deb
+src-tauri/*.rpm

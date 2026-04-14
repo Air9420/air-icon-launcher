@@ -1,8 +1,9 @@
-export { useClipboardStore, type ClipboardRecord } from "./clipboardStore";
+export { useClipboardStore, type ClipboardRecord, getRecordContent } from "./clipboardStore";
 export { useSettingsStore, type ThemeMode, type AutostartType, type AutostartStatus } from "./settingsStore";
+export { useGuideStore } from "./guideStore";
 export {
     useUIStore,
-    enumContextMenuType,
+    type enumContextMenuType,
     HOME_LAYOUT_PRESETS,
     type HomeLayoutSectionKey,
     type HomeLayoutPresetKey,
@@ -12,6 +13,7 @@ export {
 export { useCategoryStore, type Category } from "./categoryStore";
 export {
     useLauncherStore,
+    type LaunchDependency,
     type LauncherItem,
     type GlobalSearchResult,
     type GlobalSearchMergedResult,
