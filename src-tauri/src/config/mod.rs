@@ -396,6 +396,9 @@ pub fn import_data(
             current.backup_on_exit = settings.backup_on_exit;
             current.backup_frequency = settings.backup_frequency;
             current.backup_retention = settings.backup_retention;
+            current.ai_organizer_base_url = settings.ai_organizer_base_url;
+            current.ai_organizer_model = settings.ai_organizer_model;
+            current.ai_organizer_api_key = settings.ai_organizer_api_key;
             manager
                 .save_config(&current)
                 .map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))?;
@@ -412,8 +415,14 @@ pub fn import_data(
             for category in launcher_data.categories {
                 if let Some(existing) = current.categories.iter_mut().find(|c| c.id == category.id)
                 {
+                    existing.name = category.name.clone();
+                    existing.custom_icon_base64 = category.custom_icon_base64.clone();
                     for item in category.items {
-                        if !existing.items.iter().any(|i| i.id == item.id) {
+                        if let Some(existing_item) =
+                            existing.items.iter_mut().find(|i| i.id == item.id)
+                        {
+                            *existing_item = item;
+                        } else {
                             existing.items.push(item);
                         }
                     }
@@ -433,6 +442,9 @@ pub fn import_data(
                 }) {
                     if recent_item.used_at > existing.used_at {
                         existing.used_at = recent_item.used_at;
+                    }
+                    if recent_item.usage_count > existing.usage_count {
+                        existing.usage_count = recent_item.usage_count;
                     }
                 } else {
                     current.recent_used_items.push(recent_item);

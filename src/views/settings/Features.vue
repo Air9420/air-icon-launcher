@@ -3,6 +3,9 @@
         <div class="section">
             <div class="section-title">功能</div>
             <div class="action-buttons">
+                <button class="action-btn" type="button" @click="onOpenAiOrganizer">
+                    AI 整理向导
+                </button>
                 <button class="action-btn" type="button" @click="onOpenPlugins">
                     插件管理
                 </button>
@@ -23,6 +26,10 @@ const store = Store();
 
 function onOpenPlugins() {
     router.push("/plugins");
+}
+
+function onOpenAiOrganizer() {
+    router.push("/ai-organizer");
 }
 
 function onClearRecentUsed() {

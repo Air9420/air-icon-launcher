@@ -4,6 +4,7 @@ import { storeToRefs } from "pinia";
 import { invoke } from "@tauri-apps/api/core";
 import { safeInvoke, setPageUnloading } from "./utils/invoke-wrapper";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useRouter } from "vue-router";
 
 
 import ContextMenu from "./components/contextMenu.vue";
@@ -33,6 +34,7 @@ const store = Store();
 const settingsStore = useSettingsStore();
 const uiStore = useUIStore();
 const guideStore = useGuideStore();
+const router = useRouter();
 const isDev = import.meta.env.DEV;
 
 const {
@@ -112,6 +114,10 @@ const hasCurrentItemCustomIcon = computed(() => {
     return store.hasCustomIcon(currentCategoryId.value, currentLauncherItemId.value);
 });
 
+const hasLauncherItems = computed(() =>
+    Object.values(store.launcherItemsByCategoryId).some((items) => items.length > 0)
+);
+
 onMounted(async () => {
     await settingsStore.hydratePersistedConfig();
     await settingsStore.hydrateAppSettings();
@@ -120,7 +126,9 @@ onMounted(async () => {
     const pluginManager = getPluginManager();
     await pluginManager.refreshPlugins();
 
-    if (showGuideOnStartup.value && !guideStore.hasSeenOnboarding) {
+    if (showGuideOnStartup.value && !guideStore.hasSeenOnboarding && !hasLauncherItems.value) {
+        await router.replace("/ai-organizer");
+    } else if (showGuideOnStartup.value && !guideStore.hasSeenOnboarding) {
         guideStore.startOnboarding();
     }
 

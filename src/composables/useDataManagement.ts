@@ -10,6 +10,7 @@ import {
     type RecentUsedItem,
 } from "../stores";
 import { invoke, invokeOrThrow } from "../utils/invoke-wrapper";
+import { getAppConfig } from "../utils/config-sync";
 
 export type DataExportFormat = "json" | "zip";
 
@@ -57,6 +58,7 @@ type ImportedRecentUsedItem = {
     category_id: string;
     item_id: string;
     used_at: number;
+    usage_count?: number;
 };
 
 type ImportedSettings = {
@@ -70,6 +72,15 @@ type ImportedSettings = {
     clipboard_history_enabled?: boolean;
     home_section_layouts?: unknown;
     clipboard_max_records?: number;
+    clipboard_max_image_size_mb?: number;
+    clipboard_encrypted?: boolean;
+    clipboard_storage_path?: string | null;
+    backup_on_exit?: boolean;
+    backup_frequency?: string;
+    backup_retention?: number;
+    ai_organizer_base_url?: string;
+    ai_organizer_model?: string;
+    ai_organizer_api_key?: string;
 };
 
 type ImportedLauncherData = {
@@ -157,6 +168,7 @@ export function buildLauncherExportData(
             category_id: item.categoryId,
             item_id: item.itemId,
             used_at: item.usedAt,
+            usage_count: item.usageCount,
         })),
     };
 }
@@ -229,7 +241,7 @@ export function useDataManagement() {
                         categoryId: item.category_id,
                         itemId: item.item_id,
                         usedAt: item.used_at,
-                        usageCount: 1,
+                        usageCount: Math.max(1, Math.floor(item.usage_count ?? 1)),
                     }))
                 );
             }
@@ -238,7 +250,7 @@ export function useDataManagement() {
         await store.syncSearchIndex();
     }
 
-    function buildExportPayload(options: DataExportOptions) {
+    async function buildExportPayload(options: DataExportOptions) {
         const payload: Record<string, unknown> = {
             version: "1.0",
             export_time: Math.floor(Date.now() / 1000),
@@ -254,19 +266,7 @@ export function useDataManagement() {
         }
 
         if (options.includeSettings) {
-            payload.settings = {
-                version: "1.0",
-                theme: settingsStore.theme,
-                category_cols: uiStore.categoryCols,
-                launcher_cols: uiStore.launcherCols,
-                toggle_shortcut: settingsStore.toggleShortcut,
-                clipboard_shortcut: settingsStore.clipboardShortcut,
-                follow_mouse_on_show: settingsStore.followMouseOnShow,
-                follow_mouse_y_anchor: settingsStore.followMouseYAnchor,
-                clipboard_history_enabled: clipboardStore.clipboardHistoryEnabled,
-                home_section_layouts: uiStore.homeSectionLayouts,
-                clipboard_max_records: clipboardStore.maxRecords,
-            };
+            payload.settings = await getAppConfig();
         }
 
         if (options.includePlugins) {
@@ -296,7 +296,7 @@ export function useDataManagement() {
         await invokeOrThrow("export_data_to_file", {
             path,
             format: options.format,
-            data: buildExportPayload(options),
+            data: await buildExportPayload(options),
         });
         return true;
     }

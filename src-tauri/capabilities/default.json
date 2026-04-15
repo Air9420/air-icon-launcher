@@ -17,6 +17,7 @@
     "core:window:allow-start-dragging",
     "core:window:allow-hide",
     "core:window:allow-show",
+    "core:window:allow-set-focus",
     "core:window:allow-set-position",
     "core:window:allow-outer-position",
     "core:window:allow-outer-size",
@@ -24,6 +25,7 @@
     "core:window:allow-available-monitors",
     "core:window:allow-primary-monitor",
     "dialog:default",
+    "fs:allow-write-text-file",
     {
       "identifier": "fs:default",
       "allow": [

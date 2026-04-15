@@ -95,7 +95,7 @@ fn dedupe_windows_shortcut_target_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
             if ext.as_deref() != Some("lnk") {
                 continue;
             }
-            if let Some(target) = resolve_windows_shortcut_target(p) {
+            if let Some(target) = resolve_windows_shortcut_target_pathbuf(p) {
                 let target_key = target.to_string_lossy().to_ascii_lowercase();
                 if keys.contains(&target_key) {
                     remove_keys.insert(target_key);
@@ -190,52 +190,50 @@ fn extract_paths_and_directories(paths: Vec<PathBuf>) -> (Vec<String>, Vec<Strin
 
 /// 从拖入的路径中提取可作为图标缓存的 base64 数据。
 fn extract_icon_base64s(paths: &[PathBuf]) -> Vec<Option<String>> {
-    let mut result = Vec::with_capacity(paths.len());
+    use rayon::prelude::*;
 
-    for path in paths {
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|s| s.to_ascii_lowercase());
+    paths
+        .par_iter()
+        .map(|path| {
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|s| s.to_ascii_lowercase());
 
-        let is_image = matches!(
-            ext.as_deref(),
-            Some("png") | Some("jpg") | Some("jpeg") | Some("ico") | Some("svg")
-        );
+            let is_image = matches!(
+                ext.as_deref(),
+                Some("png") | Some("jpg") | Some("jpeg") | Some("ico") | Some("svg")
+            );
 
-        if !is_image {
-            #[cfg(windows)]
-            {
-                if ext.as_deref() == Some("lnk") {
-                    if let Some(target) = resolve_windows_shortcut_target(path) {
-                        result.push(extract_windows_icon_base64(&target));
+            if !is_image {
+                #[cfg(windows)]
+                {
+                    if ext.as_deref() == Some("lnk") {
+                        if let Some(target) = resolve_windows_shortcut_target_pathbuf(path) {
+                            extract_windows_icon_base64(&target)
+                        } else {
+                            extract_windows_icon_base64(path)
+                        }
                     } else {
-                        result.push(extract_windows_icon_base64(path));
+                        extract_windows_icon_base64(path)
                     }
-                } else {
-                    result.push(extract_windows_icon_base64(path));
                 }
+                #[cfg(not(windows))]
+                {
+                    None
+                }
+            } else if let Ok(bytes) = std::fs::read(path) {
+                Some(STANDARD.encode(bytes))
+            } else {
+                None
             }
-            #[cfg(not(windows))]
-            {
-                result.push(None);
-            }
-            continue;
-        }
-
-        if let Ok(bytes) = std::fs::read(path) {
-            result.push(Some(STANDARD.encode(bytes)));
-        } else {
-            result.push(None);
-        }
-    }
-
-    result
+        })
+        .collect()
 }
 
 /// 在 Windows 上解析 .lnk 快捷方式指向的真实路径，用于获取不带叠加层的目标图标。
 #[cfg(windows)]
-fn resolve_windows_shortcut_target(path: &PathBuf) -> Option<PathBuf> {
+pub(crate) fn resolve_windows_shortcut_target_pathbuf(path: &PathBuf) -> Option<PathBuf> {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::{Interface, PCWSTR};
     use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;

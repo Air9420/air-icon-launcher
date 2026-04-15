@@ -20,6 +20,9 @@ export type AppConfigSnapshot = {
     backup_on_exit: boolean;
     backup_frequency: string;
     backup_retention: number;
+    ai_organizer_base_url: string;
+    ai_organizer_model: string;
+    ai_organizer_api_key: string;
 };
 
 export async function getAppConfig(): Promise<AppConfigSnapshot> {

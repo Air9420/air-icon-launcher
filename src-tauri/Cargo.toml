@@ -1,6 +1,6 @@
 [package]
 name = "air-icon-launcher"
-version = "0.1.6"
+version = "0.1.7"
 description = "A Windows desktop launcher for organizing and launching apps"
 authors = ["Air"]
 license = "MIT"
@@ -65,6 +65,8 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 crossbeam-channel = "0.5"
 chrono = "0.4"
 tokio = { version = "1", features = ["time"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rayon = "1.10"
 
 [profile.dev]
 incremental = true # 以较小的步骤编译您的二进制文件。
