@@ -30,9 +30,11 @@ type CategoryKey =
     | "design"
     | "media"
     | "gaming"
+    | "game_booster"
     | "emulator"
     | "ai"
     | "system"
+    | "component"
     | "other";
 
 type CategoryRule = {
@@ -272,7 +274,7 @@ const CATEGORY_RULES: CategoryRule[] = [
     {
         key: "gaming",
         name: "游戏平台",
-        description: "游戏平台、游戏加速与高频游戏入口",
+        description: "游戏平台、游戏启动器与对战平台",
         exactTerms: [
             "epic games launcher",
             "wegame",
@@ -280,10 +282,6 @@ const CATEGORY_RULES: CategoryRule[] = [
             "ubisoft connect",
             "5e对战平台",
             "完美世界竞技平台",
-            "uu加速器",
-            "ak加速器",
-            "verykuai vk加速器",
-            "watt toolkit",
             "ea app",
         ],
         keywords: [
@@ -297,15 +295,49 @@ const CATEGORY_RULES: CategoryRule[] = [
             "riot",
             "5e对战平台",
             "完美世界竞技平台",
-            "加速器",
             "英雄联盟",
             "cfhd",
             "三角洲行动",
             "dead island",
+        ],
+        pathKeywords: ["steam", "epic games", "riot games", "wegame", "ubisoft"],
+    },
+    {
+        key: "game_booster",
+        name: "游戏加速器",
+        description: "游戏网络加速、帧率优化与游戏性能辅助工具",
+        exactTerms: [
+            "uu加速器",
+            "ak加速器",
+            "verykuai vk加速器",
+            "watt toolkit",
+            "雷神加速器",
+            "迅游加速器",
+            "biubiu加速器",
+            "海豚加速器",
+        ],
+        keywords: [
+            "游戏加速",
+            "加速器",
+            "game booster",
+            "booster",
+            "watt toolkit",
+            "lossless scaling",
+            "uu",
+            "迅游",
+            "雷神加速器",
+            "biubiu",
+            "海豚加速",
+        ],
+        pathKeywords: [
+            "uu",
+            "qiyou",
+            "xunyou",
+            "booster",
             "watt toolkit",
             "lossless scaling",
         ],
-        pathKeywords: ["steam", "epic games", "riot games", "wegame", "ubisoft"],
+        bias: 2,
     },
     {
         key: "emulator",
@@ -396,6 +428,28 @@ const CATEGORY_RULES: CategoryRule[] = [
         ],
         pathKeywords: ["powertoys", "7-zip", "bandizip", "winrar"],
     },
+    {
+        key: "component",
+        name: "系统组件",
+        description: "SDK、运行库、后台组件与无界面工具",
+        keywords: [
+            "runtime",
+            "redistributable",
+            "sdk",
+            "framework",
+            "vc++",
+            "vcredist",
+            ".net",
+            "driver package",
+            "service host",
+            "后台服务",
+            "无界面",
+            "组件",
+            "运行库",
+        ],
+        pathKeywords: ["runtime", "redistributable", "sdk", "framework", "common files", "drivers"],
+        bias: 1,
+    },
 ];
 
 const FALLBACK_CATEGORY: CategoryRule = {
@@ -446,8 +500,6 @@ const EXCLUSION_RULES: ExclusionRule[] = [
             "unins",
             "remove",
             "удалить",
-            "服务",
-            "services",
             "error reporter",
             "telemetry",
             "遥测",
@@ -462,9 +514,32 @@ const EXCLUSION_RULES: ExclusionRule[] = [
     },
 ];
 
+const NON_LAUNCHABLE_TERMS = [
+    "runtime",
+    "redistributable",
+    "sdk",
+    "framework",
+    "vc++",
+    "vcredist",
+    ".net",
+    "driver package",
+    "service host",
+    "daemon",
+    "headless",
+    "后台服务",
+    "无界面",
+    "运行库",
+    "组件",
+    "system component",
+];
+
 const CATEGORY_BY_KEY = new Map(CATEGORY_RULES.map((rule) => [rule.key, rule]));
 
-export type OrganizerCategoryRule = Pick<CategoryRule, "key" | "name" | "description">;
+export type OrganizerCategoryRule = {
+    key: string;
+    name: string;
+    description: string;
+};
 
 export function buildOrganizerSuggestions(
     apps: InstalledAppScanItem[]
@@ -506,8 +581,10 @@ export function buildOrganizerSuggestions(
             items: [...category.items].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)),
         }))
         .sort((a, b) => {
-            if (a.key === "other" && b.key !== "other") return 1;
-            if (b.key === "other" && a.key !== "other") return -1;
+            const rankDiff = getCategorySortRank(a.key) - getCategorySortRank(b.key);
+            if (rankDiff !== 0) {
+                return rankDiff;
+            }
             return b.items.length - a.items.length || a.name.localeCompare(b.name);
         });
 }
@@ -582,6 +659,15 @@ function classifyInstalledApp(app: NormalizedApp): {
     reason: string;
     score: number;
 } {
+    if (isLikelyNonLaunchableItem(app)) {
+        const componentRule = CATEGORY_BY_KEY.get("component") || FALLBACK_CATEGORY;
+        return {
+            rule: componentRule,
+            reason: "命中组件特征：运行库/后台工具",
+            score: 980,
+        };
+    }
+
     if (matchesTerm(app.normalizedName, "微信开发者工具")) {
         const developmentRule = CATEGORY_BY_KEY.get("development") || FALLBACK_CATEGORY;
         return {
@@ -668,6 +754,29 @@ function containsCjk(value: string): boolean {
 
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getCategorySortRank(key: string): number {
+    if (key === "other") return 3;
+    if (key === "component") return 2;
+    return 1;
+}
+
+export function isLikelyNonLaunchableItem(app: Pick<InstalledAppScanItem, "name" | "path">): boolean {
+    const normalizedName = normalizeTextForMatching(normalizeAppName(app.name || ""));
+    const normalizedPath = normalizeTextForMatching(app.path || "");
+
+    if (!normalizedName && !normalizedPath) {
+        return false;
+    }
+
+    return NON_LAUNCHABLE_TERMS.some(
+        (term) => matchesTerm(normalizedName, term) || matchesTerm(normalizedPath, term)
+    );
+}
+
+export function shouldDefaultSelectOrganizerItem(app: Pick<InstalledAppScanItem, "name" | "path">): boolean {
+    return !isLikelyNonLaunchableItem(app);
 }
 
 export function getOrganizerCategoryRule(key: string): CategoryRule {

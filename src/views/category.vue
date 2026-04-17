@@ -71,6 +71,7 @@ import {
     onMounted,
     onUnmounted,
     ref,
+    watch,
     watchEffect,
 } from "vue";
 import { storeToRefs } from "pinia";
@@ -166,6 +167,18 @@ const items = computed<LauncherItem[]>({
         store.setLauncherItemsByCategoryId(props.categoryId, value);
     },
 });
+
+watch(
+    items,
+    (list) => {
+        const targets = list.map((item) => ({
+            categoryId: props.categoryId,
+            itemId: item.id,
+        }));
+        void store.hydrateMissingIconsForItems(targets);
+    },
+    { immediate: true }
+);
 
 function isItemPinned(itemId: string): boolean {
     return store.isItemPinned(itemId);

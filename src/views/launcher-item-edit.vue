@@ -220,6 +220,20 @@ const item = computed<LauncherItem | null>(() => {
     return store.getLauncherItemById(props.categoryId, props.itemId!);
 });
 
+watch(
+    item,
+    (currentItem) => {
+        if (!currentItem || !props.itemId) return;
+        void store.hydrateMissingIconsForItems([
+            {
+                categoryId: props.categoryId,
+                itemId: props.itemId,
+            },
+        ]);
+    },
+    { immediate: true }
+);
+
 const dependencyCandidates = computed(() => {
     if (!item.value) return [];
 

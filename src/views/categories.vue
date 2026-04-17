@@ -15,15 +15,15 @@
         </div>
 
         <SearchResults
-            v-if="searchKeyword.trim() && (isRustSearchReady ? rustSearchMergedResults.length > 0 : globalSearchMergedResults.length > 0)"
-            :results="isRustSearchReady ? rustSearchMergedResults : globalSearchMergedResults"
+            v-if="searchKeyword.trim() && rustSearchMergedResults.length > 0"
+            :results="rustSearchMergedResults"
             :get-launch-status="getLaunchStatus"
             :selected-index="selectedIndex"
             @select="launchSearchWithCd"
         />
 
         <SearchFallback
-            v-else-if="searchKeyword.trim() && (isRustSearchReady ? rustSearchMergedResults.length === 0 : globalSearchMergedResults.length === 0)"
+            v-else-if="searchKeyword.trim() && rustSearchMergedResults.length === 0"
             :keyword="searchKeyword"
             @browser-search="onBrowserSearch"
         />
@@ -69,6 +69,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { useThrottleFn } from "@vueuse/core";
 import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -105,7 +106,6 @@ const router = useRouter();
 
 const {
     searchKeyword,
-    globalSearchMergedResults,
     rustSearchMergedResults,
     isRustSearchReady,
 } = storeToRefs(store);
@@ -291,10 +291,28 @@ watch(editingCategoryId, async (value) => {
     await nextTick();
 });
 
+const throttledRustSearch = useThrottleFn(async (keyword: string) => {
+    await store.rustSearch(keyword);
+}, 50);
+
+let ensureIndexPromise: Promise<void> | null = null;
+
+async function ensureRustSearchReady(): Promise<boolean> {
+    if (isRustSearchReady.value) return true;
+    if (!ensureIndexPromise) {
+        ensureIndexPromise = store.syncSearchIndex().finally(() => {
+            ensureIndexPromise = null;
+        });
+    }
+    await ensureIndexPromise;
+    return isRustSearchReady.value;
+}
+
 watch(searchKeyword, async (keyword) => {
     if (!keyword.trim()) return;
-    if (!isRustSearchReady.value) return;
-    await store.rustSearch(keyword);
+    const ready = await ensureRustSearchReady();
+    if (!ready) return;
+    await throttledRustSearch(keyword);
 });
 
 watch(searchKeyword, () => {
@@ -302,8 +320,40 @@ watch(searchKeyword, () => {
 });
 
 const currentSearchResults = computed(() => {
-    return isRustSearchReady.value ? rustSearchMergedResults.value : globalSearchMergedResults.value;
+    return rustSearchMergedResults.value;
 });
+
+watch(
+    currentSearchResults,
+    (results) => {
+        if (!searchKeyword.value.trim()) return;
+        const targets = results.map((result) => ({
+            categoryId: result.primaryCategoryId,
+            itemId: result.item.id,
+        }));
+        void store.hydrateMissingIconsForItems(targets);
+    },
+    { immediate: true }
+);
+
+watch(
+    [pinnedMergedItems, recentMergedItems, searchKeyword],
+    ([pinned, recent, keyword]) => {
+        if (keyword.trim()) return;
+        const targets = [
+            ...pinned.map((item) => ({
+                categoryId: item.primaryCategoryId,
+                itemId: item.item.id,
+            })),
+            ...recent.map((item) => ({
+                categoryId: item.recent.categoryId,
+                itemId: item.item.id,
+            })),
+        ];
+        void store.hydrateMissingIconsForItems(targets);
+    },
+    { immediate: true }
+);
 
 function onKeydown(e: KeyboardEvent) {
     if (!searchKeyword.value.trim() || currentSearchResults.value.length === 0) {

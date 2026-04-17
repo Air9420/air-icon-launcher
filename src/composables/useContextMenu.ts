@@ -330,11 +330,15 @@ export function useContextMenu() {
                 ? menuTarget.dataset.itemId || null
                 : null;
 
+        const datasetHomeSection =
+            (menuTarget.dataset.homeSection as HomeLayoutSectionKey | undefined) ?? null;
         currentHomeSection.value =
-            menuType === enumContextMenuType.IconItem
-                ? (menuTarget.dataset.homeSection as HomeLayoutSectionKey | undefined) ??
-                null
-                : null;
+            datasetHomeSection ??
+            (menuType === enumContextMenuType.HomePinnedView
+                ? "pinned"
+                : menuType === enumContextMenuType.HomeRecentUsedView
+                    ? "recent"
+                    : null);
 
         if (currentCategoryId.value) {
             categoryStore.setCurrentCategory(currentCategoryId.value);

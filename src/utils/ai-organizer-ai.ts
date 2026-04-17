@@ -22,6 +22,8 @@ export type AIOrganizerAssignment = {
     id: string;
     category_key: string;
     reason: string;
+    category_name?: string;
+    category_description?: string;
 };
 
 export type AIOrganizerRefineResponse = {

@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useLauncherStore } from "../launcherStore";
 import { createPinia, setActivePinia } from "pinia";
+import * as invokeWrapper from "../../utils/invoke-wrapper";
 
 function createStore() {
   const pinia = createPinia();
@@ -12,6 +13,7 @@ describe("launcherStore - pure functions", () => {
   let store: ReturnType<typeof useLauncherStore>;
 
   beforeEach(() => {
+    vi.restoreAllMocks();
     store = createStore();
   });
 
@@ -271,6 +273,62 @@ describe("launcherStore - pure functions", () => {
       expect(store.hasCustomIcon("cat-1", items[0].id)).toBe(false);
       store.setLauncherItemIcon("cat-1", items[0].id, "custom");
       expect(store.hasCustomIcon("cat-1", items[0].id)).toBe(true);
+    });
+  });
+
+  describe("hydrateMissingIconsForItems", () => {
+    it("hydrates missing file icons in batch", async () => {
+      const invokeSpy = vi
+        .spyOn(invokeWrapper, "invoke")
+        .mockResolvedValue({
+          ok: true,
+          value: ["icon-a", "icon-b"],
+        } as Awaited<ReturnType<typeof invokeWrapper.invoke>>);
+
+      store.addLauncherItemsToCategory("cat-1", {
+        paths: ["C:\\a.exe", "C:\\b.exe"],
+        directories: [],
+        icon_base64s: [null, null],
+      });
+      const items = store.getLauncherItemsByCategoryId("cat-1");
+
+      await store.hydrateMissingIconsForItems([
+        { categoryId: "cat-1", itemId: items[0].id },
+        { categoryId: "cat-1", itemId: items[1].id },
+      ]);
+
+      const hydrated = store.getLauncherItemsByCategoryId("cat-1");
+      expect(hydrated[0].iconBase64).toBe("icon-a");
+      expect(hydrated[0].originalIconBase64).toBe("icon-a");
+      expect(hydrated[1].iconBase64).toBe("icon-b");
+      expect(hydrated[1].originalIconBase64).toBe("icon-b");
+      expect(invokeSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("skips hydration when icon already exists", async () => {
+      const invokeSpy = vi
+        .spyOn(invokeWrapper, "invoke")
+        .mockResolvedValue({
+          ok: true,
+          value: ["hydrated-icon"],
+        } as Awaited<ReturnType<typeof invokeWrapper.invoke>>);
+
+      store.addLauncherItemsToCategory("cat-1", {
+        paths: ["C:\\a.exe"],
+        directories: [],
+        icon_base64s: ["original-icon"],
+      });
+      const items = store.getLauncherItemsByCategoryId("cat-1");
+      store.setLauncherItemIcon("cat-1", items[0].id, "custom-icon");
+
+      await store.hydrateMissingIconsForItems([
+        { categoryId: "cat-1", itemId: items[0].id },
+      ]);
+
+      const after = store.getLauncherItemsByCategoryId("cat-1")[0];
+      expect(after.iconBase64).toBe("custom-icon");
+      expect(after.originalIconBase64).toBe("original-icon");
+      expect(invokeSpy).not.toHaveBeenCalled();
     });
   });
 

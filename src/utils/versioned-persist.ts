@@ -1,5 +1,95 @@
 import { migrateData, createVersionedData, getVersionedStorageKey } from "./storage-migrate";
 
+type PersistData = Record<string, unknown>;
+type PersistTransform = {
+    onRead?: (data: PersistData) => PersistData;
+    onWrite?: (data: PersistData) => PersistData;
+};
+
+function normalizeBase64Value(value: unknown): string | null {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
+function compactLauncherPersistData(data: PersistData): PersistData {
+    if (!data || typeof data !== "object") {
+        return data;
+    }
+    const launcherItemsByCategoryId = data.launcherItemsByCategoryId as Record<string, unknown> | undefined;
+    if (!launcherItemsByCategoryId || typeof launcherItemsByCategoryId !== "object") {
+        return data;
+    }
+
+    let hasAnyCategoryChanged = false;
+    const nextLauncherItemsByCategoryId: Record<string, unknown> = {};
+
+    for (const [categoryId, rawItems] of Object.entries(launcherItemsByCategoryId)) {
+        if (!Array.isArray(rawItems)) {
+            nextLauncherItemsByCategoryId[categoryId] = rawItems;
+            continue;
+        }
+
+        let hasCategoryChanged = false;
+        const nextItems = rawItems.map((rawItem) => {
+            if (!rawItem || typeof rawItem !== "object") return rawItem;
+
+            const item = rawItem as Record<string, unknown>;
+            const itemType = item.itemType === "url" ? "url" : "file";
+            if (itemType !== "file") return rawItem;
+
+            const path = typeof item.path === "string" ? item.path.trim() : "";
+            if (!path) return rawItem;
+
+            const icon = normalizeBase64Value(item.iconBase64);
+            const originalIcon = normalizeBase64Value(item.originalIconBase64);
+            const hasCustomIcon = icon !== originalIcon;
+
+            if (hasCustomIcon || !icon) {
+                return rawItem;
+            }
+
+            hasCategoryChanged = true;
+            return {
+                ...item,
+                iconBase64: null,
+                originalIconBase64: null,
+            };
+        });
+
+        if (hasCategoryChanged) {
+            hasAnyCategoryChanged = true;
+        }
+        nextLauncherItemsByCategoryId[categoryId] = nextItems;
+    }
+
+    if (!hasAnyCategoryChanged) {
+        return data;
+    }
+
+    return {
+        ...data,
+        launcherItemsByCategoryId: nextLauncherItemsByCategoryId,
+    };
+}
+
+const persistTransforms: Record<string, PersistTransform> = {
+    launcher: {
+        onRead: compactLauncherPersistData,
+        onWrite: compactLauncherPersistData,
+    },
+};
+
+function applyPersistReadTransform(storeName: string, data: PersistData): PersistData {
+    const transform = persistTransforms[storeName];
+    return transform?.onRead ? transform.onRead(data) : data;
+}
+
+function applyPersistWriteTransform(storeName: string, data: PersistData): PersistData {
+    const transform = persistTransforms[storeName];
+    return transform?.onWrite ? transform.onWrite(data) : data;
+}
+
 export function createVersionedPersist(storeName: string, pick?: string[], exclude?: string[]) {
     const versionedKey = getVersionedStorageKey(storeName);
     const effectivePick = pick;
@@ -16,7 +106,8 @@ export function createVersionedPersist(storeName: string, pick?: string[], exclu
                 try {
                     const versioned = JSON.parse(versionedRaw);
                     const migrated = migrateData(storeName, versioned);
-                    let data = migrated.data as Record<string, unknown>;
+                    let data = migrated.data as PersistData;
+                    data = applyPersistReadTransform(storeName, data);
                     if (effectivePick) {
                         data = Object.fromEntries(
                             Object.entries(data).filter(([k]) => effectivePick.includes(k))
@@ -42,7 +133,8 @@ export function createVersionedPersist(storeName: string, pick?: string[], exclu
                     try {
                         localStorage.removeItem(key);
                     } catch {}
-                    let data = migrated.data as Record<string, unknown>;
+                    let data = migrated.data as PersistData;
+                    data = applyPersistReadTransform(storeName, data);
                     if (effectivePick) {
                         data = Object.fromEntries(
                             Object.entries(data).filter(([k]) => effectivePick.includes(k))
@@ -63,7 +155,8 @@ export function createVersionedPersist(storeName: string, pick?: string[], exclu
 
             try {
                 const state = JSON.parse(value);
-                const versioned = createVersionedData(state, storeName);
+                const transformedState = applyPersistWriteTransform(storeName, state);
+                const versioned = createVersionedData(transformedState, storeName);
                 localStorage.setItem(versionedKey, JSON.stringify(versioned));
             } catch (e) {
                 console.error(`[Storage] Failed to save versioned data for ${storeName}:`, e);

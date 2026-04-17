@@ -1,5 +1,5 @@
 <template>
-    <div v-if="items.length > 0" class="home-section" data-menu-type="Home-Pinned-View">
+    <div v-if="items.length > 0" class="home-section" data-menu-type="Home-Pinned-View" data-home-section="pinned">
         <div class="home-section-header">
             <span class="home-section-title">固定启动项</span>
         </div>

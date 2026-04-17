@@ -157,7 +157,7 @@
                 </header>
 
                 <div class="item-grid" v-show="!category.collapsed">
-                    <button v-for="item in category.items" :key="item.path" class="item-chip"
+                    <button v-for="item in category.items" :key="item.aiRefId" class="item-chip"
                         :class="{ selected: item.selected }" type="button" @click="item.selected = !item.selected">
                         <div class="item-icon">
                             <img v-if="item.icon_base64" :src="getIconSrc(item.icon_base64)" alt="" draggable="false">
@@ -188,6 +188,7 @@ import {
     buildOrganizerSuggestions,
     getOrganizerCategories,
     getOrganizerCategoryRule,
+    shouldDefaultSelectOrganizerItem,
     type InstalledAppScanItem,
     type OrganizerSuggestionCategory,
     type OrganizerSuggestionItem,
@@ -205,11 +206,19 @@ import { extractErrorMessage, invokeOrThrow } from "../utils/invoke-wrapper";
 
 type DraftSuggestionItem = OrganizerSuggestionItem & {
     selected: boolean;
+    aiRefId: string;
+    pathKey: string;
 };
 
 type DraftSuggestionCategory = Omit<OrganizerSuggestionCategory, "items"> & {
     collapsed: boolean;
     items: DraftSuggestionItem[];
+};
+
+type AssignmentCategory = {
+    key: string;
+    name: string;
+    description: string;
 };
 
 const AI_BATCH_SIZE = 10;
@@ -239,6 +248,12 @@ const categories = ref<DraftSuggestionCategory[]>([]);
 let unlistenIconUpdate: (() => void) | null = null;
 
 const organizerCategories = getOrganizerCategories(true);
+const organizerCategoryByKey = new Map(organizerCategories.map((category) => [category.key, category]));
+
+const aiRefToPathKey = new Map<string, string>();
+const pathKeyToAiRef = new Map<string, string>();
+const iconCacheByPathKey = new Map<string, string>();
+let aiRefSerial = 1;
 
 const scannedCount = computed(() =>
     categories.value.reduce((total, category) => total + category.items.length, 0)
@@ -282,11 +297,26 @@ onMounted(() => {
         "installed-app-icon-update",
         (event) => {
             const { launch_path, icon_base64 } = event.payload;
+            const pathKey = normalizePathKey(launch_path);
+            const nextIcon = normalizeIconBase64(icon_base64);
+
+            if (nextIcon) {
+                iconCacheByPathKey.set(pathKey, nextIcon);
+            }
+
             for (const category of categories.value) {
                 for (const item of category.items) {
-                    if (item.path === launch_path) {
-                        item.icon_base64 = icon_base64;
-                        break;
+                    if (item.pathKey !== pathKey) {
+                        continue;
+                    }
+
+                    if (nextIcon) {
+                        item.icon_base64 = nextIcon;
+                    } else if (!item.icon_base64) {
+                        const cached = iconCacheByPathKey.get(pathKey);
+                        if (cached) {
+                            item.icon_base64 = cached;
+                        }
                     }
                 }
             }
@@ -339,17 +369,18 @@ async function scanInstalledApps() {
 
     try {
         const items = await invokeOrThrow<InstalledAppScanItem[]>("scan_installed_apps");
+        resetAiRefMappings();
         categories.value = buildOrganizerSuggestions(items).map((category) => ({
             ...category,
             collapsed: false,
-            items: category.items.map((item) => ({
-                ...item,
-                selected: true,
-            })),
+            items: category.items.map((item) => createDraftSuggestionItem(item)),
         }));
+        rehydrateAllItemIcons();
+        pruneAndSortCategories();
     } catch (error) {
         const message = extractErrorMessage(error);
         scanError.value = message || "无法扫描已安装软件";
+        resetAiRefMappings();
         categories.value = [];
     } finally {
         isScanning.value = false;
@@ -394,7 +425,7 @@ async function refineAllItemsWithAI() {
             const batch = allBatches[batchIndex];
             const promise = refineOrganizerBatchWithAI(
                 batch.map((item) => ({
-                    id: item.path,
+                    id: item.aiRefId,
                     name: item.name,
                     path: item.path,
                     source: item.source,
@@ -402,7 +433,7 @@ async function refineAllItemsWithAI() {
                     currentReason: item.reason,
                     score: item.score,
                 })),
-                organizerCategories
+                getCategoriesForAiRefine()
             );
             return { batch, promise, batchIndex };
         };
@@ -616,9 +647,9 @@ function getAiConfig(): AIOrganizerConfig {
 
 function buildWebAiMarkdownPrompt(): string {
     const payload = {
-        categories: organizerCategories,
+        categories: getCategoriesForAiRefine(),
         items: aiCandidateItems.value.map((item) => ({
-            id: item.path,
+            id: item.aiRefId,
             name: item.name,
             path: item.path,
             source: item.source,
@@ -634,18 +665,22 @@ function buildWebAiMarkdownPrompt(): string {
         "请你根据下面的应用列表，对每个应用重新选择最合适的分类。",
         "",
         "要求：",
-        "1. `category_key` 必须严格来自提供的分类列表",
-        "2. 每个 `item` 都必须返回一条结果",
-        "3. 优先依据软件名称本身的常识，其次参考路径、来源和当前分类",
-        "4. 除非完全无法判断，否则不要使用 `other`",
-        "5. 只输出完整 JSON，不要输出解释，不要输出 Markdown 代码块",
+        "1. 每个 `item` 都必须返回一条结果，`id` 必须和输入完全一致",
+        "2. 优先使用提供的分类 `category_key`",
+        "3. 若确实无法归入现有分类，可新建分类：自定义 `category_key`，并补充 `category_name`、`category_description`",
+        "4. 游戏加速器单独归到 `game_booster`，不要并入 `gaming`",
+        "5. SDK、运行库、后台组件、无界面工具优先归到 `component`",
+        "6. 除非完全无法判断，否则不要使用 `other`",
+        "7. 只输出完整 JSON，不要输出解释，不要输出 Markdown 代码块",
         "",
         "输出格式：",
         '{',
         '  "assignments": [',
         '    {',
-        '      "id": "应用的 id",',
-        '      "category_key": "分类 key",',
+        '      "id": "应用 id（必须原样返回）",',
+        '      "category_key": "分类 key（可用已有 key，或新 key）",',
+        '      "category_name": "当 category_key 是新 key 时必填",',
+        '      "category_description": "当 category_key 是新 key 时建议填写",',
         '      "reason": "中文短句原因"',
         "    }",
         "  ]",
@@ -666,6 +701,8 @@ function parseManualAiJson(raw: string): AIOrganizerAssignment[] {
             id?: string;
             category_key?: string;
             reason?: string | null;
+            category_name?: string | null;
+            category_description?: string | null;
         }>;
     };
 
@@ -677,10 +714,16 @@ function parseManualAiJson(raw: string): AIOrganizerAssignment[] {
         .filter((assignment) => typeof assignment?.id === "string" && typeof assignment?.category_key === "string")
         .map((assignment) => ({
             id: assignment.id as string,
-            category_key: assignment.category_key as string,
+            category_key: normalizeCategoryKey(assignment.category_key as string),
             reason: typeof assignment.reason === "string" && assignment.reason.trim()
                 ? assignment.reason.trim()
                 : "网页 AI 未提供原因",
+            category_name: typeof assignment.category_name === "string" && assignment.category_name.trim()
+                ? assignment.category_name.trim()
+                : undefined,
+            category_description: typeof assignment.category_description === "string" && assignment.category_description.trim()
+                ? assignment.category_description.trim()
+                : undefined,
         }));
 }
 
@@ -716,6 +759,159 @@ function formatLocalDateForFilename(date: Date) {
     return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 
+function normalizePathKey(path: string): string {
+    return path
+        .normalize("NFKC")
+        .replace(/\\/g, "/")
+        .replace(/\/+/g, "/")
+        .trim()
+        .toLowerCase();
+}
+
+function normalizeIconBase64(iconBase64: string | null | undefined): string | null {
+    if (!iconBase64) {
+        return null;
+    }
+    const trimmed = iconBase64.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeCategoryKey(rawKey: string): string {
+    return rawKey
+        .normalize("NFKC")
+        .trim()
+        .toLowerCase()
+        .replace(/[\s-]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+}
+
+function getCategorySortRank(key: string): number {
+    if (key === "other") return 3;
+    if (key === "component") return 2;
+    return 1;
+}
+
+function resetAiRefMappings() {
+    aiRefToPathKey.clear();
+    pathKeyToAiRef.clear();
+    aiRefSerial = 1;
+}
+
+function getOrCreateAiRefId(pathKey: string): string {
+    const existing = pathKeyToAiRef.get(pathKey);
+    if (existing) {
+        return existing;
+    }
+
+    const created = `a${aiRefSerial++}`;
+    pathKeyToAiRef.set(pathKey, created);
+    aiRefToPathKey.set(created, pathKey);
+    return created;
+}
+
+function createDraftSuggestionItem(item: OrganizerSuggestionItem): DraftSuggestionItem {
+    const pathKey = normalizePathKey(item.path);
+    const normalizedIcon = normalizeIconBase64(item.icon_base64);
+    if (normalizedIcon) {
+        iconCacheByPathKey.set(pathKey, normalizedIcon);
+    }
+
+    return {
+        ...item,
+        icon_base64: normalizedIcon || iconCacheByPathKey.get(pathKey) || null,
+        selected: item.categoryKey !== "component" && shouldDefaultSelectOrganizerItem(item),
+        aiRefId: getOrCreateAiRefId(pathKey),
+        pathKey,
+    };
+}
+
+function rehydrateItemIcon(item: DraftSuggestionItem) {
+    const normalizedIcon = normalizeIconBase64(item.icon_base64);
+    if (normalizedIcon) {
+        item.icon_base64 = normalizedIcon;
+        iconCacheByPathKey.set(item.pathKey, normalizedIcon);
+        return;
+    }
+
+    const cached = iconCacheByPathKey.get(item.pathKey);
+    if (cached) {
+        item.icon_base64 = cached;
+    }
+}
+
+function rehydrateAllItemIcons() {
+    for (const category of categories.value) {
+        for (const item of category.items) {
+            rehydrateItemIcon(item);
+        }
+    }
+}
+
+function getCategoriesForAiRefine(): AssignmentCategory[] {
+    const merged = new Map<string, AssignmentCategory>();
+
+    for (const category of organizerCategories) {
+        merged.set(category.key, {
+            key: category.key,
+            name: category.name,
+            description: category.description,
+        });
+    }
+
+    for (const category of categories.value) {
+        const normalizedKey = normalizeCategoryKey(category.key);
+        if (!normalizedKey || merged.has(normalizedKey)) {
+            continue;
+        }
+        merged.set(normalizedKey, {
+            key: normalizedKey,
+            name: category.name,
+            description: category.description,
+        });
+    }
+
+    return [...merged.values()];
+}
+
+function resolveAssignmentCategory(assignment: AIOrganizerAssignment): AssignmentCategory {
+    const normalizedKey = normalizeCategoryKey(assignment.category_key);
+    if (normalizedKey) {
+        const builtin = organizerCategoryByKey.get(normalizedKey);
+        if (builtin) {
+            return {
+                key: builtin.key,
+                name: builtin.name,
+                description: builtin.description,
+            };
+        }
+
+        const existing = categories.value.find((category) => category.key === normalizedKey);
+        if (existing) {
+            return {
+                key: existing.key,
+                name: assignment.category_name?.trim() || existing.name,
+                description: assignment.category_description?.trim() || existing.description,
+            };
+        }
+
+        const categoryName = assignment.category_name?.trim();
+        if (categoryName) {
+            return {
+                key: normalizedKey,
+                name: categoryName,
+                description: assignment.category_description?.trim() || "AI 新增细分类",
+            };
+        }
+    }
+
+    const fallback = getOrganizerCategoryRule("other");
+    return {
+        key: fallback.key,
+        name: fallback.name,
+        description: fallback.description,
+    };
+}
+
 function applyAiAssignments(assignments: AIOrganizerAssignment[]): number {
     let changedCount = 0;
 
@@ -725,23 +921,31 @@ function applyAiAssignments(assignments: AIOrganizerAssignment[]): number {
             continue;
         }
 
-        const rule = getOrganizerCategoryRule(assignment.category_key);
-        const nextReason = `AI：${assignment.reason}`;
-        const categoryChanged = found.category.key !== rule.key;
+        const resolvedCategory = resolveAssignmentCategory(assignment);
+        const nextReasonText = assignment.reason?.trim() ? assignment.reason.trim() : "AI 未提供原因";
+        const nextReason = `AI：${nextReasonText}`;
+        const categoryChanged = found.category.key !== resolvedCategory.key;
+        const categoryNameChanged = found.item.categoryName !== resolvedCategory.name;
+        const categoryDescriptionChanged = found.item.categoryDescription !== resolvedCategory.description;
         const reasonChanged = found.item.reason !== nextReason;
 
-        if (!categoryChanged && !reasonChanged) {
+        if (!categoryChanged && !categoryNameChanged && !categoryDescriptionChanged && !reasonChanged) {
             continue;
         }
 
-        found.item.categoryKey = rule.key;
-        found.item.categoryName = rule.name;
-        found.item.categoryDescription = rule.description;
+        found.item.categoryKey = resolvedCategory.key;
+        found.item.categoryName = resolvedCategory.name;
+        found.item.categoryDescription = resolvedCategory.description;
         found.item.reason = nextReason;
+        rehydrateItemIcon(found.item);
 
         if (categoryChanged) {
             found.category.items.splice(found.index, 1);
-            ensureDraftCategory(rule).items.unshift(found.item);
+            ensureDraftCategory(resolvedCategory).items.unshift(found.item);
+        }
+
+        if (resolvedCategory.key === "component" || !shouldDefaultSelectOrganizerItem(found.item)) {
+            found.item.selected = false;
         }
 
         changedCount += 1;
@@ -750,7 +954,7 @@ function applyAiAssignments(assignments: AIOrganizerAssignment[]): number {
     return changedCount;
 }
 
-function ensureDraftCategory(rule: ReturnType<typeof getOrganizerCategoryRule>) {
+function ensureDraftCategory(rule: AssignmentCategory) {
     const existing = categories.value.find((category) => category.key === rule.key);
     if (existing) {
         existing.name = rule.name;
@@ -770,8 +974,16 @@ function ensureDraftCategory(rule: ReturnType<typeof getOrganizerCategoryRule>) 
 }
 
 function findItemById(itemId: string) {
+    const normalizedId = itemId.trim();
+    if (!normalizedId) {
+        return null;
+    }
+
+    const targetPathKey = aiRefToPathKey.get(normalizedId) || normalizePathKey(normalizedId);
     for (const category of categories.value) {
-        const index = category.items.findIndex((item) => item.path === itemId);
+        const index = category.items.findIndex(
+            (item) => item.aiRefId === normalizedId || item.pathKey === targetPathKey
+        );
         if (index !== -1) {
             return {
                 category,
@@ -784,11 +996,14 @@ function findItemById(itemId: string) {
 }
 
 function pruneAndSortCategories() {
+    rehydrateAllItemIcons();
     categories.value = categories.value
         .filter((category) => category.items.length > 0)
         .sort((left, right) => {
-            if (left.key === "other" && right.key !== "other") return 1;
-            if (right.key === "other" && left.key !== "other") return -1;
+            const rankDiff = getCategorySortRank(left.key) - getCategorySortRank(right.key);
+            if (rankDiff !== 0) {
+                return rankDiff;
+            }
             return right.items.length - left.items.length || left.name.localeCompare(right.name);
         });
 }

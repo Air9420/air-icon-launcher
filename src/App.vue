@@ -14,7 +14,7 @@ import InputDialog from "./components/common/InputDialog.vue";
 import GlobalToast from "./components/common/GlobalToast.vue";
 import FocusIndicator from "./components/common/FocusIndicator.vue";
 const OnboardingGuide = defineAsyncComponent(() => import("./components/OnboardingGuide.vue"));
-import { Store, useSettingsStore, useGuideStore } from "./stores";
+import { Store, useCategoryStore, useSettingsStore, useGuideStore } from "./stores";
 import { useUIStore } from "./stores/uiStore";
 
 import { useContextMenu } from "./composables/useContextMenu";
@@ -32,6 +32,7 @@ import { getPluginManager } from "./plugins";
 import "./styles/themes.css";
 
 const store = Store();
+const categoryStore = useCategoryStore();
 const settingsStore = useSettingsStore();
 const uiStore = useUIStore();
 const guideStore = useGuideStore();
@@ -112,6 +113,11 @@ const isCurrentItemPinned = computed(() => {
 const hasCurrentItemCustomIcon = computed(() => {
     if (!currentCategoryId.value || !currentLauncherItemId.value) return false;
     return store.hasCustomIcon(currentCategoryId.value, currentLauncherItemId.value);
+});
+
+const hasCurrentCategoryCustomIcon = computed(() => {
+    if (!currentCategoryId.value) return false;
+    return !!categoryStore.getCategoryById(currentCategoryId.value)?.customIconBase64;
 });
 
 const hasLauncherItems = computed(() =>
@@ -195,6 +201,7 @@ onBeforeUnmount(async () => {
         :current-category-id="currentCategoryId || undefined"
         :is-current-item-favorite="isCurrentItemPinned"
         :has-custom-icon-prop="hasCurrentItemCustomIcon"
+        :has-current-category-custom-icon="hasCurrentCategoryCustomIcon"
         :category-cols="categoryCols"
         :launcher-cols="launcherCols"
         :current-home-section="currentHomeSection || undefined"

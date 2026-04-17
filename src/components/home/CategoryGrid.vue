@@ -97,6 +97,8 @@ defineEmits<{
 }>();
 
 const editingInputRef = ref<HTMLInputElement | null>(null);
+const CJK_CHAR_PATTERN = /[\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/;
+const nameDisplayCache = new Map<string, { chunks: string[]; fontSize: number }>();
 
 watch(
     () => props.editingCategoryId,
@@ -146,14 +148,12 @@ function getIconSrc(iconBase64: string) {
     return `data:image/png;base64,${iconBase64}`;
 }
 
-function splitName(name: string): string[] {
-    const isCjk = (char: string) => /[\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/.test(char);
-
+function computeSplitName(name: string): string[] {
     const cjkChars: string[] = [];
     let otherChars = "";
 
     for (const char of name) {
-        if (isCjk(char)) {
+        if (CJK_CHAR_PATTERN.test(char)) {
             if (otherChars) {
                 cjkChars.push(otherChars);
                 otherChars = "";
@@ -183,13 +183,36 @@ function splitName(name: string): string[] {
     return result;
 }
 
-function getNameFontSize(name: string): number {
-    const chunks = splitName(name);
+function resolveNameDisplay(name: string): { chunks: string[]; fontSize: number } {
+    const cached = nameDisplayCache.get(name);
+    if (cached) {
+        return cached;
+    }
+
+    const chunks = computeSplitName(name);
     const displayLines = chunks.length;
-    if (displayLines <= 1) return 16;
-    if (displayLines === 2) return 14;
-    if (displayLines === 3) return 12;
-    return 10;
+    const fontSize =
+        displayLines <= 1 ? 16 :
+            displayLines === 2 ? 14 :
+                displayLines === 3 ? 12 : 10;
+
+    const resolved = { chunks, fontSize };
+    if (nameDisplayCache.size >= 800) {
+        const firstKey = nameDisplayCache.keys().next().value;
+        if (firstKey) {
+            nameDisplayCache.delete(firstKey);
+        }
+    }
+    nameDisplayCache.set(name, resolved);
+    return resolved;
+}
+
+function splitName(name: string): string[] {
+    return resolveNameDisplay(name).chunks;
+}
+
+function getNameFontSize(name: string): number {
+    return resolveNameDisplay(name).fontSize;
 }
 </script>
 

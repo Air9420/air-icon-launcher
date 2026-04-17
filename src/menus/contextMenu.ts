@@ -108,7 +108,12 @@ function buildBuiltinMenuModel(_ctx: MenuContext): MenuItem[] {
       label: "重置图标",
       action: { kind: "reset-category-icon" },
       order: 100,
-      visible: { menuType: enumContextMenuType.HomeGroupItem },
+      visible: {
+        and: [
+          { menuType: enumContextMenuType.HomeGroupItem },
+          { category: { customIcon: true } },
+        ],
+      },
     },
     {
       type: "item",
@@ -128,6 +133,8 @@ function buildBuiltinMenuModel(_ctx: MenuContext): MenuItem[] {
           enumContextMenuType.HomeGroupItem,
           enumContextMenuType.IconView,
           enumContextMenuType.IconItem,
+          enumContextMenuType.HomePinnedView,
+          enumContextMenuType.HomeRecentUsedView,
         ],
       },
     },
@@ -242,7 +249,13 @@ function buildBuiltinMenuModel(_ctx: MenuContext): MenuItem[] {
       order: 230,
       visible: {
         and: [
-          { menuType: enumContextMenuType.IconItem },
+          {
+            menuType: [
+              enumContextMenuType.IconItem,
+              enumContextMenuType.HomePinnedView,
+              enumContextMenuType.HomeRecentUsedView,
+            ],
+          },
           { homeSection: ["pinned", "recent"] },
         ],
       },

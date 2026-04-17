@@ -1,5 +1,5 @@
 <template>
-    <div v-if="items.length > 0" class="home-section" data-menu-type="Home-Recent-Used-View">
+    <div v-if="items.length > 0" class="home-section" data-menu-type="Home-Recent-Used-View" data-home-section="recent">
         <div class="home-section-header">
             <span class="home-section-title">最近使用</span>
         </div>

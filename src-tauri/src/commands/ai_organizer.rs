@@ -45,6 +45,10 @@ pub struct AIOrganizerAssignment {
     pub id: String,
     pub category_key: String,
     pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category_description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +62,10 @@ struct RawAIOrganizerAssignment {
     pub category_key: String,
     #[serde(default)]
     pub reason: Option<String>,
+    #[serde(default)]
+    pub category_name: Option<String>,
+    #[serde(default)]
+    pub category_description: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -87,10 +95,11 @@ pub async fn refine_installed_apps_with_ai(
         ));
     }
 
-    let category_keys: HashSet<&str> = request
+    let category_keys: HashSet<String> = request
         .categories
         .iter()
-        .map(|category| category.key.as_str())
+        .map(|category| normalize_category_key(&category.key))
+        .filter(|key| !key.is_empty())
         .collect();
     let item_ids: HashSet<&str> = request.items.iter().map(|item| item.id.as_str()).collect();
 
@@ -103,15 +112,19 @@ pub async fn refine_installed_apps_with_ai(
     let system_prompt = concat!(
         "你是 Windows 软件启动项分类助手。",
         "你会根据软件名称、路径、来源和当前规则分类结果，",
-        "把项目分配到给定分类 key 中最合适的一类。",
+        "把项目分配到最合适的一类。",
         "当前分类只是参考，你可以改判到更合适的分类。",
-        "不要发明新的分类 key。",
+        "优先使用已有分类 key；当现有分类明显不合适时可以创建新分类。",
+        "创建新分类时，必须同时返回 category_name 和 category_description。",
+        "必须原样返回输入的 id，禁止改写、截断、重排或替换。",
         "除非确实完全无法判断，否则不要轻易使用 other。",
         "如果应用名本身是知名软件，请直接使用你的常识知识判断，不要回答信息不足。",
-        "必须为每个项目选择一个最接近的现有分类。",
-        "返回 JSON 对象，格式为 {\"assignments\":[{\"id\":string,\"category_key\":string,\"reason\":string}]}。",
+        "必须为每个项目返回一个 assignment。",
+        "返回 JSON 对象，格式为 {\"assignments\":[{\"id\":string,\"category_key\":string,\"reason\":string,\"category_name\"?:string,\"category_description\"?:string}]}。",
         "reason 用中文短句，8到18个字，避免空字符串。",
-        "【重要分类边界】：语音开黑、语音沟通类工具（KOOK、Oopz、TeamSpeak、Mumble、YY 等）应归入 office，而非 gaming。只有明确的游戏启动器、游戏平台、游戏辅助工具才归入 gaming。"
+        "【重要分类边界】：语音开黑、语音沟通类工具（KOOK、Oopz、TeamSpeak、Mumble、YY 等）应归入 office，而非 gaming。",
+        "【重要分类边界】：游戏加速器、网络优化器、帧率增强工具应归入 game_booster，不要归入 gaming。",
+        "【重要分类边界】：SDK、运行库、redistributable、后台组件、无 GUI 工具应归入 component。"
     );
 
     let prompt_items: Vec<AIOrganizerItemPromptInput> = request
@@ -131,16 +144,22 @@ pub async fn refine_installed_apps_with_ai(
         "categories": request.categories,
         "items": prompt_items,
         "rules": [
-            "category_key 必须严格来自 categories.key",
+            "id 必须和输入完全一致，绝对不能改写",
             "每个 item 都返回一条 assignment",
+            "优先使用 categories 里的 key",
+            "仅当 categories 都不合适时才创建新 key，且要同时返回 category_name 和 category_description",
+            "新 key 尽量使用 snake_case（小写字母、数字、下划线）",
             "对所有 item 都重新判断，不要被 current_category_key 束缚",
             "优先依据应用名称和 app_hint，其次参考路径和来源",
             "微信开发者工具、数据库工具、终端、编程语言、IDE 应优先归到 development",
             "会议、聊天、文档工具归到 office",
             "播放器、音频处理归到 media",
-            "游戏平台、加速器、游戏入口归到 gaming",
+            "游戏平台、游戏启动入口归到 gaming",
+            "游戏加速器、帧率/网络优化工具归到 game_booster",
+            "SDK、runtime、redistributable、后台组件优先归到 component",
             "下载器、BT、磁力、文件传输工具优先归到 cloud",
             "系统通知、toast、托盘辅助工具优先归到 system 或 development",
+            "除非确实无法判断，否则不要使用 other",
             "只输出 JSON，不要输出 markdown 代码块，不要额外解释"
         ]
     });
@@ -198,26 +217,35 @@ pub async fn refine_installed_apps_with_ai(
         .into_iter()
         .filter(|assignment| item_ids.contains(assignment.id.as_str()))
         .map(|assignment| {
-            let category_key = if category_keys.contains(assignment.category_key.as_str()) {
-                assignment.category_key
+            let normalized_key = normalize_category_key(&assignment.category_key);
+            let normalized_name = sanitize_optional_text(assignment.category_name);
+            let normalized_description = sanitize_optional_text(assignment.category_description);
+
+            let (category_key, category_name, category_description) =
+                if !normalized_key.is_empty() && category_keys.contains(&normalized_key) {
+                    (normalized_key, None, None)
+                } else if is_valid_custom_category_key(&normalized_key) {
+                    if let Some(name) = normalized_name {
+                        (normalized_key, Some(name), normalized_description)
+                    } else {
+                        ("other".to_string(), None, None)
+                    }
+                } else {
+                    ("other".to_string(), None, None)
+                };
+
+            let reason = if assignment.reason.as_deref().unwrap_or_default().trim().is_empty() {
+                "AI 未提供原因".to_string()
             } else {
-                "other".to_string()
+                assignment.reason.unwrap_or_default().trim().to_string()
             };
 
             AIOrganizerAssignment {
                 id: assignment.id,
                 category_key,
-                reason: if assignment
-                    .reason
-                    .as_deref()
-                    .unwrap_or_default()
-                    .trim()
-                    .is_empty()
-                {
-                    "AI 未提供原因".to_string()
-                } else {
-                    assignment.reason.unwrap_or_default().trim().to_string()
-                },
+                reason,
+                category_name,
+                category_description,
             }
         })
         .collect();
@@ -366,6 +394,53 @@ fn normalize_name_for_hint(name: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn sanitize_optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+}
+
+fn normalize_category_key(raw: &str) -> String {
+    let mut normalized = String::with_capacity(raw.len());
+    let mut prev_underscore = false;
+
+    for ch in raw.trim().chars() {
+        let mapped = if ch.is_whitespace() || ch == '-' {
+            '_'
+        } else {
+            ch.to_ascii_lowercase()
+        };
+
+        if mapped == '_' {
+            if prev_underscore {
+                continue;
+            }
+            prev_underscore = true;
+        } else {
+            prev_underscore = false;
+        }
+
+        normalized.push(mapped);
+    }
+
+    normalized.trim_matches('_').to_string()
+}
+
+fn is_valid_custom_category_key(key: &str) -> bool {
+    if key.is_empty() || key.len() > 40 {
+        return false;
+    }
+
+    key.chars().all(|ch| {
+        ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || is_cjk_char(ch)
+    })
+}
+
+fn is_cjk_char(ch: char) -> bool {
+    let code = ch as u32;
+    (0x3400..=0x9fff).contains(&code)
 }
 
 async fn send_ai_request_with_retry(

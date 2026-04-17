@@ -20,11 +20,22 @@ export function useSearch() {
         searchKeyword,
         rustSearchResults,
         rustSearchMergedResults,
-        globalSearchMergedResults,
         isRustSearchReady,
     } = storeToRefs(launcherStore);
     const isSearching = ref(false);
     const searchError = ref<string | null>(null);
+    let ensureIndexPromise: Promise<void> | null = null;
+
+    async function ensureSearchIndexReady(): Promise<boolean> {
+        if (isRustSearchReady.value) return true;
+        if (!ensureIndexPromise) {
+            ensureIndexPromise = launcherStore.syncSearchIndex().finally(() => {
+                ensureIndexPromise = null;
+            });
+        }
+        await ensureIndexPromise;
+        return isRustSearchReady.value;
+    }
 
     async function updateSearchIndex() {
         try {
@@ -45,6 +56,11 @@ export function useSearch() {
         searchError.value = null;
 
         try {
+            const ready = await ensureSearchIndexReady();
+            if (!ready) {
+                searchError.value = "搜索索引未就绪";
+                return;
+            }
             await launcherStore.rustSearch(query.keyword, query.limit || 20);
         } catch (e: unknown) {
             searchError.value = e instanceof Error ? e.message : "搜索失败";
@@ -62,16 +78,11 @@ export function useSearch() {
             searchError.value = null;
             return;
         }
-        if (!isRustSearchReady.value) return;
         await throttledSearch(newKeyword);
     });
 
     const searchResults = computed<SearchResult[]>(() => rustSearchResults.value);
-    const mergedResults = computed<GlobalSearchMergedResult[]>(() =>
-        isRustSearchReady.value
-            ? rustSearchMergedResults.value
-            : globalSearchMergedResults.value
-    );
+    const mergedResults = computed<GlobalSearchMergedResult[]>(() => rustSearchMergedResults.value);
 
     return {
         searchResults,

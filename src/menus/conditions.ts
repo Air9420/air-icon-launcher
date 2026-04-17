@@ -5,7 +5,7 @@ export type VisibilityCondition =
   | { menuType: enumContextMenuType | enumContextMenuType[] }
   | { homeSection: "pinned" | "recent" | ("pinned" | "recent")[] }
   | { item: { pinned?: boolean; favorite?: boolean; customIcon?: boolean } }
-  | { category: true }
+  | { category: true | { customIcon?: boolean } }
   | { layout: { categoryCols?: number; launcherCols?: number; pinnedPreset?: string; recentPreset?: string } }
   | { and: VisibilityCondition[] }
   | { or: VisibilityCondition[] }
@@ -27,6 +27,7 @@ export type ResolveContext = {
   };
   category?: {
     id: string;
+    customIcon: boolean;
   };
   layout?: {
     categoryCols: number;
@@ -73,10 +74,22 @@ function isItemMatch(
 }
 
 function isCategoryMatch(
-  _condition: { category: true },
+  condition: { category: true | { customIcon?: boolean } },
   ctx: ResolveContext,
 ): boolean {
-  return ctx.categoryId !== null;
+  if (!ctx.category || ctx.categoryId === null) {
+    return false;
+  }
+
+  if (condition.category === true) {
+    return true;
+  }
+
+  const { customIcon } = condition.category;
+  if (customIcon !== undefined && ctx.category.customIcon !== customIcon) {
+    return false;
+  }
+  return true;
 }
 
 function isLayoutMatch(

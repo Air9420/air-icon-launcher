@@ -88,6 +88,7 @@ const props = defineProps<{
     currentItemId?: string;
     isCurrentItemFavorite?: boolean;
     hasCustomIconProp?: boolean;
+    hasCurrentCategoryCustomIcon?: boolean;
     categoryCols?: number;
     launcherCols?: number;
     currentHomeSection?: "pinned" | "recent";
@@ -118,6 +119,12 @@ const menuContext = computed<MenuContext>(() => {
         itemId: props.currentItemId ?? null,
         homeSection: props.currentHomeSection ?? null,
         item,
+        category: props.currentCategoryId
+            ? {
+                  id: props.currentCategoryId,
+                  customIcon: !!props.hasCurrentCategoryCustomIcon,
+              }
+            : undefined,
         layout,
     };
 });
