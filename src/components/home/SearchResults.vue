@@ -17,7 +17,7 @@
                 :data-menu-type="'Icon-Item'"
                 :data-item-id="result.item.id"
                 :data-category-id="result.categories[0]?.id || ''"
-                @mousedown="$emit('select', result)"
+                @click.left="$emit('select', result)"
             >
                 <div class="result-icon">
                     <img

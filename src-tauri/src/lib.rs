@@ -134,6 +134,7 @@ pub fn run() {
             window_effects::set_window_effect_type,
             window_effects::restart_app,
             window_effects::is_window_effects_supported,
+            window_effects::get_window_effect_support_info,
             corner_hotspot::set_corner_hotspot_config,
             corner_hotspot::get_corner_hotspot_config,
             commands::search::update_search_items,
@@ -141,6 +142,7 @@ pub fn run() {
             commands::installed_apps::scan_installed_apps,
             commands::ai_organizer::refine_installed_apps_with_ai,
             system::open_url,
+            system::open_browser_search,
             system::fetch_favicon_from_url,
         ])
         .run(tauri::generate_context!())

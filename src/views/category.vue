@@ -129,6 +129,7 @@ onMounted(async () => {
     });
 
     unlistenShow = await listen("window-shown", () => {
+        localSearchKeyword.value = "";
         nextTick(() => {
             searchBoxRef.value?.focus();
         });

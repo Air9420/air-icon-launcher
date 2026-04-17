@@ -5,7 +5,8 @@
         </div>
         <draggable :model-value="items" item-key="key" class="home-grid" :style="{ '--cols': layout.cols }"
             ghost-class="pinned-ghost" chosen-class="pinned-chosen" drag-class="pinned-drag" :animation="150"
-            :force-fallback="true" fallback-class="pinned-drag" @update:model-value="onReorder">
+            :delay="200" :delay-on-touch-only="false" :force-fallback="true" fallback-class="pinned-drag"
+            :fallback-tolerance="5" @update:model-value="onReorder">
             <template #item="{ element }">
                 <HomeCard :item-id="element.item.id" :category-id="element.primaryCategoryId" :name="element.item.name"
                     :icon-base64="element.item.iconBase64" :item-type="element.item.itemType"

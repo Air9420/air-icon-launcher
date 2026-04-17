@@ -13,11 +13,13 @@
                 <div class="effect-type-row">
                     <span class="effect-type-label">效果类型</span>
                     <div class="segmented effect-type-segmented">
-                        <button class="seg-btn" type="button" :class="{ active: windowEffectType === 'blur' }"
+                        <button class="seg-btn" type="button" :class="{ active: windowEffectType === 'blur', disabled: !blurSupported }"
+                            :disabled="!blurSupported"
                             @click="onWindowEffectTypeChange('blur')">
                             Blur
                         </button>
-                        <button class="seg-btn" type="button" :class="{ active: windowEffectType === 'acrylic' }"
+                        <button class="seg-btn" type="button" :class="{ active: windowEffectType === 'acrylic', disabled: !acrylicSupported }"
+                            :disabled="!acrylicSupported"
                             @click="onWindowEffectTypeChange('acrylic')">
                             Acrylic
                         </button>
@@ -28,6 +30,9 @@
                 </div>
                 <div class="hint">
                     拖拽窗口卡顿时建议切换为 Blur 效果
+                </div>
+                <div v-if="supportHint" class="hint">
+                    {{ supportHint }}
                 </div>
             </template>
         </div>
@@ -158,7 +163,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import { useSettingsStore } from "../../stores";
 import { useUIStore, HOME_LAYOUT_PRESETS, CATEGORY_COLS_PRESETS, LAUNCHER_COLS_PRESETS, HomeLayoutPresetKey } from "../../stores/uiStore";
@@ -176,14 +181,30 @@ const {
     windowEffectsEnabled,
     performanceMode,
     windowEffectType,
+    windowEffectSupport,
 } = storeToRefs(settingsStore);
 
 const performanceModeDraft = ref<boolean>(false);
 const homeLayoutPresetOptions = HOME_LAYOUT_PRESETS.map((x) => x.preset);
+const blurSupported = computed(() => windowEffectSupport.value?.blurSupported ?? true);
+const acrylicSupported = computed(() => windowEffectSupport.value?.acrylicSupported ?? true);
+const supportHint = computed(() => {
+    if (performanceMode.value) {
+        return windowEffectSupport.value?.message ?? "";
+    }
+    if (windowEffectSupport.value && (!blurSupported.value || !acrylicSupported.value)) {
+        return windowEffectSupport.value.message ?? "";
+    }
+    return "";
+});
 
 watch(performanceMode, (val) => {
     performanceModeDraft.value = val;
 }, { immediate: true });
+
+onMounted(() => {
+    void settingsStore.refreshWindowEffectSupport();
+});
 
 function onSetCategoryCols(cols: number) {
     uiStore.setCategoryCols(cols);
@@ -210,7 +231,10 @@ async function onSetTheme(newTheme: "light" | "dark" | "transparent" | "system")
 async function onPerformanceModeChange() {
     const enabled = performanceModeDraft.value;
     try {
-        await settingsStore.setPerformanceMode(enabled);
+        const result = await settingsStore.setPerformanceMode(enabled);
+        if (result.message) {
+            showToast(result.message, { type: "info", duration: 5000 });
+        }
     } catch (e) {
         console.error("设置失败:", e);
         showToast("设置失败，可能需要重启应用以完全生效", { type: "error" });
@@ -219,7 +243,10 @@ async function onPerformanceModeChange() {
 
 async function onWindowEffectTypeChange(type: "blur" | "acrylic") {
     try {
-        await settingsStore.setWindowEffectType(type);
+        const result = await settingsStore.setWindowEffectType(type);
+        if (result.message) {
+            showToast(result.message, { type: "info", duration: 5000 });
+        }
     } catch (e) {
         console.error("设置失败:", e);
         showToast("设置失败，可能需要重启应用以完全生效", { type: "error" });

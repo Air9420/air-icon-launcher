@@ -71,7 +71,6 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { useLaunchCooldown } from "../composables/useLaunchCooldown";
@@ -95,6 +94,7 @@ import {
 } from "../stores";
 import { useLaunchStatus } from "../composables/useLaunchStatus";
 import { showToast } from "../composables/useGlobalToast";
+import { invokeOrThrow } from "../utils/invoke-wrapper";
 import { launchStoredItem } from "../utils/launcher-service";
 
 const store = Store();
@@ -144,6 +144,8 @@ onMounted(async () => {
     });
 
     unlistenShow = await listen("window-shown", () => {
+        store.clearSearch();
+        selectedIndex.value = -1;
         nextTick(() => {
             searchBoxRef.value?.focus();
         });
@@ -192,10 +194,19 @@ function onCancelCategoryEdit() {
     categoryStore.cancelCategoryEdit();
 }
 
-function onBrowserSearch() {
-    store.recordConfirmedSearch();
-    const url = `https://www.google.com/search?q=${encodeURIComponent(searchKeyword.value)}`;
-    openUrl(url);
+async function onBrowserSearch() {
+    const keyword = searchKeyword.value.trim();
+    if (!keyword) return;
+
+    try {
+        await invokeOrThrow("open_browser_search", { query: keyword });
+        store.recordConfirmedSearch();
+        store.clearSearch();
+        selectedIndex.value = -1;
+    } catch (error) {
+        console.error(error);
+        showToast("无法使用默认浏览器搜索", { type: "error" });
+    }
 }
 
 async function onOpenSearchResult(result: GlobalSearchMergedResult) {

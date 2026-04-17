@@ -87,7 +87,11 @@ pub async fn refine_installed_apps_with_ai(
         ));
     }
 
-    let category_keys: HashSet<&str> = request.categories.iter().map(|category| category.key.as_str()).collect();
+    let category_keys: HashSet<&str> = request
+        .categories
+        .iter()
+        .map(|category| category.key.as_str())
+        .collect();
     let item_ids: HashSet<&str> = request.items.iter().map(|item| item.id.as_str()).collect();
 
     let endpoint = build_chat_completions_endpoint(base_url);
@@ -183,11 +187,11 @@ pub async fn refine_installed_apps_with_ai(
 
     let parsed: RawAIOrganizerRefineResponse = serde_json::from_str(&strip_code_fences(&content))
         .map_err(|error| {
-            AppError::new(
-                "AI_RESPONSE_ERROR",
-                format!("AI 返回内容无法解析为分类结果: {error}"),
-            )
-        })?;
+        AppError::new(
+            "AI_RESPONSE_ERROR",
+            format!("AI 返回内容无法解析为分类结果: {error}"),
+        )
+    })?;
 
     let assignments = parsed
         .assignments
@@ -296,7 +300,8 @@ fn summarize_non_json_response(body: &str) -> String {
     }
 
     if trimmed.starts_with('<') {
-        return "返回了 HTML，而不是 JSON。通常是 Base URL 填错了，或接口地址被重复拼接。".to_string();
+        return "返回了 HTML，而不是 JSON。通常是 Base URL 填错了，或接口地址被重复拼接。"
+            .to_string();
     }
 
     let snippet: String = trimmed.chars().take(160).collect();
@@ -309,7 +314,10 @@ fn summarize_non_json_response(body: &str) -> String {
 
 fn shorten_path_for_prompt(path: &str) -> String {
     let normalized = path.replace('\\', "/");
-    let parts: Vec<&str> = normalized.split('/').filter(|part| !part.is_empty()).collect();
+    let parts: Vec<&str> = normalized
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
     if parts.len() <= 4 {
         return normalized;
     }
@@ -324,11 +332,23 @@ fn shorten_path_for_prompt(path: &str) -> String {
 fn lookup_app_hint(name: &str) -> Option<&'static str> {
     let normalized = normalize_name_for_hint(name);
     let hints = [
-        ("oopz", "Oopz 是多人语音沟通和游戏开黑工具，应归入办公沟通/即时通讯类别"),
+        (
+            "oopz",
+            "Oopz 是多人语音沟通和游戏开黑工具，应归入办公沟通/即时通讯类别",
+        ),
         ("trae", "Trae 是 AI IDE / 编程开发工具，偏 development"),
-        ("trae cn", "Trae CN 是 AI IDE / 编程开发工具，偏 development"),
-        ("snoretoast", "SnoreToast 是 Windows Toast 通知命令行工具，偏 development 或 system"),
-        ("qbittorrent", "qBittorrent 是 BT 下载和文件传输工具，偏 cloud"),
+        (
+            "trae cn",
+            "Trae CN 是 AI IDE / 编程开发工具，偏 development",
+        ),
+        (
+            "snoretoast",
+            "SnoreToast 是 Windows Toast 通知命令行工具，偏 development 或 system",
+        ),
+        (
+            "qbittorrent",
+            "qBittorrent 是 BT 下载和文件传输工具，偏 cloud",
+        ),
     ];
 
     hints
@@ -339,7 +359,10 @@ fn lookup_app_hint(name: &str) -> Option<&'static str> {
 
 fn normalize_name_for_hint(name: &str) -> String {
     name.to_lowercase()
-        .replace(['(', ')', '（', '）', '[', ']', '【', '】', '-', '_', '.'], " ")
+        .replace(
+            ['(', ')', '（', '）', '[', ']', '【', '】', '-', '_', '.'],
+            " ",
+        )
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")

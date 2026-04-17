@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { safeInvoke, setPageUnloading } from "./utils/invoke-wrapper";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useRouter } from "vue-router";
+import { showToast } from "./composables/useGlobalToast";
 
 
 import ContextMenu from "./components/contextMenu.vue";
@@ -41,7 +42,6 @@ const {
     theme,
     windowEffectsEnabled,
     performanceMode,
-    windowEffectType,
     showGuideOnStartup,
     followMouseOnShow,
     cornerHotspotEnabled,
@@ -126,6 +126,11 @@ onMounted(async () => {
     const pluginManager = getPluginManager();
     await pluginManager.refreshPlugins();
 
+    const windowEffectResult = await settingsStore.applyCurrentWindowEffectState();
+    if (windowEffectResult.changed && windowEffectResult.message) {
+        showToast(windowEffectResult.message, { type: "info", duration: 5000 });
+    }
+
     if (showGuideOnStartup.value && !guideStore.hasSeenOnboarding && !hasLauncherItems.value) {
         await router.replace("/ai-organizer");
     } else if (showGuideOnStartup.value && !guideStore.hasSeenOnboarding) {
@@ -141,13 +146,6 @@ onMounted(async () => {
     applyTheme(theme.value);
     applyEffectsDisabled(!windowEffectsEnabled.value);
     watchThemeChanges();
-
-    if (performanceMode.value) {
-        await safeInvoke("set_window_effects", { enabled: false });
-    } else {
-        await safeInvoke("set_window_effects", { enabled: true });
-        await safeInvoke("set_window_effect_type", { effectType: windowEffectType.value });
-    }
 
     safeInvoke('set_corner_hotspot_config', {
         enabled: cornerHotspotEnabled.value,

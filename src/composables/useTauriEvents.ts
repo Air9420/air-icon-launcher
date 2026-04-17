@@ -35,6 +35,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { safeInvoke } from "../utils/invoke-wrapper";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { emit } from "@tauri-apps/api/event";
 import { useRouter } from "vue-router";
 import { useWindowPosition } from "./useWindowPosition";
 import { useSettingsStore } from "../stores";
@@ -130,12 +131,14 @@ export function useTauriEvents() {
                         await win.setFocus();
                     }
                 }
+                await emit("window-shown", null);
             }
         });
         unlisteners.push(unlistenToggleMain);
 
         const unlistenCornerHotspot = await listen("corner-hotspot-triggered", async () => {
             router.push("/categories");
+            await emit("window-shown", null);
         });
         unlisteners.push(unlistenCornerHotspot);
     }

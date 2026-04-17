@@ -32,6 +32,31 @@ export type WindowPosition = {
 
 export type WindowEffectType = "blur" | "acrylic";
 
+export type WindowEffectSupportInfo = {
+    supported: boolean;
+    blurSupported: boolean;
+    acrylicSupported: boolean;
+    fallbackEffectType: WindowEffectType | null;
+    message: string | null;
+    productName: string | null;
+    displayVersion: string | null;
+    buildNumber: number | null;
+};
+
+export type WindowEffectCompatibilityAction =
+    | "unchanged"
+    | "switched-effect"
+    | "enabled-performance"
+    | "performance-mode";
+
+export type WindowEffectCompatibilityResult = {
+    changed: boolean;
+    action: WindowEffectCompatibilityAction;
+    message?: string;
+    resolvedEffectType: WindowEffectType | null;
+    support: WindowEffectSupportInfo | null;
+};
+
 export const useSettingsStore = defineStore(
     "settings",
     () => {
@@ -55,6 +80,7 @@ export const useSettingsStore = defineStore(
         const windowPosition = ref<WindowPosition | null>(null);
         const performanceMode = ref<boolean>(false);
         const windowEffectType = ref<WindowEffectType>("blur");
+        const windowEffectSupport = ref<WindowEffectSupportInfo | null>(null);
         const strongShortcutMode = ref<boolean>(true);
 
         async function setTheme(newTheme: ThemeMode) {
@@ -212,30 +238,136 @@ export const useSettingsStore = defineStore(
             windowPosition.value = position;
         }
 
-        async function setPerformanceMode(enabled: boolean) {
+        async function refreshWindowEffectSupport(): Promise<WindowEffectSupportInfo | null> {
+            try {
+                const support = await invokeOrThrow<WindowEffectSupportInfo>("get_window_effect_support_info");
+                windowEffectSupport.value = support;
+                return support;
+            } catch (e) {
+                console.error(e);
+                return null;
+            }
+        }
+
+        function normalizeFallbackEffectType(type: string | null): WindowEffectType | null {
+            return type === "blur" || type === "acrylic" ? type : null;
+        }
+
+        function getWindowEffectLabel(type: WindowEffectType) {
+            return type === "acrylic" ? "Acrylic" : "Blur";
+        }
+
+        function buildCompatibilityMessage(
+            support: WindowEffectSupportInfo | null,
+            preferredType: WindowEffectType,
+            resolvedEffectType: WindowEffectType | null
+        ) {
+            if (support?.message?.trim()) {
+                return support.message.trim();
+            }
+
+            if (resolvedEffectType) {
+                return `当前系统不建议启用 ${getWindowEffectLabel(preferredType)}，已自动切换为 ${getWindowEffectLabel(resolvedEffectType)}。`;
+            }
+
+            return "当前系统对窗口特效兼容性较差，已自动切换到性能模式。建议升级到较新的 Windows 10 / 11。";
+        }
+
+        async function disableWindowEffectsInternal() {
+            if (theme.value === "transparent") {
+                theme.value = "system";
+            }
+            await invokeOrThrow("set_window_effects", { enabled: false });
+            windowEffectsEnabled.value = false;
+            performanceMode.value = true;
+        }
+
+        async function applyResolvedWindowEffect(
+            preferredType: WindowEffectType
+        ): Promise<WindowEffectCompatibilityResult> {
+            const support = await refreshWindowEffectSupport();
+            const preferredSupported = preferredType === "blur"
+                ? support?.blurSupported ?? true
+                : support?.acrylicSupported ?? true;
+
+            if (preferredSupported) {
+                await invokeOrThrow("set_window_effect_type", { effectType: preferredType });
+                windowEffectsEnabled.value = true;
+                performanceMode.value = false;
+                windowEffectType.value = preferredType;
+                return {
+                    changed: false,
+                    action: "unchanged",
+                    resolvedEffectType: preferredType,
+                    support,
+                };
+            }
+
+            const fallbackType = normalizeFallbackEffectType(support?.fallbackEffectType ?? null);
+            if (fallbackType) {
+                await invokeOrThrow("set_window_effect_type", { effectType: fallbackType });
+                windowEffectsEnabled.value = true;
+                performanceMode.value = false;
+                windowEffectType.value = fallbackType;
+                return {
+                    changed: true,
+                    action: "switched-effect",
+                    message: buildCompatibilityMessage(support, preferredType, fallbackType),
+                    resolvedEffectType: fallbackType,
+                    support,
+                };
+            }
+
+            await disableWindowEffectsInternal();
+            return {
+                changed: true,
+                action: "enabled-performance",
+                message: buildCompatibilityMessage(support, preferredType, null),
+                resolvedEffectType: null,
+                support,
+            };
+        }
+
+        async function applyCurrentWindowEffectState(): Promise<WindowEffectCompatibilityResult> {
+            const support = await refreshWindowEffectSupport();
+
+            if (performanceMode.value) {
+                await invokeOrThrow("set_window_effects", { enabled: false });
+                windowEffectsEnabled.value = false;
+                return {
+                    changed: false,
+                    action: "performance-mode",
+                    resolvedEffectType: null,
+                    support,
+                };
+            }
+
+            return applyResolvedWindowEffect(windowEffectType.value);
+        }
+
+        async function setPerformanceMode(enabled: boolean): Promise<WindowEffectCompatibilityResult> {
             try {
                 if (enabled) {
-                    if (theme.value === "transparent") {
-                        theme.value = "system";
-                    }
-                    await invokeOrThrow("set_window_effects", { enabled: false });
-                    windowEffectsEnabled.value = false;
-                } else {
-                    windowEffectsEnabled.value = true;
-                    await invokeOrThrow("set_window_effects", { enabled: true });
-                    await invokeOrThrow("set_window_effect_type", { effectType: windowEffectType.value });
+                    const changed = !performanceMode.value || windowEffectsEnabled.value;
+                    await disableWindowEffectsInternal();
+                    return {
+                        changed,
+                        action: "enabled-performance",
+                        resolvedEffectType: null,
+                        support: windowEffectSupport.value,
+                    };
                 }
-                performanceMode.value = enabled;
+
+                return await applyResolvedWindowEffect(windowEffectType.value);
             } catch (e) {
                 console.error(e);
                 throw e;
             }
         }
 
-        async function setWindowEffectType(type: WindowEffectType) {
+        async function setWindowEffectType(type: WindowEffectType): Promise<WindowEffectCompatibilityResult> {
             try {
-                await invokeOrThrow("set_window_effect_type", { effectType: type });
-                windowEffectType.value = type;
+                return await applyResolvedWindowEffect(type);
             } catch (e) {
                 console.error(e);
                 throw e;
@@ -273,6 +405,7 @@ export const useSettingsStore = defineStore(
             windowPosition,
             performanceMode,
             windowEffectType,
+            windowEffectSupport,
             strongShortcutMode,
             setTheme,
             setWindowEffectsEnabled,
@@ -293,6 +426,8 @@ export const useSettingsStore = defineStore(
             setAutostartEnabled,
             setHideOnCtrlRightClick,
             setWindowPosition,
+            refreshWindowEffectSupport,
+            applyCurrentWindowEffectState,
             setPerformanceMode,
             setWindowEffectType,
             setStrongShortcutMode,

@@ -226,6 +226,7 @@ function getNameFontSize(name: string): number {
         font-weight: bold;
         background-color: var(--card-bg-solid);
         user-select: none;
+        cursor: pointer;
         box-shadow: var(--card-shadow-light);
         transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
 
@@ -239,6 +240,7 @@ function getNameFontSize(name: string): number {
     }
     .categorie-item.editing {
         pointer-events: auto;
+        cursor: text;
         animation: categorie-editing-shadow 1.2s ease-in-out infinite;
     }
     .categorie-icon-wrapper {

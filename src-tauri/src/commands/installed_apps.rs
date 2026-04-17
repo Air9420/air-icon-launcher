@@ -52,9 +52,13 @@ pub async fn scan_installed_apps(app: AppHandle) -> AppResult<Vec<InstalledAppEn
     #[cfg(windows)]
     {
         let app_handle = app.clone();
-        return tauri::async_runtime::spawn_blocking(move || scan_installed_apps_windows(app_handle))
-            .await
-            .map_err(|error| AppError::internal(format!("scan_installed_apps task failed: {error}")))?;
+        return tauri::async_runtime::spawn_blocking(move || {
+            scan_installed_apps_windows(app_handle)
+        })
+        .await
+        .map_err(|error| {
+            AppError::internal(format!("scan_installed_apps task failed: {error}"))
+        })?;
     }
 
     #[cfg(not(windows))]
@@ -76,7 +80,8 @@ fn scan_installed_apps_windows(app: AppHandle) -> AppResult<Vec<InstalledAppEntr
     );
 
     let start_desktop = std::time::Instant::now();
-    let desktop_candidates = collect_candidates_from_roots(&collect_desktop_roots(), MAX_SCAN_RESULTS);
+    let desktop_candidates =
+        collect_candidates_from_roots(&collect_desktop_roots(), MAX_SCAN_RESULTS);
     eprintln!(
         "[scan_installed_apps] 桌面扫描耗时: {:?}，候选数: {}",
         start_desktop.elapsed(),
@@ -143,7 +148,10 @@ fn scan_installed_apps_windows(app: AppHandle) -> AppResult<Vec<InstalledAppEntr
     tauri::async_runtime::spawn(async move {
         let icon_start = std::time::Instant::now();
         let icon_base64s: Vec<Option<String>> = drag::extract_icons_from_paths(icon_paths.clone());
-        eprintln!("[scan_installed_apps] 图标提取耗时: {:?}", icon_start.elapsed());
+        eprintln!(
+            "[scan_installed_apps] 图标提取耗时: {:?}",
+            icon_start.elapsed()
+        );
 
         for (idx, icon_base64) in icon_base64s.into_iter().enumerate() {
             if idx < launch_paths.len() {
@@ -212,10 +220,7 @@ fn collect_desktop_roots() -> Vec<ScanRoot> {
 }
 
 #[cfg(windows)]
-fn collect_candidates_from_roots(
-    roots: &[ScanRoot],
-    max_candidates: usize,
-) -> Vec<CandidateApp> {
+fn collect_candidates_from_roots(roots: &[ScanRoot], max_candidates: usize) -> Vec<CandidateApp> {
     if max_candidates == 0 {
         return Vec::new();
     }
@@ -287,9 +292,18 @@ fn collect_candidates_in_dir(
 fn collect_registry_candidates() -> Vec<CandidateApp> {
     let mut output = Vec::new();
     let registry_roots = [
-        (RegKey::predef(HKEY_LOCAL_MACHINE), r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
-        (RegKey::predef(HKEY_LOCAL_MACHINE), r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
-        (RegKey::predef(HKEY_CURRENT_USER), r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (
+            RegKey::predef(HKEY_LOCAL_MACHINE),
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+        (
+            RegKey::predef(HKEY_LOCAL_MACHINE),
+            r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+        (
+            RegKey::predef(HKEY_CURRENT_USER),
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
     ];
 
     for (root, sub_path) in registry_roots {
@@ -364,7 +378,10 @@ fn is_registry_entry_hidden(key: &RegKey) -> bool {
         .get_value::<String, _>("ReleaseType")
         .unwrap_or_default()
         .to_ascii_lowercase();
-    if matches!(release_type.as_str(), "update" | "hotfix" | "security update") {
+    if matches!(
+        release_type.as_str(),
+        "update" | "hotfix" | "security update"
+    ) {
         return true;
     }
 
@@ -388,7 +405,9 @@ fn parse_registry_path(raw: &str) -> Option<PathBuf> {
     }
 
     let lower = trimmed.to_ascii_lowercase();
-    for extension in [".exe", ".lnk", ".bat", ".cmd", ".ico", ".png", ".jpg", ".jpeg", ".svg"] {
+    for extension in [
+        ".exe", ".lnk", ".bat", ".cmd", ".ico", ".png", ".jpg", ".jpeg", ".svg",
+    ] {
         if let Some(index) = lower.find(extension) {
             let end = index + extension.len();
             let candidate = strip_icon_index_suffix(trimmed[..end].trim());
@@ -408,7 +427,14 @@ fn parse_registry_path(raw: &str) -> Option<PathBuf> {
 
 #[cfg(windows)]
 fn strip_icon_index_suffix(value: &str) -> &str {
-    value.trim().trim_end_matches(',').split(',').next().unwrap_or(value).trim().trim_matches('"')
+    value
+        .trim()
+        .trim_end_matches(',')
+        .split(',')
+        .next()
+        .unwrap_or(value)
+        .trim()
+        .trim_matches('"')
 }
 
 #[cfg(windows)]
@@ -462,12 +488,21 @@ fn resolve_install_location_executable(location: &str, display_name: &str) -> Op
     let entries = fs::read_dir(&dir).ok()?;
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_file() || path.extension().and_then(|ext| ext.to_str()).map(|ext| ext.eq_ignore_ascii_case("exe")) != Some(true) {
+        if !path.is_file()
+            || path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("exe"))
+                != Some(true)
+        {
             continue;
         }
 
         exe_count += 1;
-        let stem = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or_default();
+        let stem = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_default();
         if is_noise_name(stem) {
             continue;
         }
@@ -505,14 +540,21 @@ fn score_executable_name(stem: &str, display_name: &str, dir_name: &str) -> i32 
     if compact_stem == compact_display {
         score += 300;
     }
-    if !compact_display.is_empty() && (compact_stem.contains(&compact_display) || compact_display.contains(&compact_stem)) {
+    if !compact_display.is_empty()
+        && (compact_stem.contains(&compact_display) || compact_display.contains(&compact_stem))
+    {
         score += 180;
     }
-    if !compact_dir.is_empty() && (compact_stem.contains(&compact_dir) || compact_dir.contains(&compact_stem)) {
+    if !compact_dir.is_empty()
+        && (compact_stem.contains(&compact_dir) || compact_dir.contains(&compact_stem))
+    {
         score += 120;
     }
 
-    for token in display_name.split_whitespace().filter(|token| token.len() >= 3) {
+    for token in display_name
+        .split_whitespace()
+        .filter(|token| token.len() >= 3)
+    {
         if normalized_stem.contains(token) {
             score += 35;
         }
@@ -531,9 +573,11 @@ fn sort_and_dedupe_candidates(
     max_results: usize,
 ) -> Vec<CandidateApp> {
     candidates.sort_by(|a, b| {
-        a.source_rank
-            .cmp(&b.source_rank)
-            .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
+        a.source_rank.cmp(&b.source_rank).then_with(|| {
+            a.display_name
+                .to_lowercase()
+                .cmp(&b.display_name.to_lowercase())
+        })
     });
 
     let mut seen_paths = HashSet::<String>::new();
@@ -686,7 +730,9 @@ fn is_noise_name(name: &str) -> bool {
         "удалить",
     ];
 
-    blocked_keywords.iter().any(|keyword| lowered.contains(keyword))
+    blocked_keywords
+        .iter()
+        .any(|keyword| lowered.contains(keyword))
 }
 
 #[cfg(windows)]
@@ -728,7 +774,10 @@ fn normalize_alias_key(path: &Path, display_name: &str) -> String {
 fn normalize_name_for_matching(value: &str) -> String {
     value
         .to_ascii_lowercase()
-        .replace(['_', '-', '.', '(', ')', '（', '）', '[', ']', '【', '】'], " ")
+        .replace(
+            ['_', '-', '.', '(', ')', '（', '）', '[', ']', '【', '】'],
+            " ",
+        )
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
