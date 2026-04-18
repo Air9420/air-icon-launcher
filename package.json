@@ -1,6 +1,6 @@
 {
   "name": "air-icon-launcher",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "type": "module",
   "description": "A Windows desktop launcher for organizing and launching apps with categories, search, and plugin support",
   "author": "Air",

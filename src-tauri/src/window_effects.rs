@@ -48,19 +48,29 @@ pub async fn set_window_effect_type(app: AppHandle, effect_type: String) -> AppR
 }
 
 async fn apply_window_effect(window: &tauri::WebviewWindow, effect: Effect) -> AppResult<()> {
+    if apply_window_effect_direct(window, effect).is_ok() {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        force_window_refresh(window);
+        return Ok(());
+    }
+
     window
         .set_effects(None)
         .map_err(|e| AppError::internal(format!("clear effects error: {}", e)))?;
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let effects = EffectsBuilder::new()
-        .effects(vec![effect])
-        .color(Color(0, 0, 0, 0))
-        .build();
-    window
-        .set_effects(Some(effects))
+    tokio::time::sleep(Duration::from_millis(16)).await;
+    apply_window_effect_direct(window, effect)
         .map_err(|e| AppError::internal(format!("set effects error: {}", e)))?;
+    tokio::time::sleep(Duration::from_millis(8)).await;
     force_window_refresh(window);
     Ok(())
+}
+
+fn apply_window_effect_direct(window: &tauri::WebviewWindow, effect: Effect) -> tauri::Result<()> {
+    let effects = EffectsBuilder::new()
+        .effects(vec![effect])
+        .color(Color(0, 0, 0, 25))
+        .build();
+    window.set_effects(Some(effects))
 }
 
 fn parse_effect_type(effect_type: &str, support: &WindowEffectSupportInfo) -> AppResult<Effect> {

@@ -2,7 +2,7 @@
 
 🚀 **极速启动器** - 用分类整理你的桌面图标，一搜即达
 
-<!-- 图片：应用图标 + 毛玻璃窗口效果展示 -->
+<img src="https://github.com/Air9420/air-icon-launcher/docs/static/img/home.gif" alt="应用主界面" width="400" />
 
 一个轻量级的 Windows 桌面启动器，基于 Tauri 构建。通过分类管理你的应用程序，支持全局搜索、插件扩展，让你告别杂乱的桌面。
 
@@ -17,24 +17,36 @@
 将应用程序按用途分类整理，工作、娱乐、开发工具各归其位。
 
 <!-- 图片：主界面截图 - 展示分类卡片网格、搜索框、固定项区域 -->
+<img src="https://github.com/Air9420/air-icon-launcher/docs/static/img/dev_view.webp" alt="分类内截图" width="400" />
+
+
 
 ### 🔍 全局搜索
 
 输入关键词，实时搜索所有分类中的应用。支持拼音搜索，中文应用名也能快速找到。
 
 <!-- 图片：搜索动图 - 输入关键词后实时显示搜索结果 -->
+<img src="https://github.com/Air9420/air-icon-launcher/docs/static/img/search.gif" alt="搜索动图" width="400" />
 
 ### 📌 固定 & 最近使用
 
 将常用应用固定在顶部，最近使用的应用自动记录，一键直达。
 
 <!-- 图片：截图 - 展示固定项和最近使用区域 -->
+<img src="https://github.com/Air9420/air-icon-launcher/docs/static/img/pinned&recent.gif" alt="固定项和最近使用区域" width="400" />
+
+
 
 ### 🎯 拖拽排序
 
 拖拽图标自由排列，拖拽分类调整顺序，个性化你的启动器布局。
 
 <!-- 图片：拖拽动图 - 展示图标在分类内拖拽重排 -->
+<img src="https://github.com/Air9420/air-icon-launcher/docs/static/img/drag.gif" alt="拖拽动图" width="400" />
+
+
+
+
 
 ### 🖱️ 右键菜单
 

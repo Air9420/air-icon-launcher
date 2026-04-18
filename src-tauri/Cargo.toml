@@ -1,6 +1,6 @@
 [package]
 name = "air-icon-launcher"
-version = "0.1.7"
+version = "0.1.8"
 description = "A Windows desktop launcher for organizing and launching apps"
 authors = ["Air"]
 license = "MIT"
