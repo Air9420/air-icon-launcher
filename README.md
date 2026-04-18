@@ -17,7 +17,7 @@
 将应用程序按用途分类整理，工作、娱乐、开发工具各归其位。
 
 <!-- 图片：主界面截图 - 展示分类卡片网格、搜索框、固定项区域 -->
-<img src="docs/static/img/dev_view.webp" alt="分类内截图" width="400" />
+<img src="docs/static/img/dev_view.png" alt="分类内截图" width="400" />
 
 
 
