@@ -82,6 +82,29 @@ export type RustSearchResult = {
     rank_score: number;
 };
 
+type SearchIndexItemPayload = {
+    id: string;
+    name: string;
+    path: string;
+    category_id: string;
+    usage_count: number;
+    last_used_at: number;
+    is_pinned: boolean;
+    search_tokens: string[];
+    rank_score: number;
+};
+
+type SearchIndexDeletedPayload = {
+    id: string;
+    category_id: string;
+};
+
+type SearchIndexChangesPayload = {
+    added: SearchIndexItemPayload[];
+    updated: SearchIndexItemPayload[];
+    deleted: SearchIndexDeletedPayload[];
+};
+
 export const useLauncherStore = defineStore(
     "launcher",
     () => {
@@ -93,6 +116,12 @@ export const useLauncherStore = defineStore(
         const rustSearchResults = ref<RustSearchResult[]>([]);
         const isRustSearchReady = ref(false);
         const iconHydrationInFlight = new Set<string>();
+        const pendingSearchAdded = new Map<string, SearchIndexItemPayload>();
+        const pendingSearchUpdated = new Map<string, SearchIndexItemPayload>();
+        const pendingSearchDeleted = new Map<string, SearchIndexDeletedPayload>();
+        let searchIndexFlushTimer: ReturnType<typeof setTimeout> | null = null;
+        let searchIndexSyncInFlight: Promise<void> | null = null;
+        let isFullSearchIndexSyncInFlight = false;
 
         function createLauncherItemId() {
             return `item-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
@@ -167,6 +196,242 @@ export const useLauncherStore = defineStore(
             return trimmed.length > 0 ? trimmed : null;
         }
 
+        function getSearchEntryKey(categoryId: string, itemId: string): string {
+            return `${categoryId}:${itemId}`;
+        }
+
+        function collectSearchRankingSignals() {
+            const usageMap = new Map<string, number>();
+            const lastUsedMap = new Map<string, number>();
+
+            for (const recent of recentUsedItems.value) {
+                const key = getSearchEntryKey(recent.categoryId, recent.itemId);
+                usageMap.set(key, (usageMap.get(key) ?? 0) + recent.usageCount);
+                if (!lastUsedMap.has(key) || (lastUsedMap.get(key) ?? 0) < recent.usedAt) {
+                    lastUsedMap.set(key, recent.usedAt);
+                }
+            }
+
+            return {
+                usageMap,
+                lastUsedMap,
+                pinnedSet: new Set(pinnedItemIds.value),
+            };
+        }
+
+        function toSearchIndexItem(
+            categoryId: string,
+            item: LauncherItem,
+            rankingSignals?: ReturnType<typeof collectSearchRankingSignals>
+        ): SearchIndexItemPayload {
+            const signals = rankingSignals ?? collectSearchRankingSignals();
+            const key = getSearchEntryKey(categoryId, item.id);
+
+            return {
+                id: item.id,
+                name: item.name,
+                path: item.path,
+                category_id: categoryId,
+                usage_count: signals.usageMap.get(key) ?? 0,
+                last_used_at: signals.lastUsedMap.get(key) ?? 0,
+                is_pinned: signals.pinnedSet.has(item.id),
+                search_tokens: [],
+                rank_score: 0,
+            };
+        }
+
+        function hasPendingSearchChanges(): boolean {
+            return (
+                pendingSearchAdded.size > 0 ||
+                pendingSearchUpdated.size > 0 ||
+                pendingSearchDeleted.size > 0
+            );
+        }
+
+        function clearPendingSearchChanges(): void {
+            pendingSearchAdded.clear();
+            pendingSearchUpdated.clear();
+            pendingSearchDeleted.clear();
+        }
+
+        function cancelPendingSearchFlush(): void {
+            if (!searchIndexFlushTimer) return;
+            clearTimeout(searchIndexFlushTimer);
+            searchIndexFlushTimer = null;
+        }
+
+        function takePendingSearchChanges(): SearchIndexChangesPayload {
+            const changes: SearchIndexChangesPayload = {
+                added: [...pendingSearchAdded.values()],
+                updated: [...pendingSearchUpdated.values()],
+                deleted: [...pendingSearchDeleted.values()],
+            };
+            clearPendingSearchChanges();
+            return changes;
+        }
+
+        function scheduleSearchIncrementalFlush(delayMs: number = 250): void {
+            if (!isRustSearchReady.value) return;
+            if (searchIndexFlushTimer) return;
+            searchIndexFlushTimer = setTimeout(() => {
+                searchIndexFlushTimer = null;
+                void flushPendingSearchChanges();
+            }, delayMs);
+        }
+
+        function enqueueSearchChanges(changes: Partial<SearchIndexChangesPayload>): void {
+            if (!isRustSearchReady.value) return;
+
+            for (const deleted of changes.deleted ?? []) {
+                const key = getSearchEntryKey(deleted.category_id, deleted.id);
+                pendingSearchAdded.delete(key);
+                pendingSearchUpdated.delete(key);
+                pendingSearchDeleted.set(key, deleted);
+            }
+
+            for (const added of changes.added ?? []) {
+                const key = getSearchEntryKey(added.category_id, added.id);
+                pendingSearchDeleted.delete(key);
+                pendingSearchUpdated.delete(key);
+                pendingSearchAdded.set(key, added);
+            }
+
+            for (const updated of changes.updated ?? []) {
+                const key = getSearchEntryKey(updated.category_id, updated.id);
+                pendingSearchDeleted.delete(key);
+                if (pendingSearchAdded.has(key)) {
+                    pendingSearchAdded.set(key, updated);
+                } else {
+                    pendingSearchUpdated.set(key, updated);
+                }
+            }
+
+            scheduleSearchIncrementalFlush();
+        }
+
+        function enqueueSearchUpdateByRef(categoryId: string, itemId: string): void {
+            if (!isRustSearchReady.value) return;
+            const item = getLauncherItemById(categoryId, itemId);
+            if (!item) return;
+            enqueueSearchChanges({
+                updated: [toSearchIndexItem(categoryId, item)],
+            });
+        }
+
+        function enqueueSearchUpdateByItemId(itemId: string): void {
+            if (!isRustSearchReady.value) return;
+            const categoryStore = useCategoryStore();
+            const rankingSignals = collectSearchRankingSignals();
+            const updated: SearchIndexItemPayload[] = [];
+            for (const category of categoryStore.categories) {
+                const matched = getLauncherItemsByCategoryId(category.id).filter(
+                    (item) => item.id === itemId
+                );
+                for (const item of matched) {
+                    updated.push(toSearchIndexItem(category.id, item, rankingSignals));
+                }
+            }
+
+            if (updated.length === 0) return;
+            enqueueSearchChanges({ updated });
+        }
+
+        function enqueueSearchRefreshForAllItems(): void {
+            if (!isRustSearchReady.value) return;
+            const categoryStore = useCategoryStore();
+            const rankingSignals = collectSearchRankingSignals();
+            const updated: SearchIndexItemPayload[] = [];
+
+            for (const category of categoryStore.categories) {
+                const items = getLauncherItemsByCategoryId(category.id);
+                for (const item of items) {
+                    updated.push(toSearchIndexItem(category.id, item, rankingSignals));
+                }
+            }
+
+            if (updated.length === 0) return;
+            enqueueSearchChanges({ updated });
+        }
+
+        async function syncSearchIndexInternal(waitIncrementalInFlight: boolean): Promise<void> {
+            if (isFullSearchIndexSyncInFlight) return;
+            if (waitIncrementalInFlight && searchIndexSyncInFlight) {
+                await searchIndexSyncInFlight;
+            }
+
+            cancelPendingSearchFlush();
+            clearPendingSearchChanges();
+            isFullSearchIndexSyncInFlight = true;
+
+            try {
+                const categoryStore = useCategoryStore();
+                const rankingSignals = collectSearchRankingSignals();
+                const items: SearchIndexItemPayload[] = [];
+
+                for (const category of categoryStore.categories) {
+                    const catItems = getLauncherItemsByCategoryId(category.id);
+                    for (const item of catItems) {
+                        items.push(toSearchIndexItem(category.id, item, rankingSignals));
+                    }
+                }
+
+                const result = await invoke("update_search_items", { items });
+                if (!result.ok) {
+                    console.error("Failed to sync search index:", result.error);
+                    isRustSearchReady.value = false;
+                    return;
+                }
+
+                isRustSearchReady.value = true;
+            } catch (e) {
+                console.error("Failed to sync search index:", e);
+                isRustSearchReady.value = false;
+            } finally {
+                isFullSearchIndexSyncInFlight = false;
+                if (isRustSearchReady.value && hasPendingSearchChanges()) {
+                    scheduleSearchIncrementalFlush(0);
+                }
+            }
+        }
+
+        async function flushPendingSearchChanges(): Promise<void> {
+            if (!isRustSearchReady.value) {
+                clearPendingSearchChanges();
+                return;
+            }
+            if (isFullSearchIndexSyncInFlight || searchIndexSyncInFlight) {
+                return;
+            }
+
+            const changes = takePendingSearchChanges();
+            if (
+                changes.added.length === 0 &&
+                changes.updated.length === 0 &&
+                changes.deleted.length === 0
+            ) {
+                return;
+            }
+
+            searchIndexSyncInFlight = (async () => {
+                const result = await invoke("update_search_items_incremental", { changes });
+                if (!result.ok) {
+                    console.error("Failed to incrementally sync search index:", result.error);
+                    await syncSearchIndexInternal(false);
+                }
+            })()
+                .catch((e) => {
+                    console.error("Failed to incrementally sync search index:", e);
+                })
+                .finally(() => {
+                    searchIndexSyncInFlight = null;
+                    if (hasPendingSearchChanges()) {
+                        scheduleSearchIncrementalFlush(0);
+                    }
+                });
+
+            await searchIndexSyncInFlight;
+        }
+
         function buildLauncherItemIndexes(categories: Category[]) {
             const itemById = new Map<string, { item: LauncherItem; categoryId: string }>();
             const itemByCompositeKey = new Map<string, LauncherItem>();
@@ -209,6 +474,9 @@ export const useLauncherStore = defineStore(
                         : next[index].launchDelaySeconds,
             };
             setLauncherItemsByCategoryId(categoryId, next);
+            enqueueSearchChanges({
+                updated: [toSearchIndexItem(categoryId, next[index])],
+            });
         }
 
         function removeDependenciesMatching(
@@ -251,6 +519,9 @@ export const useLauncherStore = defineStore(
                 (dependency) =>
                     dependency.categoryId === categoryId && dependency.itemId === itemId
             );
+            enqueueSearchChanges({
+                deleted: [{ category_id: categoryId, id: itemId }],
+            });
         }
 
         function addLauncherItemsToCategory(
@@ -287,6 +558,10 @@ export const useLauncherStore = defineStore(
             });
 
             setLauncherItemsByCategoryId(categoryId, [...existing, ...nextItems]);
+            const rankingSignals = collectSearchRankingSignals();
+            enqueueSearchChanges({
+                added: nextItems.map((item) => toSearchIndexItem(categoryId, item, rankingSignals)),
+            });
         }
 
         function addUrlLauncherItemToCategory(
@@ -312,6 +587,9 @@ export const useLauncherStore = defineStore(
                 launchDelaySeconds: 0,
             };
             setLauncherItemsByCategoryId(categoryId, [...existing, newItem]);
+            enqueueSearchChanges({
+                added: [toSearchIndexItem(categoryId, newItem)],
+            });
             return newItem.id;
         }
 
@@ -331,7 +609,8 @@ export const useLauncherStore = defineStore(
 
         function deleteCategoryCleanup(categoryId: string) {
             const next = { ...launcherItemsByCategoryId.value };
-            const removedItemIds = (next[categoryId] || []).map((x) => x.id);
+            const removedItems = next[categoryId] || [];
+            const removedItemIds = removedItems.map((x) => x.id);
             delete next[categoryId];
             launcherItemsByCategoryId.value = next;
             if (removedItemIds.length) {
@@ -346,6 +625,14 @@ export const useLauncherStore = defineStore(
             removeDependenciesMatching(
                 (dependency) => dependency.categoryId === categoryId
             );
+            if (removedItems.length > 0) {
+                enqueueSearchChanges({
+                    deleted: removedItems.map((item) => ({
+                        category_id: categoryId,
+                        id: item.id,
+                    })),
+                });
+            }
         }
 
         function setLauncherItemIcon(categoryId: string, itemId: string, iconBase64: string) {
@@ -488,62 +775,7 @@ export const useLauncherStore = defineStore(
         }
 
         async function syncSearchIndex() {
-            try {
-                const categoryStore = useCategoryStore();
-                const items: Array<{
-                    id: string;
-                    name: string;
-                    path: string;
-                    category_id: string;
-                    usage_count: number;
-                    last_used_at: number;
-                    is_pinned: boolean;
-                    search_tokens: string[];
-                    rank_score: number;
-                }> = [];
-
-                const pinnedSet = new Set(pinnedItemIds.value);
-                const usageMap = new Map<string, number>();
-                const lastUsedMap = new Map<string, number>();
-
-                for (const recent of recentUsedItems.value) {
-                    const key = `${recent.categoryId}-${recent.itemId}`;
-                    const existingUsage = usageMap.get(key) || 0;
-                    usageMap.set(key, existingUsage + recent.usageCount);
-                    if (!lastUsedMap.has(key) || lastUsedMap.get(key)! < recent.usedAt) {
-                        lastUsedMap.set(key, recent.usedAt);
-                    }
-                }
-
-                for (const cat of categoryStore.categories) {
-                    const catItems = getLauncherItemsByCategoryId(cat.id);
-                    for (const item of catItems) {
-                        const key = `${cat.id}-${item.id}`;
-                        items.push({
-                            id: item.id,
-                            name: item.name,
-                            path: item.path,
-                            category_id: cat.id,
-                            usage_count: usageMap.get(key) || 0,
-                            last_used_at: lastUsedMap.get(key) || 0,
-                            is_pinned: pinnedSet.has(item.id),
-                            search_tokens: [],
-                            rank_score: 0,
-                        });
-                    }
-                }
-
-                const result = await invoke("update_search_items", { items });
-                if (!result.ok) {
-                    console.error("Failed to sync search index:", result.error);
-                    isRustSearchReady.value = false;
-                    return;
-                }
-                isRustSearchReady.value = true;
-            } catch (e) {
-                console.error("Failed to sync search index:", e);
-                isRustSearchReady.value = false;
-            }
+            await syncSearchIndexInternal(true);
         }
 
         async function rustSearch(keyword: string, limit: number = 20): Promise<void> {
@@ -593,6 +825,7 @@ export const useLauncherStore = defineStore(
             } else {
                 pinnedItemIds.value = [...pinnedItemIds.value, itemId];
             }
+            enqueueSearchUpdateByItemId(itemId);
         }
 
         function isItemPinned(itemId: string): boolean {
@@ -625,18 +858,25 @@ export const useLauncherStore = defineStore(
             if (recentUsedItems.value.length > 50) {
                 recentUsedItems.value = recentUsedItems.value.slice(0, 50);
             }
+
+            enqueueSearchUpdateByRef(categoryId, itemId);
         }
 
         function clearRecentUsed() {
             recentUsedItems.value = [];
+            enqueueSearchRefreshForAllItems();
         }
 
         function importLauncherItems(items: Record<string, LauncherItem[]>) {
             launcherItemsByCategoryId.value = items;
+            if (isRustSearchReady.value) {
+                void syncSearchIndexInternal(true);
+            }
         }
 
         function importPinnedItemIds(newIds: string[]) {
             pinnedItemIds.value = [...new Set(newIds)];
+            enqueueSearchRefreshForAllItems();
         }
 
         function reorderPinnedItemIds(newOrder: string[]) {
@@ -649,6 +889,7 @@ export const useLauncherStore = defineStore(
 
         function importRecentUsedItems(newItems: RecentUsedItem[]) {
             recentUsedItems.value = newItems;
+            enqueueSearchRefreshForAllItems();
         }
 
         function getRecentUsedItems(limit: number = 5): RecentUsedItem[] {

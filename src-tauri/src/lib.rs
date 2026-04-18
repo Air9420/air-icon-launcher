@@ -138,6 +138,7 @@ pub fn run() {
             corner_hotspot::set_corner_hotspot_config,
             corner_hotspot::get_corner_hotspot_config,
             commands::search::update_search_items,
+            commands::search::update_search_items_incremental,
             commands::search::search_apps,
             commands::installed_apps::scan_installed_apps,
             commands::ai_organizer::refine_installed_apps_with_ai,

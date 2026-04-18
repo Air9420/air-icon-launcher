@@ -3,8 +3,44 @@ use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
 
+fn configure_connection(conn: &Connection) -> SqliteResult<()> {
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL;
+         PRAGMA synchronous=NORMAL;
+         PRAGMA busy_timeout=5000;",
+    )?;
+    Ok(())
+}
+
+fn initialize_schema(conn: &Connection) -> SqliteResult<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS clipboard_records (
+            id TEXT PRIMARY KEY,
+            content_type TEXT NOT NULL,
+            text_content TEXT,
+            image_path TEXT,
+            hash TEXT NOT NULL,
+            timestamp INTEGER NOT NULL
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_hash ON clipboard_records(hash)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_time ON clipboard_records(timestamp DESC)",
+        [],
+    )?;
+
+    Ok(())
+}
+
 pub struct ClipboardDatabase {
-    conn: Mutex<Connection>,
+    write_conn: Mutex<Connection>,
+    read_conn: Mutex<Connection>,
 }
 
 #[allow(dead_code)]
@@ -14,43 +50,20 @@ impl ClipboardDatabase {
             fs::create_dir_all(parent).ok();
         }
 
-        let conn = Connection::open(db_path)?;
-
-        conn.execute_batch(
-            "PRAGMA journal_mode=WAL;
-             PRAGMA synchronous=NORMAL;
-             PRAGMA busy_timeout=5000;",
-        )?;
-
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS clipboard_records (
-                id TEXT PRIMARY KEY,
-                content_type TEXT NOT NULL,
-                text_content TEXT,
-                image_path TEXT,
-                hash TEXT NOT NULL,
-                timestamp INTEGER NOT NULL
-            )",
-            [],
-        )?;
-
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_hash ON clipboard_records(hash)",
-            [],
-        )?;
-
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_time ON clipboard_records(timestamp DESC)",
-            [],
-        )?;
+        let write_conn = Connection::open(db_path)?;
+        configure_connection(&write_conn)?;
+        initialize_schema(&write_conn)?;
+        let read_conn = Connection::open(db_path)?;
+        configure_connection(&read_conn)?;
 
         Ok(Self {
-            conn: Mutex::new(conn),
+            write_conn: Mutex::new(write_conn),
+            read_conn: Mutex::new(read_conn),
         })
     }
 
     pub fn insert(&self, record: &ClipboardRecordDb) -> SqliteResult<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.write_conn.lock().unwrap();
         conn.execute(
             "INSERT INTO clipboard_records (id, content_type, text_content, image_path, hash, timestamp)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -67,7 +80,7 @@ impl ClipboardDatabase {
     }
 
     pub fn insert_batch(&self, records: &[ClipboardRecordDb]) -> SqliteResult<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.write_conn.lock().unwrap();
         let tx = conn.transaction()?;
         for record in records {
             tx.execute(
@@ -88,7 +101,7 @@ impl ClipboardDatabase {
     }
 
     pub fn delete(&self, id: &str) -> SqliteResult<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.write_conn.lock().unwrap();
         let image_path: Option<String> = conn
             .query_row(
                 "SELECT image_path FROM clipboard_records WHERE id = ?1",
@@ -103,7 +116,7 @@ impl ClipboardDatabase {
     }
 
     pub fn delete_batch(&self, ids: &[String]) -> SqliteResult<Vec<String>> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.write_conn.lock().unwrap();
         let tx = conn.transaction()?;
         let mut deleted_images = Vec::new();
 
@@ -126,7 +139,7 @@ impl ClipboardDatabase {
     }
 
     pub fn get_all(&self) -> SqliteResult<Vec<ClipboardRecordDb>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, content_type, text_content, image_path, hash, timestamp
              FROM clipboard_records ORDER BY timestamp DESC",
@@ -149,7 +162,7 @@ impl ClipboardDatabase {
     }
 
     pub fn get_by_hash(&self, hash: &str) -> SqliteResult<Option<ClipboardRecordDb>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, content_type, text_content, image_path, hash, timestamp
              FROM clipboard_records WHERE hash = ?1",
@@ -173,14 +186,14 @@ impl ClipboardDatabase {
     }
 
     pub fn count(&self) -> SqliteResult<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn.lock().unwrap();
         conn.query_row("SELECT COUNT(*) FROM clipboard_records", [], |row| {
             row.get(0)
         })
     }
 
     pub fn enforce_max_records(&self, max: usize) -> SqliteResult<Vec<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.write_conn.lock().unwrap();
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM clipboard_records", [], |row| {
             row.get(0)
         })?;
@@ -222,7 +235,7 @@ impl ClipboardDatabase {
     }
 
     pub fn hash_exists(&self, hash: &str) -> SqliteResult<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn.lock().unwrap();
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM clipboard_records WHERE hash = ?1",
             [hash],
@@ -232,7 +245,7 @@ impl ClipboardDatabase {
     }
 
     pub fn clear(&self) -> SqliteResult<Vec<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.write_conn.lock().unwrap();
         let mut stmt =
             conn.prepare("SELECT image_path FROM clipboard_records WHERE image_path IS NOT NULL")?;
 
@@ -261,7 +274,10 @@ pub struct ClipboardRecordDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
+    use rusqlite::{Connection, OpenFlags};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_DB_ID: AtomicU64 = AtomicU64::new(1);
 
     fn make_record(
         id: &str,
@@ -281,37 +297,21 @@ mod tests {
     }
 
     fn open_mem_db() -> ClipboardDatabase {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            "PRAGMA journal_mode=WAL;
-             PRAGMA synchronous=NORMAL;
-             PRAGMA busy_timeout=5000;",
-        )
-        .unwrap();
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS clipboard_records (
-                id TEXT PRIMARY KEY,
-                content_type TEXT NOT NULL,
-                text_content TEXT,
-                image_path TEXT,
-                hash TEXT NOT NULL,
-                timestamp INTEGER NOT NULL
-            )",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_hash ON clipboard_records(hash)",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_time ON clipboard_records(timestamp DESC)",
-            [],
-        )
-        .unwrap();
+        let db_id = NEXT_TEST_DB_ID.fetch_add(1, Ordering::Relaxed);
+        let db_uri = format!("file:clipboard_test_{db_id}?mode=memory&cache=shared");
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_URI;
+
+        let write_conn = Connection::open_with_flags(&db_uri, flags).unwrap();
+        configure_connection(&write_conn).unwrap();
+        initialize_schema(&write_conn).unwrap();
+        let read_conn = Connection::open_with_flags(&db_uri, flags).unwrap();
+        configure_connection(&read_conn).unwrap();
+
         ClipboardDatabase {
-            conn: Mutex::new(conn),
+            write_conn: Mutex::new(write_conn),
+            read_conn: Mutex::new(read_conn),
         }
     }
 
