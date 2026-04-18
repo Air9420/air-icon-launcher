@@ -3,15 +3,48 @@ pub mod types;
 use crate::error::{AppError, AppResult};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
 pub use types::*;
 
 pub const CONFIG_VERSION: &str = "1.0";
+const AI_ORGANIZER_API_KEY_ENV_VAR: &str = "AIR_ICON_LAUNCHER_AI_API_KEY";
 
 fn write_atomically(path: &Path, data: &[u8]) -> Result<(), String> {
     let temp_path = path.with_extension("tmp");
     fs::write(&temp_path, data).map_err(|e| e.to_string())?;
     fs::rename(&temp_path, path).map_err(|e| e.to_string())
+}
+
+fn normalize_api_key(raw: &str) -> String {
+    raw.trim().to_string()
+}
+
+fn redact_ai_organizer_api_key(config: &mut AppConfig) {
+    config.ai_organizer_api_key.clear();
+}
+
+fn redacted_config(config: &AppConfig) -> AppConfig {
+    let mut sanitized = config.clone();
+    redact_ai_organizer_api_key(&mut sanitized);
+    sanitized
+}
+
+fn redacted_export_data(data: &ExportData) -> ExportData {
+    let mut sanitized = data.clone();
+    if let Some(settings) = sanitized.settings.as_mut() {
+        redact_ai_organizer_api_key(settings);
+    }
+    sanitized
+}
+
+fn redact_ai_organizer_api_key_in_json_export(data: &mut serde_json::Value) {
+    if let Some(settings) = data.get_mut("settings").and_then(serde_json::Value::as_object_mut) {
+        settings.insert(
+            "ai_organizer_api_key".to_string(),
+            serde_json::Value::String(String::new()),
+        );
+    }
 }
 
 #[derive(Clone)]
@@ -20,6 +53,7 @@ pub struct ConfigManager {
     config_path: PathBuf,
     launcher_data_path: PathBuf,
     backups_dir: PathBuf,
+    runtime_ai_organizer_api_key: Arc<Mutex<String>>,
 }
 
 impl ConfigManager {
@@ -34,6 +68,7 @@ impl ConfigManager {
         let config_path = app_data_dir.join("config.json");
         let launcher_data_path = app_data_dir.join("launcher_data.json");
         let backups_dir = app_data_dir.join("backups");
+        let env_api_key = std::env::var(AI_ORGANIZER_API_KEY_ENV_VAR).unwrap_or_default();
 
         let _ = fs::create_dir_all(&backups_dir);
 
@@ -42,6 +77,7 @@ impl ConfigManager {
             config_path,
             launcher_data_path,
             backups_dir,
+            runtime_ai_organizer_api_key: Arc::new(Mutex::new(normalize_api_key(&env_api_key))),
         }
     }
 
@@ -57,14 +93,43 @@ impl ConfigManager {
         self.launcher_data_path.clone()
     }
 
+    pub fn get_ai_organizer_api_key(&self) -> String {
+        self.runtime_ai_organizer_api_key
+            .lock()
+            .map(|key| key.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn set_ai_organizer_api_key(&self, api_key: &str) {
+        if let Ok(mut key) = self.runtime_ai_organizer_api_key.lock() {
+            *key = normalize_api_key(api_key);
+        }
+    }
+
+    fn apply_runtime_ai_organizer_api_key(&self, config: &mut AppConfig) {
+        config.ai_organizer_api_key = self.get_ai_organizer_api_key();
+    }
+
     pub fn load_config(&self) -> AppConfig {
         if !self.config_path.exists() {
-            return AppConfig::default();
+            let mut config = AppConfig::default();
+            self.apply_runtime_ai_organizer_api_key(&mut config);
+            return config;
         }
 
         match fs::read_to_string(&self.config_path) {
             Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
-                Ok(config) => config,
+                Ok(mut config) => {
+                    let legacy_key = normalize_api_key(&config.ai_organizer_api_key);
+                    if !legacy_key.is_empty() {
+                        // Migrate legacy plaintext key from disk into runtime memory.
+                        self.set_ai_organizer_api_key(&legacy_key);
+                        redact_ai_organizer_api_key(&mut config);
+                        let _ = self.save_config(&config);
+                    }
+                    self.apply_runtime_ai_organizer_api_key(&mut config);
+                    config
+                }
                 Err(e) => {
                     eprintln!(
                         "Failed to parse config file ({}): {}",
@@ -72,7 +137,8 @@ impl ConfigManager {
                         e
                     );
                     let _ = self.backup_bad_config_file();
-                    let default_config = AppConfig::default();
+                    let mut default_config = AppConfig::default();
+                    self.apply_runtime_ai_organizer_api_key(&mut default_config);
                     let _ = self.save_config(&default_config);
                     default_config
                 }
@@ -83,7 +149,9 @@ impl ConfigManager {
                     self.config_path.to_string_lossy(),
                     e
                 );
-                AppConfig::default()
+                let mut default_config = AppConfig::default();
+                self.apply_runtime_ai_organizer_api_key(&mut default_config);
+                default_config
             }
         }
     }
@@ -100,8 +168,14 @@ impl ConfigManager {
     }
 
     pub fn save_config(&self, config: &AppConfig) -> Result<(), String> {
-        let content = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
+        let content = serde_json::to_string_pretty(&redacted_config(config))
+            .map_err(|e| e.to_string())?;
         write_atomically(&self.config_path, content.as_bytes())
+    }
+
+    pub fn save_config_with_runtime_ai_key(&self, config: &AppConfig) -> Result<(), String> {
+        self.set_ai_organizer_api_key(&config.ai_organizer_api_key);
+        self.save_config(config)
     }
 
     pub fn load_launcher_data(&self) -> LauncherData {
@@ -139,11 +213,12 @@ impl ConfigManager {
 
         let backup_name = format!("backup_{}.json", timestamp);
         let backup_path = self.backups_dir.join(&backup_name);
+        let redacted = redacted_config(config);
 
         let backup_data = serde_json::json!({
             "version": CONFIG_VERSION,
             "backup_time": timestamp,
-            "config": config,
+            "config": redacted,
             "launcher_data": launcher_data,
         });
 
@@ -265,7 +340,7 @@ pub fn get_config(manager: tauri::State<'_, ConfigManager>) -> AppResult<AppConf
 #[tauri::command]
 pub fn save_config(manager: tauri::State<'_, ConfigManager>, config: AppConfig) -> AppResult<()> {
     manager
-        .save_config(&config)
+        .save_config_with_runtime_ai_key(&config)
         .map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))
 }
 
@@ -305,9 +380,13 @@ pub fn restore_backup(
     manager: tauri::State<'_, ConfigManager>,
     filename: String,
 ) -> AppResult<serde_json::Value> {
-    let (config, launcher_data) = manager
+    let (mut config, launcher_data) = manager
         .restore_backup(&filename)
         .map_err(|e| AppError::new("RESTORE_BACKUP_ERROR", e))?;
+    if !normalize_api_key(&config.ai_organizer_api_key).is_empty() {
+        manager.set_ai_organizer_api_key(&config.ai_organizer_api_key);
+    }
+    redact_ai_organizer_api_key(&mut config);
     manager
         .save_config(&config)
         .map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))?;
@@ -347,7 +426,7 @@ pub fn export_data(
     };
 
     let settings = if include_settings {
-        Some(manager.load_config())
+        Some(redacted_config(&manager.load_config()))
     } else {
         None
     };
@@ -374,6 +453,9 @@ pub fn import_data(
     merge_mode: bool,
 ) -> AppResult<()> {
     if let Some(settings) = data.settings {
+        if !normalize_api_key(&settings.ai_organizer_api_key).is_empty() {
+            manager.set_ai_organizer_api_key(&settings.ai_organizer_api_key);
+        }
         if !merge_mode {
             manager
                 .save_config(&settings)
@@ -398,7 +480,6 @@ pub fn import_data(
             current.backup_retention = settings.backup_retention;
             current.ai_organizer_base_url = settings.ai_organizer_base_url;
             current.ai_organizer_model = settings.ai_organizer_model;
-            current.ai_organizer_api_key = settings.ai_organizer_api_key;
             manager
                 .save_config(&current)
                 .map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))?;
@@ -515,6 +596,8 @@ pub fn export_to_file(
 #[tauri::command]
 pub fn export_data_to_file(path: String, format: String, data: serde_json::Value) -> AppResult<()> {
     let path = PathBuf::from(&path);
+    let mut data = data;
+    redact_ai_organizer_api_key_in_json_export(&mut data);
 
     match format.as_str() {
         "json" => {
@@ -580,12 +663,36 @@ pub fn import_from_file(
 
     import_data(manager, data.clone(), merge_mode)?;
 
-    Ok(data)
+    Ok(redacted_export_data(&data))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
+    fn create_test_manager(base: &Path) -> ConfigManager {
+        ConfigManager {
+            app_data_dir: base.to_path_buf(),
+            config_path: base.join("config.json"),
+            launcher_data_path: base.join("launcher_data.json"),
+            backups_dir: base.join("backups"),
+            runtime_ai_organizer_api_key: Arc::new(Mutex::new(String::new())),
+        }
+    }
+
+    fn create_test_base(prefix: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!(
+            "air-icon-launcher-test-{prefix}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        base
+    }
 
     #[test]
     fn deserialize_app_config_missing_fields_uses_defaults() {
@@ -602,25 +709,12 @@ mod tests {
 
     #[test]
     fn load_config_invalid_file_is_backed_up_and_recreated() {
-        let base = std::env::temp_dir().join(format!(
-            "air-icon-launcher-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(&base).unwrap();
+        let base = create_test_base("invalid-config");
 
         let config_path = base.join("config.json");
         std::fs::write(&config_path, "{ this is not json").unwrap();
 
-        let manager = ConfigManager {
-            app_data_dir: base.clone(),
-            config_path: config_path.clone(),
-            launcher_data_path: base.join("launcher_data.json"),
-            backups_dir: base.join("backups"),
-        };
+        let manager = create_test_manager(&base);
 
         let loaded = manager.load_config();
         assert_eq!(loaded.theme, "system");
@@ -640,6 +734,64 @@ mod tests {
             }
         }
         assert!(found_backup);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn save_config_does_not_persist_ai_organizer_api_key() {
+        let base = create_test_base("redact-config");
+        let manager = create_test_manager(&base);
+
+        let mut config = AppConfig::default();
+        config.ai_organizer_api_key = "sk-test-secret".to_string();
+        manager.save_config_with_runtime_ai_key(&config).unwrap();
+
+        let raw = std::fs::read_to_string(manager.config_path()).unwrap();
+        assert!(!raw.contains("sk-test-secret"));
+        assert!(raw.contains("\"ai_organizer_api_key\": \"\""));
+
+        let loaded = manager.load_config();
+        assert_eq!(loaded.ai_organizer_api_key, "sk-test-secret");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn create_backup_does_not_include_ai_organizer_api_key() {
+        let base = create_test_base("redact-backup");
+        let manager = create_test_manager(&base);
+        std::fs::create_dir_all(manager.get_backups_dir()).unwrap();
+
+        manager.set_ai_organizer_api_key("sk-backup-secret");
+        let mut config = AppConfig::default();
+        manager.apply_runtime_ai_organizer_api_key(&mut config);
+        let launcher_data = LauncherData::default();
+
+        let backup_path = manager.create_backup(&config, &launcher_data).unwrap();
+        let raw = std::fs::read_to_string(backup_path).unwrap();
+        assert!(!raw.contains("sk-backup-secret"));
+        assert!(raw.contains("\"ai_organizer_api_key\": \"\""));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn load_config_migrates_legacy_plaintext_ai_key_from_disk() {
+        let base = create_test_base("legacy-ai-key");
+        let manager = create_test_manager(&base);
+
+        let mut legacy = AppConfig::default();
+        legacy.ai_organizer_api_key = "sk-legacy".to_string();
+        let raw = serde_json::to_string_pretty(&legacy).unwrap();
+        std::fs::write(manager.config_path(), raw).unwrap();
+
+        let loaded = manager.load_config();
+        assert_eq!(loaded.ai_organizer_api_key, "sk-legacy");
+
+        let migrated_raw = std::fs::read_to_string(manager.config_path()).unwrap();
+        assert!(!migrated_raw.contains("sk-legacy"));
+        assert!(migrated_raw.contains("\"ai_organizer_api_key\": \"\""));
 
         let _ = std::fs::remove_dir_all(&base);
     }

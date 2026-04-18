@@ -87,7 +87,8 @@ pub async fn refine_installed_apps_with_ai(
     let config = manager.load_config();
     let base_url = config.ai_organizer_base_url.trim().trim_end_matches('/');
     let model = config.ai_organizer_model.trim();
-    let api_key = config.ai_organizer_api_key.trim();
+    let api_key_owned = manager.get_ai_organizer_api_key();
+    let api_key = api_key_owned.trim();
 
     if base_url.is_empty() || model.is_empty() || api_key.is_empty() {
         return Err(AppError::invalid_input(

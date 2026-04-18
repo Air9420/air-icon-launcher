@@ -15,11 +15,11 @@
 ### 报告方式
 
 1. **GitHub Security Advisories**（推荐）
-   - 访问 [Security](https://github.com/your-username/air-icon-launcher/security/advisories/new)
+   - 访问 [Security](https://github.com/Air9420/air-icon-launcher/security/advisories/new)
    - 填写漏洞详情
 
 2. **直接联系维护者**
-   - 发送邮件至：[你的邮箱]
+   - 发送邮件至：951993674@qq.com
 
 ### 报告内容应包含
 
@@ -65,8 +65,10 @@ Air Icon Launcher 采用多层安全架构：
 ### 数据存储
 
 - 所有用户数据存储在本地
-- 不收集或传输任何用户数据到外部服务器
-- 配置和数据可通过备份功能导出
+- 默认不会将启动器数据上传到外部服务器
+- 当你主动使用 AI 分类功能时，应用会将你选择的应用信息（如名称、路径、当前分类）发送到你配置的 AI 接口地址
+- `AI API Key` 仅保存在应用运行时内存中，不写入 `config.json`，也不会出现在备份/导出文件中
+- 配置和数据可通过备份功能导出（已排除 `AI API Key`）
 
 ## 最佳实践
 

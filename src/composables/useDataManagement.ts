@@ -266,7 +266,11 @@ export function useDataManagement() {
         }
 
         if (options.includeSettings) {
-            payload.settings = await getAppConfig();
+            const settings = await getAppConfig();
+            payload.settings = {
+                ...settings,
+                ai_organizer_api_key: "",
+            };
         }
 
         if (options.includePlugins) {
