@@ -6,6 +6,10 @@ import { useUIStore } from "./uiStore";
 import { useStatsStore } from "./statsStore";
 import { createVersionedPersistConfig } from "../utils/versioned-persist";
 import {
+    getCachedLauncherIcon,
+    setCachedLauncherIcon,
+} from "../utils/launcher-icon-cache";
+import {
     mergeRustSearchResults,
     normalizeLauncherItemKey,
 } from "./launcher-search";
@@ -194,6 +198,41 @@ export const useLauncherStore = defineStore(
             if (typeof value !== "string") return null;
             const trimmed = value.trim();
             return trimmed.length > 0 ? trimmed : null;
+        }
+
+        function cacheOriginalIconForFileItem(
+            itemType: LauncherItem["itemType"],
+            path: string,
+            iconBase64: string | null | undefined
+        ): void {
+            if (itemType !== "file") return;
+            const normalizedPath = typeof path === "string" ? path.trim() : "";
+            const normalizedIcon = normalizeIconBase64(iconBase64);
+            if (!normalizedPath || !normalizedIcon) return;
+            setCachedLauncherIcon(normalizedPath, normalizedIcon);
+        }
+
+        function getCachedOriginalIconForPath(path: string): string | null {
+            const normalizedPath = typeof path === "string" ? path.trim() : "";
+            if (!normalizedPath) return null;
+            return normalizeIconBase64(getCachedLauncherIcon(normalizedPath));
+        }
+
+        function applyCachedOriginalIcon(item: LauncherItem): LauncherItem {
+            if (item.itemType !== "file") return item;
+
+            const currentIcon = normalizeIconBase64(item.iconBase64);
+            const originalIcon = normalizeIconBase64(item.originalIconBase64);
+            if (currentIcon || originalIcon) return item;
+
+            const cachedIcon = getCachedOriginalIconForPath(item.path);
+            if (!cachedIcon) return item;
+
+            return {
+                ...item,
+                iconBase64: cachedIcon,
+                originalIconBase64: cachedIcon,
+            };
         }
 
         function getSearchEntryKey(categoryId: string, itemId: string): string {
@@ -543,6 +582,7 @@ export const useLauncherStore = defineStore(
                         : null
                 );
                 const itemType = payload.itemTypes?.[index] ?? 'file';
+                cacheOriginalIconForFileItem(itemType, path, iconBase64);
                 return {
                     id: createLauncherItemId(),
                     name: getNameFromPath(path),
@@ -589,6 +629,7 @@ export const useLauncherStore = defineStore(
                 for (let i = start; i < end; i++) {
                     const iconBase64 = normalizeIconBase64(icon_base64s[i] ?? null);
                     const itemType = itemTypes?.[i] ?? 'file';
+                    cacheOriginalIconForFileItem(itemType, paths[i], iconBase64);
                     const id = createLauncherItemId();
                     allIds.push(id);
                     batchItems.push({
@@ -624,7 +665,9 @@ export const useLauncherStore = defineStore(
             const pathToIcon = new Map<string, string>();
             for (let i = 0; i < paths.length; i++) {
                 const icon = normalizeIconBase64(iconBase64s[i]);
-                if (icon) pathToIcon.set(paths[i], icon);
+                if (!icon) continue;
+                pathToIcon.set(paths[i], icon);
+                setCachedLauncherIcon(paths[i], icon);
             }
 
             if (pathToIcon.size === 0) return;
@@ -778,6 +821,22 @@ export const useLauncherStore = defineStore(
                 const path = typeof item.path === "string" ? item.path.trim() : "";
                 if (!path) continue;
 
+                const cachedIcon = getCachedOriginalIconForPath(path);
+                if (cachedIcon) {
+                    const list = getLauncherItemsByCategoryId(target.categoryId);
+                    const index = list.findIndex((x) => x.id === target.itemId);
+                    if (index !== -1) {
+                        const next = [...list];
+                        next[index] = {
+                            ...next[index],
+                            iconBase64: cachedIcon,
+                            originalIconBase64: cachedIcon,
+                        };
+                        setLauncherItemsByCategoryId(target.categoryId, next);
+                    }
+                    continue;
+                }
+
                 uniqueTargets.push({
                     key: targetKey,
                     categoryId: target.categoryId,
@@ -817,6 +876,7 @@ export const useLauncherStore = defineStore(
                     const normalizedIcon = normalizeIconBase64(result.value[i]);
                     if (!normalizedIcon) continue;
                     iconByPath.set(uniquePaths[i], normalizedIcon);
+                    setCachedLauncherIcon(uniquePaths[i], normalizedIcon);
                 }
 
                 if (iconByPath.size === 0) return;
@@ -952,7 +1012,11 @@ export const useLauncherStore = defineStore(
         }
 
         function importLauncherItems(items: Record<string, LauncherItem[]>) {
-            launcherItemsByCategoryId.value = items;
+            const nextItems: Record<string, LauncherItem[]> = {};
+            for (const [categoryId, categoryItems] of Object.entries(items)) {
+                nextItems[categoryId] = categoryItems.map((item) => applyCachedOriginalIcon(item));
+            }
+            launcherItemsByCategoryId.value = nextItems;
             if (isRustSearchReady.value) {
                 void syncSearchIndexInternal(true);
             }

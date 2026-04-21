@@ -651,11 +651,7 @@ fn build_candidate_from_path(
         return None;
     }
 
-    let icon_path = if extension == "lnk" {
-        path.to_path_buf()
-    } else {
-        launch_path.clone()
-    };
+    let icon_path = determine_candidate_icon_path(&extension, source, path, &launch_path);
 
     Some(CandidateApp {
         display_name,
@@ -664,6 +660,27 @@ fn build_candidate_from_path(
         source,
         source_rank,
     })
+}
+
+#[cfg(windows)]
+fn determine_candidate_icon_path(
+    extension: &str,
+    source: &str,
+    shortcut_path: &Path,
+    launch_path: &Path,
+) -> PathBuf {
+    if extension != "lnk" {
+        return launch_path.to_path_buf();
+    }
+
+    // Desktop shortcuts are often user-created aliases with custom icons.
+    // Installed-app scanning should keep the app's canonical icon stable instead of inheriting
+    // whichever desktop shortcut happened to be discovered first.
+    if source == "桌面" {
+        return launch_path.to_path_buf();
+    }
+
+    shortcut_path.to_path_buf()
 }
 
 #[cfg(windows)]
@@ -781,4 +798,31 @@ fn normalize_name_for_matching(value: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::determine_candidate_icon_path;
+    use std::path::Path;
+
+    #[test]
+    fn desktop_shortcuts_use_launch_path_icon() {
+        let shortcut = Path::new(r"C:\Users\Air\Desktop\Chrome.lnk");
+        let launch = Path::new(r"C:\Program Files\Google\Chrome\Application\chrome.exe");
+
+        let icon_path = determine_candidate_icon_path("lnk", "桌面", shortcut, launch);
+
+        assert_eq!(icon_path, launch.to_path_buf());
+    }
+
+    #[test]
+    fn start_menu_shortcuts_keep_shortcut_icon() {
+        let shortcut =
+            Path::new(r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Chrome.lnk");
+        let launch = Path::new(r"C:\Program Files\Google\Chrome\Application\chrome.exe");
+
+        let icon_path = determine_candidate_icon_path("lnk", "开始菜单", shortcut, launch);
+
+        assert_eq!(icon_path, shortcut.to_path_buf());
+    }
 }

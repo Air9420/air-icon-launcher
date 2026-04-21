@@ -2,6 +2,11 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useLauncherStore } from "../launcherStore";
 import { createPinia, setActivePinia } from "pinia";
 import * as invokeWrapper from "../../utils/invoke-wrapper";
+import {
+  clearLauncherIconCacheForTests,
+  getCachedLauncherIcon,
+  setCachedLauncherIcon,
+} from "../../utils/launcher-icon-cache";
 
 function createStore() {
   const pinia = createPinia();
@@ -14,6 +19,7 @@ describe("launcherStore - pure functions", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    clearLauncherIconCacheForTests();
     store = createStore();
   });
 
@@ -277,6 +283,27 @@ describe("launcherStore - pure functions", () => {
   });
 
   describe("hydrateMissingIconsForItems", () => {
+    it("uses cached icons before calling native extraction", async () => {
+      setCachedLauncherIcon("C:\\cached.exe", "cached-icon");
+      const invokeSpy = vi.spyOn(invokeWrapper, "invoke");
+
+      store.addLauncherItemsToCategory("cat-1", {
+        paths: ["C:\\cached.exe"],
+        directories: [],
+        icon_base64s: [null],
+      });
+      const items = store.getLauncherItemsByCategoryId("cat-1");
+
+      await store.hydrateMissingIconsForItems([
+        { categoryId: "cat-1", itemId: items[0].id },
+      ]);
+
+      const hydrated = store.getLauncherItemsByCategoryId("cat-1")[0];
+      expect(hydrated.iconBase64).toBe("cached-icon");
+      expect(hydrated.originalIconBase64).toBe("cached-icon");
+      expect(invokeSpy).not.toHaveBeenCalled();
+    });
+
     it("hydrates missing file icons in batch", async () => {
       const invokeSpy = vi
         .spyOn(invokeWrapper, "invoke")
@@ -302,6 +329,8 @@ describe("launcherStore - pure functions", () => {
       expect(hydrated[0].originalIconBase64).toBe("icon-a");
       expect(hydrated[1].iconBase64).toBe("icon-b");
       expect(hydrated[1].originalIconBase64).toBe("icon-b");
+      expect(getCachedLauncherIcon("C:\\a.exe")).toBe("icon-a");
+      expect(getCachedLauncherIcon("C:\\b.exe")).toBe("icon-b");
       expect(invokeSpy).toHaveBeenCalledTimes(1);
     });
 
