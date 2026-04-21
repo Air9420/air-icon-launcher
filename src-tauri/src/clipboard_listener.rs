@@ -1,5 +1,7 @@
 use std::sync::Arc;
 #[cfg(target_os = "windows")]
+use std::sync::atomic::{AtomicIsize, Ordering};
+#[cfg(target_os = "windows")]
 use windows::core::PCWSTR;
 #[cfg(target_os = "windows")]
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
@@ -10,9 +12,12 @@ use windows::Win32::System::DataExchange::{
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetWindowLongPtrW,
-    RegisterClassW, SetWindowLongPtrW, GWLP_USERDATA, HWND_MESSAGE, MSG, WM_CLIPBOARDUPDATE,
-    WNDCLASSW,
+    PostMessageW, PostQuitMessage, RegisterClassW, SetWindowLongPtrW, GWLP_USERDATA, HWND_MESSAGE,
+    MSG, WM_CLIPBOARDUPDATE, WM_CLOSE, WM_DESTROY, WNDCLASSW,
 };
+
+#[cfg(target_os = "windows")]
+static CLIPBOARD_HWND: AtomicIsize = AtomicIsize::new(0);
 
 #[cfg(target_os = "windows")]
 extern "system" {
@@ -69,15 +74,14 @@ pub fn listen_clipboard(callback: Arc<dyn Fn() + Send + Sync + 'static>) {
             return;
         }
 
+        CLIPBOARD_HWND.store(hwnd.0 as isize, Ordering::Release);
+
         println!(">>> [CLIPBOARD] Windows event-driven listener started.");
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             DispatchMessageW(&msg);
         }
-
-        let _ = RemoveClipboardFormatListener(hwnd);
-        let _ = Box::from_raw(ptr);
     });
 
     #[cfg(not(target_os = "windows"))]
@@ -106,6 +110,17 @@ pub fn listen_clipboard(callback: Arc<dyn Fn() + Send + Sync + 'static>) {
 }
 
 #[cfg(target_os = "windows")]
+pub fn stop_clipboard_listener() {
+    let hwnd_value = CLIPBOARD_HWND.load(Ordering::Acquire);
+    if hwnd_value != 0 {
+        unsafe {
+            let hwnd = HWND(hwnd_value);
+            let _ = PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
 unsafe extern "system" fn wnd_proc(
     hwnd: HWND,
     msg: u32,
@@ -119,6 +134,17 @@ unsafe extern "system" fn wnd_proc(
                 let callback = &*(ptr as *const Arc<dyn Fn() + Send + Sync + 'static>);
                 callback();
             }
+            LRESULT(0)
+        }
+        WM_DESTROY => {
+            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+            if ptr != 0 {
+                let _ = RemoveClipboardFormatListener(hwnd);
+                let _ = Box::from_raw(ptr as *mut Arc<dyn Fn() + Send + Sync + 'static>);
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+            }
+            CLIPBOARD_HWND.store(0, Ordering::Release);
+            PostQuitMessage(0);
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
