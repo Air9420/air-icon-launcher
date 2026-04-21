@@ -92,7 +92,8 @@ async function onExportData() {
         }
     } catch (e) {
         console.error("Failed to export data:", e);
-        showToast("导出失败：" + e, { type: "error" });
+        const message = e instanceof Error ? e.message : String(e);
+        showToast("导出失败：" + message, { type: "error" });
     } finally {
         isProcessing.value = false;
     }
@@ -109,7 +110,8 @@ async function onImportData() {
         }
     } catch (e) {
         console.error("Failed to import data:", e);
-        showToast("导入失败：" + e, { type: "error" });
+        const message = e instanceof Error ? e.message : String(e);
+        showToast("导入失败：" + message, { type: "error" });
     } finally {
         isProcessing.value = false;
     }

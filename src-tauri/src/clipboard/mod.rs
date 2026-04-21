@@ -108,6 +108,145 @@ impl ClipboardState {
     }
 }
 
+fn clipboard_config_from_app_config(app_config: &crate::config::AppConfig) -> ClipboardConfig {
+    ClipboardConfig {
+        max_records: app_config.clipboard_max_records,
+        max_image_size_mb: app_config.clipboard_max_image_size_mb,
+        encrypted: app_config.clipboard_encrypted,
+        storage_path: app_config.clipboard_storage_path.clone(),
+    }
+}
+
+fn enforce_runtime_max_records(state: &Arc<ClipboardState>, max_records: usize) -> Result<(), String> {
+    if max_records == 0 {
+        return Ok(());
+    }
+
+    if let Some(db) = state.database.lock().unwrap().as_ref() {
+        let images = db.enforce_max_records(max_records).map_err(|e| e.to_string())?;
+        for image_path in images {
+            let _ = std::fs::remove_file(image_path);
+        }
+    }
+
+    let removed = {
+        let mut cache = state.cache.lock().unwrap();
+        cache.enforce_max_records(max_records)
+    };
+    for record in removed {
+        if let Some(image_path) = record.image_path {
+            if !image_path.is_empty() {
+                let _ = std::fs::remove_file(image_path);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub fn apply_runtime_config_snapshot(
+    state: &Arc<ClipboardState>,
+    runtime_config: ClipboardConfig,
+    resolved_storage_path: PathBuf,
+) -> Result<(), String> {
+    let current_storage_path = state.storage_path.lock().unwrap().clone();
+    if current_storage_path != resolved_storage_path {
+        state.rebuild_database(&resolved_storage_path)?;
+        let mut storage_path = state.storage_path.lock().unwrap();
+        *storage_path = resolved_storage_path;
+    }
+
+    {
+        let mut config = state.config.lock().unwrap();
+        *config = runtime_config.clone();
+    }
+
+    enforce_runtime_max_records(state, runtime_config.max_records)
+}
+
+pub fn sync_runtime_config_from_app_config(
+    app_handle: &AppHandle,
+    state: &Arc<ClipboardState>,
+    app_config: &crate::config::AppConfig,
+) -> Result<(), String> {
+    let resolved_storage_path = app_config
+        .clipboard_storage_path
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| monitor::get_default_storage_path(app_handle));
+
+    apply_runtime_config_snapshot(
+        state,
+        clipboard_config_from_app_config(app_config),
+        resolved_storage_path,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_base(prefix: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!(
+            "air-icon-launcher-clipboard-{prefix}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        base
+    }
+
+    #[test]
+    fn apply_runtime_config_snapshot_updates_runtime_and_enforces_limit() {
+        let base = create_test_base("runtime-sync");
+        let state = Arc::new(ClipboardState::default());
+
+        {
+            let mut cache = state.cache.lock().unwrap();
+            for index in 0..3 {
+                cache.push_with_limit(
+                    ClipboardRecord {
+                        id: format!("clip-{index}"),
+                        record_type: "text".to_string(),
+                        text_content: Some(format!("text-{index}")),
+                        image_path: None,
+                        hash: format!("hash-{index}"),
+                        timestamp: index,
+                    },
+                    10,
+                );
+            }
+        }
+
+        let storage_path = base.join("clipboard_history");
+        apply_runtime_config_snapshot(
+            &state,
+            ClipboardConfig {
+                max_records: 2,
+                max_image_size_mb: 4.0,
+                encrypted: true,
+                storage_path: Some(storage_path.to_string_lossy().to_string()),
+            },
+            storage_path.clone(),
+        )
+        .unwrap();
+
+        let runtime = state.config.lock().unwrap().clone();
+        assert_eq!(runtime.max_records, 2);
+        assert_eq!(runtime.max_image_size_mb, 4.0);
+        assert!(runtime.encrypted);
+        assert_eq!(runtime.storage_path, Some(storage_path.to_string_lossy().to_string()));
+        assert_eq!(state.storage_path.lock().unwrap().clone(), storage_path);
+        assert_eq!(state.cache.lock().unwrap().get_all().len(), 2);
+        assert!(state.database.lock().unwrap().is_some());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
 fn generate_id() -> String {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -338,26 +477,7 @@ pub fn set_clipboard_config(
     }
 
     if let Some(v) = patch.max_records {
-        if v > 0 {
-            if let Some(db) = state.database.lock().unwrap().as_ref() {
-                let images = db.enforce_max_records(v).map_err(|e| e.to_string())?;
-                for image_path in images {
-                    let _ = std::fs::remove_file(image_path);
-                }
-            }
-
-            let removed = {
-                let mut cache = state.cache.lock().unwrap();
-                cache.enforce_max_records(v)
-            };
-            for record in removed {
-                if let Some(image_path) = record.image_path {
-                    if !image_path.is_empty() {
-                        let _ = std::fs::remove_file(image_path);
-                    }
-                }
-            }
-        }
+        enforce_runtime_max_records(state.inner(), v)?;
     }
 
     let latest = state.config.lock().unwrap().clone();

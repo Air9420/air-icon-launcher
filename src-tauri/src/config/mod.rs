@@ -30,16 +30,56 @@ fn redacted_config(config: &AppConfig) -> AppConfig {
     sanitized
 }
 
-fn redacted_export_data(data: &ExportData) -> ExportData {
-    let mut sanitized = data.clone();
-    if let Some(settings) = sanitized.settings.as_mut() {
-        redact_ai_organizer_api_key(settings);
+fn current_export_data(manager: &ConfigManager) -> ExportData {
+    let export_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    ExportData {
+        version: CONFIG_VERSION.to_string(),
+        export_time,
+        launcher_data: Some(manager.load_launcher_data()),
+        settings: Some(redacted_config(&manager.load_config())),
+        plugins: None,
     }
-    sanitized
+}
+
+fn restore_persisted_snapshot(
+    manager: &ConfigManager,
+    config: &AppConfig,
+    launcher_data: &LauncherData,
+    app_handle: Option<&AppHandle>,
+    clipboard_state: Option<&Arc<crate::clipboard::ClipboardState>>,
+) -> Result<(), String> {
+    manager.save_config_with_runtime_ai_key(config)?;
+    manager.save_launcher_data(launcher_data)?;
+
+    if let (Some(app_handle), Some(clipboard_state)) = (app_handle, clipboard_state) {
+        crate::clipboard::sync_runtime_config_from_app_config(app_handle, clipboard_state, config)?;
+    }
+
+    Ok(())
+}
+
+fn sync_runtime_state_after_import(
+    manager: &ConfigManager,
+    app_handle: Option<&AppHandle>,
+    clipboard_state: Option<&Arc<crate::clipboard::ClipboardState>>,
+) -> Result<(), String> {
+    if let (Some(app_handle), Some(clipboard_state)) = (app_handle, clipboard_state) {
+        let config = manager.load_config();
+        crate::clipboard::sync_runtime_config_from_app_config(app_handle, clipboard_state, &config)?;
+    }
+
+    Ok(())
 }
 
 fn redact_ai_organizer_api_key_in_json_export(data: &mut serde_json::Value) {
-    if let Some(settings) = data.get_mut("settings").and_then(serde_json::Value::as_object_mut) {
+    if let Some(settings) = data
+        .get_mut("settings")
+        .and_then(serde_json::Value::as_object_mut)
+    {
         settings.insert(
             "ai_organizer_api_key".to_string(),
             serde_json::Value::String(String::new()),
@@ -168,8 +208,8 @@ impl ConfigManager {
     }
 
     pub fn save_config(&self, config: &AppConfig) -> Result<(), String> {
-        let content = serde_json::to_string_pretty(&redacted_config(config))
-            .map_err(|e| e.to_string())?;
+        let content =
+            serde_json::to_string_pretty(&redacted_config(config)).map_err(|e| e.to_string())?;
         write_atomically(&self.config_path, content.as_bytes())
     }
 
@@ -377,9 +417,13 @@ pub fn list_backups(manager: tauri::State<'_, ConfigManager>) -> AppResult<Vec<B
 
 #[tauri::command]
 pub fn restore_backup(
+    app_handle: AppHandle,
     manager: tauri::State<'_, ConfigManager>,
+    clipboard_state: tauri::State<'_, Arc<crate::clipboard::ClipboardState>>,
     filename: String,
-) -> AppResult<serde_json::Value> {
+) -> AppResult<ExportData> {
+    let previous_config = manager.load_config();
+    let previous_launcher_data = manager.load_launcher_data();
     let (mut config, launcher_data) = manager
         .restore_backup(&filename)
         .map_err(|e| AppError::new("RESTORE_BACKUP_ERROR", e))?;
@@ -387,17 +431,50 @@ pub fn restore_backup(
         manager.set_ai_organizer_api_key(&config.ai_organizer_api_key);
     }
     redact_ai_organizer_api_key(&mut config);
-    manager
+    if let Err(err) = manager
         .save_config(&config)
-        .map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))?;
-    manager
+        .map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))
+    {
+        let _ = restore_persisted_snapshot(
+            &manager,
+            &previous_config,
+            &previous_launcher_data,
+            Some(&app_handle),
+            Some(clipboard_state.inner()),
+        );
+        return Err(err);
+    }
+    if let Err(err) = manager
         .save_launcher_data(&launcher_data)
-        .map_err(|e| AppError::new("LAUNCHER_DATA_SAVE_ERROR", e))?;
+        .map_err(|e| AppError::new("LAUNCHER_DATA_SAVE_ERROR", e))
+    {
+        let _ = restore_persisted_snapshot(
+            &manager,
+            &previous_config,
+            &previous_launcher_data,
+            Some(&app_handle),
+            Some(clipboard_state.inner()),
+        );
+        return Err(err);
+    }
+    if let Err(err) = sync_runtime_state_after_import(
+        &manager,
+        Some(&app_handle),
+        Some(clipboard_state.inner()),
+    )
+    .map_err(|e| AppError::new("CLIPBOARD_RUNTIME_SYNC_ERROR", e))
+    {
+        let _ = restore_persisted_snapshot(
+            &manager,
+            &previous_config,
+            &previous_launcher_data,
+            Some(&app_handle),
+            Some(clipboard_state.inner()),
+        );
+        return Err(err);
+    }
 
-    Ok(serde_json::json!({
-        "settings": config,
-        "launcher_data": launcher_data,
-    }))
+    Ok(current_export_data(&manager))
 }
 
 #[tauri::command]
@@ -446,9 +523,8 @@ pub fn export_data(
     })
 }
 
-#[tauri::command]
-pub fn import_data(
-    manager: tauri::State<'_, ConfigManager>,
+fn import_data_internal(
+    manager: &ConfigManager,
     data: ExportData,
     merge_mode: bool,
 ) -> AppResult<()> {
@@ -538,6 +614,60 @@ pub fn import_data(
     }
 
     Ok(())
+}
+
+fn import_data_with_rollback(
+    manager: &ConfigManager,
+    data: ExportData,
+    merge_mode: bool,
+    app_handle: Option<&AppHandle>,
+    clipboard_state: Option<&Arc<crate::clipboard::ClipboardState>>,
+) -> AppResult<()> {
+    let previous_config = manager.load_config();
+    let previous_launcher_data = manager.load_launcher_data();
+
+    if let Err(err) = import_data_internal(manager, data, merge_mode) {
+        let _ = restore_persisted_snapshot(
+            manager,
+            &previous_config,
+            &previous_launcher_data,
+            app_handle,
+            clipboard_state,
+        );
+        return Err(err);
+    }
+
+    if let Err(err) = sync_runtime_state_after_import(manager, app_handle, clipboard_state)
+        .map_err(|e| AppError::new("CLIPBOARD_RUNTIME_SYNC_ERROR", e))
+    {
+        let _ = restore_persisted_snapshot(
+            manager,
+            &previous_config,
+            &previous_launcher_data,
+            app_handle,
+            clipboard_state,
+        );
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn import_data(
+    app_handle: AppHandle,
+    manager: tauri::State<'_, ConfigManager>,
+    clipboard_state: tauri::State<'_, Arc<crate::clipboard::ClipboardState>>,
+    data: ExportData,
+    merge_mode: bool,
+) -> AppResult<()> {
+    import_data_with_rollback(
+        &manager,
+        data,
+        merge_mode,
+        Some(&app_handle),
+        Some(clipboard_state.inner()),
+    )
 }
 
 #[tauri::command]
@@ -636,7 +766,9 @@ pub fn export_data_to_file(path: String, format: String, data: serde_json::Value
 
 #[tauri::command]
 pub fn import_from_file(
+    app_handle: AppHandle,
     manager: tauri::State<'_, ConfigManager>,
+    clipboard_state: tauri::State<'_, Arc<crate::clipboard::ClipboardState>>,
     path: String,
     merge_mode: bool,
 ) -> AppResult<ExportData> {
@@ -661,9 +793,15 @@ pub fn import_from_file(
         serde_json::from_str(&content).map_err(|e| AppError::new("PARSE_ERROR", e.to_string()))?
     };
 
-    import_data(manager, data.clone(), merge_mode)?;
+    import_data_with_rollback(
+        &manager,
+        data,
+        merge_mode,
+        Some(&app_handle),
+        Some(clipboard_state.inner()),
+    )?;
 
-    Ok(redacted_export_data(&data))
+    Ok(current_export_data(&manager))
 }
 
 #[cfg(test)]
@@ -792,6 +930,92 @@ mod tests {
         let migrated_raw = std::fs::read_to_string(manager.config_path()).unwrap();
         assert!(!migrated_raw.contains("sk-legacy"));
         assert!(migrated_raw.contains("\"ai_organizer_api_key\": \"\""));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn import_data_with_rollback_exposes_final_merged_state() {
+        let base = create_test_base("import-merged-state");
+        let manager = create_test_manager(&base);
+
+        let mut current_config = AppConfig::default();
+        current_config.theme = "dark".to_string();
+        manager.save_config(&current_config).unwrap();
+
+        let current_launcher_data = LauncherData {
+            version: CONFIG_VERSION.to_string(),
+            categories: vec![CategoryData {
+                id: "cat-existing".to_string(),
+                name: "现有分类".to_string(),
+                custom_icon_base64: None,
+                items: vec![LauncherItemData {
+                    id: "item-existing".to_string(),
+                    name: "Existing".to_string(),
+                    path: "C:\\Existing.exe".to_string(),
+                    ..LauncherItemData::default()
+                }],
+            }],
+            favorite_item_ids: vec!["item-existing".to_string()],
+            recent_used_items: Vec::new(),
+        };
+        manager.save_launcher_data(&current_launcher_data).unwrap();
+
+        let imported = ExportData {
+            version: CONFIG_VERSION.to_string(),
+            export_time: 1,
+            settings: Some(AppConfig {
+                theme: "light".to_string(),
+                ..AppConfig::default()
+            }),
+            launcher_data: Some(LauncherData {
+                version: CONFIG_VERSION.to_string(),
+                categories: vec![CategoryData {
+                    id: "cat-imported".to_string(),
+                    name: "导入分类".to_string(),
+                    custom_icon_base64: None,
+                    items: vec![LauncherItemData {
+                        id: "item-imported".to_string(),
+                        name: "Imported".to_string(),
+                        path: "C:\\Imported.exe".to_string(),
+                        ..LauncherItemData::default()
+                    }],
+                }],
+                favorite_item_ids: vec!["item-imported".to_string()],
+                recent_used_items: vec![RecentUsedItemData {
+                    category_id: "cat-imported".to_string(),
+                    item_id: "item-imported".to_string(),
+                    used_at: 100,
+                    usage_count: 2,
+                }],
+            }),
+            plugins: None,
+        };
+
+        import_data_with_rollback(&manager, imported, true, None, None).unwrap();
+
+        let exported = current_export_data(&manager);
+        let settings = exported.settings.unwrap();
+        let launcher_data = exported.launcher_data.unwrap();
+
+        assert_eq!(settings.theme, "light");
+        assert_eq!(launcher_data.categories.len(), 2);
+        assert!(launcher_data
+            .categories
+            .iter()
+            .any(|category| category.id == "cat-existing"));
+        assert!(launcher_data
+            .categories
+            .iter()
+            .any(|category| category.id == "cat-imported"));
+        assert!(launcher_data
+            .favorite_item_ids
+            .iter()
+            .any(|item_id| item_id == "item-existing"));
+        assert!(launcher_data
+            .favorite_item_ids
+            .iter()
+            .any(|item_id| item_id == "item-imported"));
 
         let _ = std::fs::remove_dir_all(&base);
     }

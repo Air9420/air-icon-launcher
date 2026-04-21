@@ -8,9 +8,14 @@ import {
     type Category,
     type LauncherItem,
     type RecentUsedItem,
+    type ThemeMode,
 } from "../stores";
 import { invoke, invokeOrThrow } from "../utils/invoke-wrapper";
-import { getAppConfig } from "../utils/config-sync";
+import {
+    getAppConfig,
+    saveAppConfig,
+    type AppConfigSnapshot,
+} from "../utils/config-sync";
 
 export type DataExportFormat = "json" | "zip";
 
@@ -94,6 +99,248 @@ export type ImportedDataPayload = {
     settings?: ImportedSettings;
     launcher_data?: ImportedLauncherData;
 };
+
+type PersistedLauncherData = {
+    version?: string;
+    categories: ImportedCategory[];
+    favorite_item_ids: string[];
+    recent_used_items: ImportedRecentUsedItem[];
+};
+
+type ImportValidationResult = {
+    valid: boolean;
+    errors: string[];
+};
+
+type FrontendImportSnapshot = {
+    settings: {
+        theme: ThemeMode;
+        categoryCols: number;
+        launcherCols: number;
+        homeSectionLayouts: unknown;
+        toggleShortcut: string;
+        clipboardShortcut: string;
+        followMouseOnShow: boolean;
+        followMouseYAnchor: "top" | "center" | "bottom";
+        clipboardHistoryEnabled: boolean;
+        clipboardMaxRecords: number;
+    };
+    categories: Category[];
+    currentCategoryId: string | null;
+    launcherItemsByCategoryId: Record<string, LauncherItem[]>;
+    pinnedItemIds: string[];
+    recentUsedItems: RecentUsedItem[];
+};
+
+type BackendImportSnapshot = {
+    settings: AppConfigSnapshot;
+    launcherData: PersistedLauncherData;
+};
+
+type ImportSnapshot = {
+    frontend: FrontendImportSnapshot;
+    backend: BackendImportSnapshot;
+};
+
+function cloneData<T>(value: T): T {
+    if (typeof globalThis.structuredClone === "function") {
+        return globalThis.structuredClone(value);
+    }
+    return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function toErrorMessage(error: unknown): string {
+    if (typeof error === "string") return error;
+    if (error instanceof Error && error.message) return error.message;
+    return String(error);
+}
+
+function buildValidationError(errors: string[]): Error {
+    return new Error(`导入数据校验失败：${errors.join("；")}`);
+}
+
+export function validateImportedData(result: ImportedDataPayload): ImportValidationResult {
+    const errors: string[] = [];
+    const settings = result.settings;
+    const launcherData = result.launcher_data;
+
+    if (settings) {
+        const allowedThemes = new Set(["light", "dark", "transparent", "system"]);
+        const allowedAnchors = new Set(["top", "center", "bottom"]);
+
+        if (settings.theme !== undefined && !allowedThemes.has(settings.theme)) {
+            errors.push(`settings.theme 非法: ${String(settings.theme)}`);
+        }
+        if (settings.category_cols !== undefined && !Number.isFinite(settings.category_cols)) {
+            errors.push("settings.category_cols 必须是数字");
+        }
+        if (settings.launcher_cols !== undefined && !Number.isFinite(settings.launcher_cols)) {
+            errors.push("settings.launcher_cols 必须是数字");
+        }
+        if (settings.toggle_shortcut !== undefined) {
+            if (typeof settings.toggle_shortcut !== "string" || !settings.toggle_shortcut.trim()) {
+                errors.push("settings.toggle_shortcut 必须是非空字符串");
+            }
+        }
+        if (settings.clipboard_shortcut !== undefined) {
+            if (typeof settings.clipboard_shortcut !== "string" || !settings.clipboard_shortcut.trim()) {
+                errors.push("settings.clipboard_shortcut 必须是非空字符串");
+            }
+        }
+        if (
+            settings.follow_mouse_on_show !== undefined &&
+            typeof settings.follow_mouse_on_show !== "boolean"
+        ) {
+            errors.push("settings.follow_mouse_on_show 必须是布尔值");
+        }
+        if (
+            settings.follow_mouse_y_anchor !== undefined &&
+            !allowedAnchors.has(settings.follow_mouse_y_anchor)
+        ) {
+            errors.push(`settings.follow_mouse_y_anchor 非法: ${String(settings.follow_mouse_y_anchor)}`);
+        }
+        if (
+            settings.clipboard_history_enabled !== undefined &&
+            typeof settings.clipboard_history_enabled !== "boolean"
+        ) {
+            errors.push("settings.clipboard_history_enabled 必须是布尔值");
+        }
+        if (
+            settings.clipboard_max_records !== undefined &&
+            (!Number.isFinite(settings.clipboard_max_records) || settings.clipboard_max_records < 0)
+        ) {
+            errors.push("settings.clipboard_max_records 必须是大于等于 0 的数字");
+        }
+        if (
+            settings.clipboard_max_image_size_mb !== undefined &&
+            (!Number.isFinite(settings.clipboard_max_image_size_mb) || settings.clipboard_max_image_size_mb < 0)
+        ) {
+            errors.push("settings.clipboard_max_image_size_mb 必须是大于等于 0 的数字");
+        }
+        if (
+            settings.clipboard_encrypted !== undefined &&
+            typeof settings.clipboard_encrypted !== "boolean"
+        ) {
+            errors.push("settings.clipboard_encrypted 必须是布尔值");
+        }
+        if (
+            settings.clipboard_storage_path !== undefined &&
+            settings.clipboard_storage_path !== null &&
+            typeof settings.clipboard_storage_path !== "string"
+        ) {
+            errors.push("settings.clipboard_storage_path 必须是字符串或 null");
+        }
+    }
+
+    if (launcherData) {
+        if (launcherData.categories !== undefined && !Array.isArray(launcherData.categories)) {
+            errors.push("launcher_data.categories 必须是数组");
+        }
+        if (
+            launcherData.favorite_item_ids !== undefined &&
+            !Array.isArray(launcherData.favorite_item_ids)
+        ) {
+            errors.push("launcher_data.favorite_item_ids 必须是数组");
+        }
+        if (
+            launcherData.pinned_item_ids !== undefined &&
+            !Array.isArray(launcherData.pinned_item_ids)
+        ) {
+            errors.push("launcher_data.pinned_item_ids 必须是数组");
+        }
+        if (
+            launcherData.recent_used_items !== undefined &&
+            !Array.isArray(launcherData.recent_used_items)
+        ) {
+            errors.push("launcher_data.recent_used_items 必须是数组");
+        }
+
+        const categories = Array.isArray(launcherData.categories) ? launcherData.categories : [];
+        const itemIds = new Set<string>();
+        const itemRefs = new Set<string>();
+
+        categories.forEach((category, categoryIndex) => {
+            if (!category?.id?.trim()) {
+                errors.push(`launcher_data.categories[${categoryIndex}] 缺少有效 id`);
+            }
+            if (!category?.name?.trim()) {
+                errors.push(`launcher_data.categories[${categoryIndex}] 缺少有效 name`);
+            }
+
+            if (category?.items !== undefined && !Array.isArray(category.items)) {
+                errors.push(`launcher_data.categories[${categoryIndex}].items 必须是数组`);
+                return;
+            }
+
+            (category.items || []).forEach((item, itemIndex) => {
+                if (!item?.id?.trim()) {
+                    errors.push(
+                        `launcher_data.categories[${categoryIndex}].items[${itemIndex}] 缺少有效 id`
+                    );
+                }
+                if (!item?.name?.trim()) {
+                    errors.push(
+                        `launcher_data.categories[${categoryIndex}].items[${itemIndex}] 缺少有效 name`
+                    );
+                }
+                if (
+                    item?.item_type !== undefined &&
+                    item.item_type !== "file" &&
+                    item.item_type !== "url"
+                ) {
+                    errors.push(
+                        `launcher_data.categories[${categoryIndex}].items[${itemIndex}].item_type 非法`
+                    );
+                }
+
+                if (category?.id && item?.id) {
+                    itemIds.add(item.id);
+                    itemRefs.add(`${category.id}:${item.id}`);
+                }
+
+                (item.launch_dependencies || []).forEach((dependency, dependencyIndex) => {
+                    if (!dependency?.category_id?.trim() || !dependency?.item_id?.trim()) {
+                        errors.push(
+                            `launcher_data.categories[${categoryIndex}].items[${itemIndex}].launch_dependencies[${dependencyIndex}] 引用无效`
+                        );
+                    }
+                });
+            });
+        });
+
+        const pinnedIds = launcherData.pinned_item_ids || launcherData.favorite_item_ids || [];
+        pinnedIds.forEach((itemId, index) => {
+            if (!itemIds.has(itemId)) {
+                errors.push(`launcher_data.pinned/favorite_item_ids[${index}] 引用不存在: ${itemId}`);
+            }
+        });
+
+        (launcherData.recent_used_items || []).forEach((item, index) => {
+            const key = `${item.category_id}:${item.item_id}`;
+            if (!itemRefs.has(key)) {
+                errors.push(`launcher_data.recent_used_items[${index}] 引用不存在: ${key}`);
+            }
+        });
+
+        categories.forEach((category, categoryIndex) => {
+            (category.items || []).forEach((item, itemIndex) => {
+                (item.launch_dependencies || []).forEach((dependency, dependencyIndex) => {
+                    const key = `${dependency.category_id}:${dependency.item_id}`;
+                    if (!itemRefs.has(key)) {
+                        errors.push(
+                            `launcher_data.categories[${categoryIndex}].items[${itemIndex}].launch_dependencies[${dependencyIndex}] 引用不存在: ${key}`
+                        );
+                    }
+                });
+            });
+        });
+    }
+
+    return {
+        valid: errors.length === 0,
+        errors,
+    };
+}
 
 function formatLocalDateForFilename(date: Date) {
     const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -180,6 +427,91 @@ export function useDataManagement() {
     const categoryStore = useCategoryStore();
     const clipboardStore = useClipboardStore();
 
+    function snapshotFrontendState(): FrontendImportSnapshot {
+        return {
+            settings: {
+                theme: settingsStore.theme,
+                categoryCols: uiStore.categoryCols,
+                launcherCols: uiStore.launcherCols,
+                homeSectionLayouts: cloneData(uiStore.homeSectionLayouts),
+                toggleShortcut: settingsStore.toggleShortcut,
+                clipboardShortcut: settingsStore.clipboardShortcut,
+                followMouseOnShow: settingsStore.followMouseOnShow,
+                followMouseYAnchor: settingsStore.followMouseYAnchor,
+                clipboardHistoryEnabled: clipboardStore.clipboardHistoryEnabled,
+                clipboardMaxRecords: clipboardStore.maxRecords,
+            },
+            categories: cloneData(categoryStore.categories),
+            currentCategoryId: categoryStore.currentCategoryId,
+            launcherItemsByCategoryId: cloneData(store.launcherItemsByCategoryId),
+            pinnedItemIds: cloneData(store.pinnedItemIds),
+            recentUsedItems: cloneData(store.recentUsedItems),
+        };
+    }
+
+    async function snapshotBackendState(): Promise<BackendImportSnapshot> {
+        return {
+            settings: cloneData(await getAppConfig()),
+            launcherData: cloneData(
+                await invokeOrThrow<PersistedLauncherData>("get_launcher_data")
+            ),
+        };
+    }
+
+    async function snapshotCurrentState(): Promise<ImportSnapshot> {
+        return {
+            frontend: snapshotFrontendState(),
+            backend: await snapshotBackendState(),
+        };
+    }
+
+    async function restoreFrontendState(snapshot: FrontendImportSnapshot): Promise<void> {
+        await settingsStore.setTheme(snapshot.settings.theme);
+        uiStore.setCategoryCols(snapshot.settings.categoryCols);
+        uiStore.setLauncherCols(snapshot.settings.launcherCols);
+        uiStore.setHomeSectionLayouts(snapshot.settings.homeSectionLayouts);
+        await settingsStore.setToggleShortcut(snapshot.settings.toggleShortcut);
+        await settingsStore.setClipboardShortcut(snapshot.settings.clipboardShortcut);
+        await settingsStore.setFollowMouseOnShow(snapshot.settings.followMouseOnShow);
+        await settingsStore.setFollowMouseYAnchor(snapshot.settings.followMouseYAnchor);
+        clipboardStore.setClipboardHistoryEnabled(snapshot.settings.clipboardHistoryEnabled);
+        clipboardStore.setMaxRecords(snapshot.settings.clipboardMaxRecords);
+        categoryStore.importCategories(snapshot.categories);
+        categoryStore.setCurrentCategory(snapshot.currentCategoryId);
+        store.importLauncherItems(snapshot.launcherItemsByCategoryId);
+        store.importPinnedItemIds(snapshot.pinnedItemIds);
+        store.importRecentUsedItems(snapshot.recentUsedItems);
+        await store.syncSearchIndex();
+    }
+
+    async function rollbackToSnapshot(snapshot: ImportSnapshot): Promise<void> {
+        const rollbackErrors: string[] = [];
+
+        try {
+            await saveAppConfig(snapshot.backend.settings);
+        } catch (error) {
+            rollbackErrors.push(`恢复 config 失败: ${toErrorMessage(error)}`);
+        }
+
+        try {
+            await invokeOrThrow("save_launcher_data", {
+                data: snapshot.backend.launcherData,
+            });
+        } catch (error) {
+            rollbackErrors.push(`恢复 launcher_data 失败: ${toErrorMessage(error)}`);
+        }
+
+        try {
+            await restoreFrontendState(snapshot.frontend);
+        } catch (error) {
+            rollbackErrors.push(`恢复前端状态失败: ${toErrorMessage(error)}`);
+        }
+
+        if (rollbackErrors.length > 0) {
+            throw new Error(rollbackErrors.join("；"));
+        }
+    }
+
     async function applyImportedData(result: ImportedDataPayload) {
         if (result.settings) {
             const config = result.settings;
@@ -217,37 +549,54 @@ export function useDataManagement() {
 
         if (result.launcher_data) {
             const data = result.launcher_data;
-            if (data.categories) {
-                categoryStore.importCategories(
-                    data.categories.map((category) => ({
-                        id: category.id,
-                        name: category.name,
-                        customIconBase64: category.custom_icon_base64 ?? null,
-                    }))
-                );
-                store.importLauncherItems(mapImportedLauncherItems(data.categories));
-            }
+            const categories = data.categories || [];
+            categoryStore.importCategories(
+                categories.map((category) => ({
+                    id: category.id,
+                    name: category.name,
+                    customIconBase64: category.custom_icon_base64 ?? null,
+                }))
+            );
+            store.importLauncherItems(mapImportedLauncherItems(categories));
 
-            const pinnedIds = data.pinned_item_ids || data.favorite_item_ids;
-            if (pinnedIds) {
-                const currentPinned = store.pinnedItemIds;
-                const mergedPinned = [...new Set([...currentPinned, ...pinnedIds])];
-                store.importPinnedItemIds(mergedPinned);
-            }
+            const pinnedIds = data.pinned_item_ids || data.favorite_item_ids || [];
+            store.importPinnedItemIds([...pinnedIds]);
 
-            if (data.recent_used_items) {
-                store.importRecentUsedItems(
-                    data.recent_used_items.map((item) => ({
-                        categoryId: item.category_id,
-                        itemId: item.item_id,
-                        usedAt: item.used_at,
-                        usageCount: Math.max(1, Math.floor(item.usage_count ?? 1)),
-                    }))
-                );
-            }
+            const recentUsedItems = (data.recent_used_items || []).map((item) => ({
+                categoryId: item.category_id,
+                itemId: item.item_id,
+                usedAt: item.used_at,
+                usageCount: Math.max(1, Math.floor(item.usage_count ?? 1)),
+            }));
+            store.importRecentUsedItems(recentUsedItems);
         }
 
         await store.syncSearchIndex();
+    }
+
+    async function executeImportTransaction(
+        action: () => Promise<ImportedDataPayload>
+    ): Promise<boolean> {
+        const snapshot = await snapshotCurrentState();
+
+        try {
+            const result = await action();
+            const validation = validateImportedData(result);
+            if (!validation.valid) {
+                throw buildValidationError(validation.errors);
+            }
+            await applyImportedData(result);
+            return true;
+        } catch (error) {
+            try {
+                await rollbackToSnapshot(snapshot);
+            } catch (rollbackError) {
+                throw new Error(
+                    `导入失败：${toErrorMessage(error)}；回滚失败：${toErrorMessage(rollbackError)}`
+                );
+            }
+            throw error instanceof Error ? error : new Error(toErrorMessage(error));
+        }
     }
 
     async function buildExportPayload(options: DataExportOptions) {
@@ -317,12 +666,12 @@ export function useDataManagement() {
         }
 
         const path = typeof selected === "string" ? selected : selected[0];
-        const result = await invokeOrThrow<ImportedDataPayload>("import_from_file", {
-            path,
-            mergeMode,
-        });
-        await applyImportedData(result);
-        return true;
+        return executeImportTransaction(() =>
+            invokeOrThrow<ImportedDataPayload>("import_from_file", {
+                path,
+                mergeMode,
+            })
+        );
     }
 
     async function createBackup() {
@@ -334,8 +683,9 @@ export function useDataManagement() {
     }
 
     async function restoreBackup(filename: string) {
-        const result = await invokeOrThrow<ImportedDataPayload>("restore_backup", { filename });
-        await applyImportedData(result);
+        await executeImportTransaction(() =>
+            invokeOrThrow<ImportedDataPayload>("restore_backup", { filename })
+        );
     }
 
     async function deleteBackup(filename: string) {

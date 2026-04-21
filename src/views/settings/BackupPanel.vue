@@ -72,7 +72,8 @@ async function onCreateBackup() {
         showToast("备份创建成功！", { type: "success" });
     } catch (e) {
         console.error("Failed to create backup:", e);
-        showToast("备份创建失败：" + e, { type: "error" });
+        const message = e instanceof Error ? e.message : String(e);
+        showToast("备份创建失败：" + message, { type: "error" });
     } finally {
         isProcessing.value = false;
     }
@@ -105,7 +106,8 @@ async function onRestoreBackup(filename: string) {
         showBackupDialog.value = false;
     } catch (e) {
         console.error("Failed to restore backup:", e);
-        showToast("备份恢复失败：" + e, { type: "error" });
+        const message = e instanceof Error ? e.message : String(e);
+        showToast("备份恢复失败：" + message, { type: "error" });
     } finally {
         isProcessing.value = false;
     }
@@ -120,7 +122,8 @@ async function onDeleteBackup(filename: string) {
         backupList.value = await dataManagement.listBackups();
     } catch (e) {
         console.error("Failed to delete backup:", e);
-        showToast("删除备份失败：" + e, { type: "error" });
+        const message = e instanceof Error ? e.message : String(e);
+        showToast("删除备份失败：" + message, { type: "error" });
     } finally {
         isProcessing.value = false;
     }
