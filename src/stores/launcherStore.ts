@@ -109,6 +109,15 @@ type SearchIndexChangesPayload = {
     deleted: SearchIndexDeletedPayload[];
 };
 
+type IconHydrationOptions = {
+    forceReplace?: boolean;
+    skipCache?: boolean;
+};
+
+type ImportLauncherItemsOptions = {
+    refreshDerivedIcons?: boolean;
+};
+
 export const useLauncherStore = defineStore(
     "launcher",
     () => {
@@ -233,6 +242,17 @@ export const useLauncherStore = defineStore(
                 iconBase64: cachedIcon,
                 originalIconBase64: cachedIcon,
             };
+        }
+
+        function shouldRefreshDerivedIcon(item: LauncherItem): boolean {
+            if (item.itemType !== "file") return false;
+
+            const normalizedPath = typeof item.path === "string" ? item.path.trim() : "";
+            if (!normalizedPath) return false;
+
+            const currentIcon = normalizeIconBase64(item.iconBase64);
+            const originalIcon = normalizeIconBase64(item.originalIconBase64);
+            return currentIcon === originalIcon;
         }
 
         function getSearchEntryKey(categoryId: string, itemId: string): string {
@@ -790,8 +810,13 @@ export const useLauncherStore = defineStore(
             return normalizeIconBase64(item.iconBase64) !== normalizeIconBase64(item.originalIconBase64);
         }
 
-        async function hydrateMissingIconsForItems(targets: LauncherItemRef[]): Promise<void> {
+        async function hydrateMissingIconsForItems(
+            targets: LauncherItemRef[],
+            options: IconHydrationOptions = {}
+        ): Promise<void> {
             if (!Array.isArray(targets) || targets.length === 0) return;
+            const forceReplace = options.forceReplace === true;
+            const skipCache = options.skipCache === true;
 
             const uniqueTargets: Array<{
                 key: string;
@@ -815,26 +840,32 @@ export const useLauncherStore = defineStore(
 
                 const currentIcon = normalizeIconBase64(item.iconBase64);
                 const originalIcon = normalizeIconBase64(item.originalIconBase64);
-                if (currentIcon) continue;
-                if (originalIcon && originalIcon !== currentIcon) continue;
+                if (!forceReplace) {
+                    if (currentIcon) continue;
+                    if (originalIcon && originalIcon !== currentIcon) continue;
+                } else if (currentIcon && originalIcon && currentIcon !== originalIcon) {
+                    continue;
+                }
 
                 const path = typeof item.path === "string" ? item.path.trim() : "";
                 if (!path) continue;
 
-                const cachedIcon = getCachedOriginalIconForPath(path);
-                if (cachedIcon) {
-                    const list = getLauncherItemsByCategoryId(target.categoryId);
-                    const index = list.findIndex((x) => x.id === target.itemId);
-                    if (index !== -1) {
-                        const next = [...list];
-                        next[index] = {
-                            ...next[index],
-                            iconBase64: cachedIcon,
-                            originalIconBase64: cachedIcon,
-                        };
-                        setLauncherItemsByCategoryId(target.categoryId, next);
+                if (!skipCache) {
+                    const cachedIcon = getCachedOriginalIconForPath(path);
+                    if (cachedIcon) {
+                        const list = getLauncherItemsByCategoryId(target.categoryId);
+                        const index = list.findIndex((x) => x.id === target.itemId);
+                        if (index !== -1) {
+                            const next = [...list];
+                            next[index] = {
+                                ...next[index],
+                                iconBase64: cachedIcon,
+                                originalIconBase64: cachedIcon,
+                            };
+                            setLauncherItemsByCategoryId(target.categoryId, next);
+                        }
+                        continue;
                     }
-                    continue;
                 }
 
                 uniqueTargets.push({
@@ -897,7 +928,12 @@ export const useLauncherStore = defineStore(
                     const next = list.map((item) => {
                         const hydratedIcon = categoryUpdates.get(item.id);
                         if (!hydratedIcon) return item;
-                        if (normalizeIconBase64(item.iconBase64)) return item;
+                        const currentIcon = normalizeIconBase64(item.iconBase64);
+                        const originalIcon = normalizeIconBase64(item.originalIconBase64);
+                        if (!forceReplace && currentIcon) return item;
+                        if (forceReplace && currentIcon && originalIcon && currentIcon !== originalIcon) {
+                            return item;
+                        }
                         changed = true;
                         return {
                             ...item,
@@ -1011,12 +1047,31 @@ export const useLauncherStore = defineStore(
             enqueueSearchRefreshForAllItems();
         }
 
-        function importLauncherItems(items: Record<string, LauncherItem[]>) {
+        function importLauncherItems(
+            items: Record<string, LauncherItem[]>,
+            options: ImportLauncherItemsOptions = {}
+        ) {
             const nextItems: Record<string, LauncherItem[]> = {};
+            const refreshTargets: LauncherItemRef[] = [];
             for (const [categoryId, categoryItems] of Object.entries(items)) {
-                nextItems[categoryId] = categoryItems.map((item) => applyCachedOriginalIcon(item));
+                nextItems[categoryId] = categoryItems.map((item) => {
+                    const nextItem = applyCachedOriginalIcon(item);
+                    if (options.refreshDerivedIcons && shouldRefreshDerivedIcon(nextItem)) {
+                        refreshTargets.push({
+                            categoryId,
+                            itemId: nextItem.id,
+                        });
+                    }
+                    return nextItem;
+                });
             }
             launcherItemsByCategoryId.value = nextItems;
+            if (options.refreshDerivedIcons && refreshTargets.length > 0) {
+                void hydrateMissingIconsForItems(refreshTargets, {
+                    forceReplace: true,
+                    skipCache: true,
+                });
+            }
             if (isRustSearchReady.value) {
                 void syncSearchIndexInternal(true);
             }

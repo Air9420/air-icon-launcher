@@ -359,6 +359,75 @@ describe("launcherStore - pure functions", () => {
       expect(after.originalIconBase64).toBe("original-icon");
       expect(invokeSpy).not.toHaveBeenCalled();
     });
+
+    it("refreshes imported non-custom file icons even when cache had a stale value", async () => {
+      setCachedLauncherIcon("C:\\a.exe", "default-icon");
+      vi.spyOn(invokeWrapper, "invoke").mockResolvedValue({
+        ok: true,
+        value: ["real-icon"],
+      } as Awaited<ReturnType<typeof invokeWrapper.invoke>>);
+
+      store.importLauncherItems(
+        {
+          "cat-1": [
+            {
+              id: "item-1",
+              name: "a",
+              path: "C:\\a.exe",
+              itemType: "file",
+              isDirectory: false,
+              iconBase64: null,
+              originalIconBase64: null,
+              launchDependencies: [],
+              launchDelaySeconds: 0,
+            },
+          ],
+        },
+        { refreshDerivedIcons: true }
+      );
+
+      expect(store.getLauncherItemsByCategoryId("cat-1")[0].iconBase64).toBe("default-icon");
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      const refreshed = store.getLauncherItemsByCategoryId("cat-1")[0];
+      expect(refreshed.iconBase64).toBe("real-icon");
+      expect(refreshed.originalIconBase64).toBe("real-icon");
+      expect(getCachedLauncherIcon("C:\\a.exe")).toBe("real-icon");
+    });
+
+    it("does not refresh imported custom icons", async () => {
+      const invokeSpy = vi.spyOn(invokeWrapper, "invoke").mockResolvedValue({
+        ok: true,
+        value: ["real-icon"],
+      } as Awaited<ReturnType<typeof invokeWrapper.invoke>>);
+
+      store.importLauncherItems(
+        {
+          "cat-1": [
+            {
+              id: "item-1",
+              name: "a",
+              path: "C:\\a.exe",
+              itemType: "file",
+              isDirectory: false,
+              iconBase64: "custom-icon",
+              originalIconBase64: "original-icon",
+              launchDependencies: [],
+              launchDelaySeconds: 0,
+            },
+          ],
+        },
+        { refreshDerivedIcons: true }
+      );
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      const preserved = store.getLauncherItemsByCategoryId("cat-1")[0];
+      expect(preserved.iconBase64).toBe("custom-icon");
+      expect(preserved.originalIconBase64).toBe("original-icon");
+      expect(invokeSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe("deleteCategoryCleanup", () => {

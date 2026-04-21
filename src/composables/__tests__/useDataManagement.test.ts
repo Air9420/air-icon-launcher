@@ -121,23 +121,86 @@ describe("useDataManagement helpers", () => {
     expect(validation.errors).toEqual([]);
   });
 
-  it("rejects favorite references that do not exist in the resolved launcher snapshot", () => {
+  it("allows stale pinned and recent references because soft metadata is filtered on apply", () => {
     const validation = validateImportedData({
       launcher_data: {
         categories: [
           {
             id: "cat-1",
             name: "工具",
-            items: [],
+            items: [
+              {
+                id: "item-1",
+                name: "PowerToys",
+                is_directory: false,
+                item_type: "file",
+                path: "C:\\PowerToys.exe",
+              },
+            ],
           },
         ],
         favorite_item_ids: ["missing-item"],
+        recent_used_items: [
+          {
+            category_id: "cat-1",
+            item_id: "missing-item",
+            used_at: 123,
+            usage_count: 1,
+          },
+        ],
       },
     });
 
-    expect(validation.valid).toBe(false);
-    expect(validation.errors).toContain(
-      "launcher_data.pinned/favorite_item_ids[0] 引用不存在: missing-item"
+    expect(validation.valid).toBe(true);
+    expect(validation.errors).toEqual([]);
+  });
+
+  it("filters stale pinned and recent references during export", () => {
+    const launcherData = buildLauncherExportData(
+      [{ id: "cat-1", name: "工具", customIconBase64: null }],
+      {
+        "cat-1": [
+          {
+            id: "item-1",
+            name: "PowerToys",
+            path: "C:\\PowerToys.exe",
+            url: undefined,
+            itemType: "file",
+            isDirectory: false,
+            iconBase64: null,
+            originalIconBase64: null,
+            isFavorite: false,
+            lastUsedAt: undefined,
+            launchDependencies: [],
+            launchDelaySeconds: 0,
+          },
+        ],
+      },
+      ["item-1", "missing-item"],
+      [
+        {
+          categoryId: "cat-1",
+          itemId: "item-1",
+          usedAt: 123,
+          usageCount: 2,
+        },
+        {
+          categoryId: "cat-1",
+          itemId: "missing-item",
+          usedAt: 456,
+          usageCount: 1,
+        },
+      ]
     );
+
+    expect(launcherData.favorite_item_ids).toEqual(["item-1"]);
+    expect(launcherData.recent_used_items).toEqual([
+      {
+        category_id: "cat-1",
+        item_id: "item-1",
+        used_at: 123,
+        usage_count: 2,
+      },
+    ]);
   });
 });

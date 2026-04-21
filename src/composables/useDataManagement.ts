@@ -1,4 +1,5 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { toRaw } from "vue";
 import {
     Store,
     useCategoryStore,
@@ -143,10 +144,13 @@ type ImportSnapshot = {
 };
 
 function cloneData<T>(value: T): T {
+    const rawValue = toRaw(value);
     if (typeof globalThis.structuredClone === "function") {
-        return globalThis.structuredClone(value);
+        try {
+            return globalThis.structuredClone(rawValue);
+        } catch {}
     }
-    return JSON.parse(JSON.stringify(value)) as T;
+    return JSON.parse(JSON.stringify(rawValue)) as T;
 }
 
 function toErrorMessage(error: unknown): string {
@@ -157,6 +161,63 @@ function toErrorMessage(error: unknown): string {
 
 function buildValidationError(errors: string[]): Error {
     return new Error(`导入数据校验失败：${errors.join("；")}`);
+}
+
+function buildImportedItemReferenceIndex(categories: ImportedCategory[]) {
+    const itemIds = new Set<string>();
+    const itemRefs = new Set<string>();
+
+    categories.forEach((category) => {
+        if (!category?.id?.trim()) return;
+
+        (category.items || []).forEach((item) => {
+            if (!item?.id?.trim()) return;
+            itemIds.add(item.id);
+            itemRefs.add(`${category.id}:${item.id}`);
+        });
+    });
+
+    return {
+        itemIds,
+        itemRefs,
+    };
+}
+
+function filterImportedPinnedIds(itemIds: Set<string>, pinnedIds: string[]): string[] {
+    return [...new Set(pinnedIds.filter((itemId) => itemIds.has(itemId)))];
+}
+
+function filterImportedRecentUsedItems(
+    itemRefs: Set<string>,
+    recentUsedItems: ImportedRecentUsedItem[]
+): ImportedRecentUsedItem[] {
+    return recentUsedItems.filter((item) => {
+        if (!item?.category_id?.trim() || !item?.item_id?.trim()) {
+            return false;
+        }
+        return itemRefs.has(`${item.category_id}:${item.item_id}`);
+    });
+}
+
+function buildExportItemReferenceIndex(
+    categories: Category[],
+    launcherItemsByCategoryId: Record<string, LauncherItem[]>
+) {
+    const itemIds = new Set<string>();
+    const itemRefs = new Set<string>();
+
+    categories.forEach((category) => {
+        (launcherItemsByCategoryId[category.id] || []).forEach((item) => {
+            if (!item?.id?.trim()) return;
+            itemIds.add(item.id);
+            itemRefs.add(`${category.id}:${item.id}`);
+        });
+    });
+
+    return {
+        itemIds,
+        itemRefs,
+    };
 }
 
 export function validateImportedData(result: ImportedDataPayload): ImportValidationResult {
@@ -256,8 +317,6 @@ export function validateImportedData(result: ImportedDataPayload): ImportValidat
         }
 
         const categories = Array.isArray(launcherData.categories) ? launcherData.categories : [];
-        const itemIds = new Set<string>();
-        const itemRefs = new Set<string>();
 
         categories.forEach((category, categoryIndex) => {
             if (!category?.id?.trim()) {
@@ -292,10 +351,10 @@ export function validateImportedData(result: ImportedDataPayload): ImportValidat
                         `launcher_data.categories[${categoryIndex}].items[${itemIndex}].item_type 非法`
                     );
                 }
-
-                if (category?.id && item?.id) {
-                    itemIds.add(item.id);
-                    itemRefs.add(`${category.id}:${item.id}`);
+                if (typeof item?.is_directory !== "boolean") {
+                    errors.push(
+                        `launcher_data.categories[${categoryIndex}].items[${itemIndex}].is_directory 必须是布尔值`
+                    );
                 }
 
                 (item.launch_dependencies || []).forEach((dependency, dependencyIndex) => {
@@ -308,17 +367,34 @@ export function validateImportedData(result: ImportedDataPayload): ImportValidat
             });
         });
 
-        const pinnedIds = launcherData.pinned_item_ids || launcherData.favorite_item_ids || [];
-        pinnedIds.forEach((itemId, index) => {
-            if (!itemIds.has(itemId)) {
-                errors.push(`launcher_data.pinned/favorite_item_ids[${index}] 引用不存在: ${itemId}`);
+        const { itemRefs } = buildImportedItemReferenceIndex(categories);
+
+        (launcherData.favorite_item_ids || []).forEach((itemId, index) => {
+            if (typeof itemId !== "string" || !itemId.trim()) {
+                errors.push(`launcher_data.favorite_item_ids[${index}] 必须是非空字符串`);
+            }
+        });
+
+        (launcherData.pinned_item_ids || []).forEach((itemId, index) => {
+            if (typeof itemId !== "string" || !itemId.trim()) {
+                errors.push(`launcher_data.pinned_item_ids[${index}] 必须是非空字符串`);
             }
         });
 
         (launcherData.recent_used_items || []).forEach((item, index) => {
-            const key = `${item.category_id}:${item.item_id}`;
-            if (!itemRefs.has(key)) {
-                errors.push(`launcher_data.recent_used_items[${index}] 引用不存在: ${key}`);
+            if (!item?.category_id?.trim() || !item?.item_id?.trim()) {
+                errors.push(`launcher_data.recent_used_items[${index}] 引用无效`);
+            }
+            if (!Number.isFinite(item?.used_at)) {
+                errors.push(`launcher_data.recent_used_items[${index}].used_at 必须是数字`);
+            }
+            if (
+                item?.usage_count !== undefined &&
+                (!Number.isFinite(item.usage_count) || item.usage_count < 1)
+            ) {
+                errors.push(
+                    `launcher_data.recent_used_items[${index}].usage_count 必须是大于等于 1 的数字`
+                );
             }
         });
 
@@ -385,6 +461,11 @@ export function buildLauncherExportData(
     pinnedItemIds: string[],
     recentUsedItems: RecentUsedItem[]
 ) {
+    const { itemIds, itemRefs } = buildExportItemReferenceIndex(
+        categories,
+        launcherItemsByCategoryId
+    );
+
     return {
         version: "1.0",
         categories: categories.map((category) => ({
@@ -410,13 +491,15 @@ export function buildLauncherExportData(
                 launch_delay_seconds: item.launchDelaySeconds,
             })),
         })),
-        favorite_item_ids: pinnedItemIds,
-        recent_used_items: recentUsedItems.map((item) => ({
-            category_id: item.categoryId,
-            item_id: item.itemId,
-            used_at: item.usedAt,
-            usage_count: item.usageCount,
-        })),
+        favorite_item_ids: filterImportedPinnedIds(itemIds, pinnedItemIds),
+        recent_used_items: recentUsedItems
+            .filter((item) => itemRefs.has(`${item.categoryId}:${item.itemId}`))
+            .map((item) => ({
+                category_id: item.categoryId,
+                item_id: item.itemId,
+                used_at: item.usedAt,
+                usage_count: item.usageCount,
+            })),
     };
 }
 
@@ -550,6 +633,7 @@ export function useDataManagement() {
         if (result.launcher_data) {
             const data = result.launcher_data;
             const categories = data.categories || [];
+            const { itemIds, itemRefs } = buildImportedItemReferenceIndex(categories);
             categoryStore.importCategories(
                 categories.map((category) => ({
                     id: category.id,
@@ -557,12 +641,17 @@ export function useDataManagement() {
                     customIconBase64: category.custom_icon_base64 ?? null,
                 }))
             );
-            store.importLauncherItems(mapImportedLauncherItems(categories));
+            store.importLauncherItems(mapImportedLauncherItems(categories), {
+                refreshDerivedIcons: true,
+            });
 
             const pinnedIds = data.pinned_item_ids || data.favorite_item_ids || [];
-            store.importPinnedItemIds([...pinnedIds]);
+            store.importPinnedItemIds(filterImportedPinnedIds(itemIds, pinnedIds));
 
-            const recentUsedItems = (data.recent_used_items || []).map((item) => ({
+            const recentUsedItems = filterImportedRecentUsedItems(
+                itemRefs,
+                data.recent_used_items || []
+            ).map((item) => ({
                 categoryId: item.category_id,
                 itemId: item.item_id,
                 usedAt: item.used_at,

@@ -1,6 +1,7 @@
 pub mod types;
 
 use crate::error::{AppError, AppResult};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -30,6 +31,39 @@ fn redacted_config(config: &AppConfig) -> AppConfig {
     sanitized
 }
 
+fn sanitize_launcher_data(mut launcher_data: LauncherData) -> LauncherData {
+    let mut item_ids = HashSet::new();
+    let mut item_refs = HashSet::new();
+
+    for category in &launcher_data.categories {
+        if category.id.trim().is_empty() {
+            continue;
+        }
+
+        for item in &category.items {
+            if item.id.trim().is_empty() {
+                continue;
+            }
+
+            item_ids.insert(item.id.clone());
+            item_refs.insert(format!("{}:{}", category.id, item.id));
+        }
+    }
+
+    launcher_data
+        .favorite_item_ids
+        .retain(|item_id| item_ids.contains(item_id));
+    launcher_data.recent_used_items.retain(|item| {
+        if item.category_id.trim().is_empty() || item.item_id.trim().is_empty() {
+            return false;
+        }
+
+        item_refs.contains(&format!("{}:{}", item.category_id, item.item_id))
+    });
+
+    launcher_data
+}
+
 fn current_export_data(manager: &ConfigManager) -> ExportData {
     let export_time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -39,7 +73,7 @@ fn current_export_data(manager: &ConfigManager) -> ExportData {
     ExportData {
         version: CONFIG_VERSION.to_string(),
         export_time,
-        launcher_data: Some(manager.load_launcher_data()),
+        launcher_data: Some(sanitize_launcher_data(manager.load_launcher_data())),
         settings: Some(redacted_config(&manager.load_config())),
         plugins: None,
     }
@@ -402,7 +436,7 @@ pub fn save_launcher_data(
 #[tauri::command]
 pub fn create_backup(manager: tauri::State<'_, ConfigManager>) -> AppResult<String> {
     let config = manager.load_config();
-    let launcher_data = manager.load_launcher_data();
+    let launcher_data = sanitize_launcher_data(manager.load_launcher_data());
     manager
         .create_backup(&config, &launcher_data)
         .map_err(|e| AppError::new("BACKUP_ERROR", e))
@@ -427,6 +461,7 @@ pub fn restore_backup(
     let (mut config, launcher_data) = manager
         .restore_backup(&filename)
         .map_err(|e| AppError::new("RESTORE_BACKUP_ERROR", e))?;
+    let launcher_data = sanitize_launcher_data(launcher_data);
     if !normalize_api_key(&config.ai_organizer_api_key).is_empty() {
         manager.set_ai_organizer_api_key(&config.ai_organizer_api_key);
     }
@@ -497,7 +532,7 @@ pub fn export_data(
         .unwrap_or(0);
 
     let launcher_data = if include_launcher_data {
-        Some(manager.load_launcher_data())
+        Some(sanitize_launcher_data(manager.load_launcher_data()))
     } else {
         None
     };
@@ -564,6 +599,7 @@ fn import_data_internal(
 
     if let Some(launcher_data) = data.launcher_data {
         if !merge_mode {
+            let launcher_data = sanitize_launcher_data(launcher_data);
             manager
                 .save_launcher_data(&launcher_data)
                 .map_err(|e| AppError::new("LAUNCHER_DATA_SAVE_ERROR", e))?;
@@ -607,6 +643,7 @@ fn import_data_internal(
                     current.recent_used_items.push(recent_item);
                 }
             }
+            let current = sanitize_launcher_data(current);
             manager
                 .save_launcher_data(&current)
                 .map_err(|e| AppError::new("LAUNCHER_DATA_SAVE_ERROR", e))?;
@@ -956,8 +993,13 @@ mod tests {
                     ..LauncherItemData::default()
                 }],
             }],
-            favorite_item_ids: vec!["item-existing".to_string()],
-            recent_used_items: Vec::new(),
+            favorite_item_ids: vec!["item-existing".to_string(), "missing-current".to_string()],
+            recent_used_items: vec![RecentUsedItemData {
+                category_id: "cat-existing".to_string(),
+                item_id: "missing-current".to_string(),
+                used_at: 50,
+                usage_count: 1,
+            }],
         };
         manager.save_launcher_data(&current_launcher_data).unwrap();
 
@@ -981,13 +1023,24 @@ mod tests {
                         ..LauncherItemData::default()
                     }],
                 }],
-                favorite_item_ids: vec!["item-imported".to_string()],
-                recent_used_items: vec![RecentUsedItemData {
-                    category_id: "cat-imported".to_string(),
-                    item_id: "item-imported".to_string(),
-                    used_at: 100,
-                    usage_count: 2,
-                }],
+                favorite_item_ids: vec![
+                    "item-imported".to_string(),
+                    "missing-imported".to_string(),
+                ],
+                recent_used_items: vec![
+                    RecentUsedItemData {
+                        category_id: "cat-imported".to_string(),
+                        item_id: "item-imported".to_string(),
+                        used_at: 100,
+                        usage_count: 2,
+                    },
+                    RecentUsedItemData {
+                        category_id: "cat-imported".to_string(),
+                        item_id: "missing-imported".to_string(),
+                        used_at: 101,
+                        usage_count: 1,
+                    },
+                ],
             }),
             plugins: None,
         };
@@ -1016,6 +1069,9 @@ mod tests {
             .favorite_item_ids
             .iter()
             .any(|item_id| item_id == "item-imported"));
+        assert_eq!(launcher_data.favorite_item_ids.len(), 2);
+        assert_eq!(launcher_data.recent_used_items.len(), 1);
+        assert_eq!(launcher_data.recent_used_items[0].item_id, "item-imported");
 
         let _ = std::fs::remove_dir_all(&base);
     }
