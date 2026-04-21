@@ -124,7 +124,7 @@ export const useLauncherStore = defineStore(
         let isFullSearchIndexSyncInFlight = false;
 
         function createLauncherItemId() {
-            return `item-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            return `item-${crypto.randomUUID()}`;
         }
 
         function normalizeDelaySeconds(value: number | undefined): number {
@@ -562,6 +562,90 @@ export const useLauncherStore = defineStore(
             enqueueSearchChanges({
                 added: nextItems.map((item) => toSearchIndexItem(categoryId, item, rankingSignals)),
             });
+        }
+
+        async function addLauncherItemsToCategoryBatched(
+            categoryId: string,
+            payload: {
+                paths: string[];
+                directories: string[];
+                icon_base64s: Array<string | null>;
+                itemTypes?: Array<'file' | 'url'>;
+            },
+            batchSize: number = 20
+        ): Promise<string[]> {
+            const { paths, directories, icon_base64s, itemTypes } = payload;
+            const directorySet = new Set(directories);
+            const allIds: string[] = [];
+            const totalBatches = Math.ceil(paths.length / batchSize);
+
+            for (let batch = 0; batch < totalBatches; batch++) {
+                const start = batch * batchSize;
+                const end = Math.min(start + batchSize, paths.length);
+
+                const existing = getLauncherItemsByCategoryId(categoryId);
+                const batchItems: LauncherItem[] = [];
+
+                for (let i = start; i < end; i++) {
+                    const iconBase64 = normalizeIconBase64(icon_base64s[i] ?? null);
+                    const itemType = itemTypes?.[i] ?? 'file';
+                    const id = createLauncherItemId();
+                    allIds.push(id);
+                    batchItems.push({
+                        id,
+                        name: getNameFromPath(paths[i]),
+                        path: itemType === 'url' ? '' : paths[i],
+                        url: itemType === 'url' ? paths[i] : undefined,
+                        itemType,
+                        isDirectory: directorySet.has(paths[i]),
+                        iconBase64,
+                        originalIconBase64: iconBase64,
+                        launchDependencies: [],
+                        launchDelaySeconds: 0,
+                    });
+                }
+
+                setLauncherItemsByCategoryId(categoryId, [...existing, ...batchItems]);
+                const rankingSignals = collectSearchRankingSignals();
+                enqueueSearchChanges({
+                    added: batchItems.map((item) => toSearchIndexItem(categoryId, item, rankingSignals)),
+                });
+
+                if (batch < totalBatches - 1) {
+                    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+                }
+            }
+
+            return allIds;
+        }
+
+        function applyDropIcons(categoryId: string, paths: string[], iconBase64s: Array<string | null>) {
+            const list = getLauncherItemsByCategoryId(categoryId);
+            const pathToIcon = new Map<string, string>();
+            for (let i = 0; i < paths.length; i++) {
+                const icon = normalizeIconBase64(iconBase64s[i]);
+                if (icon) pathToIcon.set(paths[i], icon);
+            }
+
+            if (pathToIcon.size === 0) return;
+
+            let changed = false;
+            const updatedItems: LauncherItem[] = [];
+            const next = list.map(item => {
+                const icon = pathToIcon.get(item.path);
+                if (icon === undefined) return item;
+                changed = true;
+                const updated = { ...item, iconBase64: icon, originalIconBase64: icon };
+                updatedItems.push(updated);
+                return updated;
+            });
+
+            if (changed) {
+                setLauncherItemsByCategoryId(categoryId, next);
+                enqueueSearchChanges({
+                    updated: updatedItems.map((item) => toSearchIndexItem(categoryId, item)),
+                });
+            }
         }
 
         function addUrlLauncherItemToCategory(
@@ -1110,6 +1194,8 @@ export const useLauncherStore = defineStore(
             updateLauncherItem,
             deleteLauncherItem,
             addLauncherItemsToCategory,
+            addLauncherItemsToCategoryBatched,
+            applyDropIcons,
             addUrlLauncherItemToCategory,
             updateLauncherItemIcon,
             deleteCategoryCleanup,

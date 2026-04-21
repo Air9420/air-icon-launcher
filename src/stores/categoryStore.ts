@@ -16,6 +16,7 @@ export const useCategoryStore = defineStore(
         const isEditingCategory = computed(() => editingCategoryId.value !== null);
         const currentCategoryId = ref<string | null>(null);
         const isNewCategory = ref<boolean>(false);
+        const pendingNewCategory = ref<Category | null>(null);
 
         const categories = ref<Category[]>([
             { id: "cat-0", name: "Air", customIconBase64: null },
@@ -25,8 +26,15 @@ export const useCategoryStore = defineStore(
             { id: "cat-4", name: "其他", customIconBase64: null },
         ]);
 
+        const displayCategories = computed<Category[]>(() => {
+            if (pendingNewCategory.value) {
+                return [...categories.value, pendingNewCategory.value];
+            }
+            return categories.value;
+        });
+
         function createCategoryId() {
-            return `cat-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            return `cat-${crypto.randomUUID()}`;
         }
 
         function setCurrentCategory(categoryId: string | null) {
@@ -39,7 +47,7 @@ export const useCategoryStore = defineStore(
 
         function beginAddCategory() {
             const newCategory = { id: createCategoryId(), name: "", customIconBase64: null };
-            categories.value.push(newCategory);
+            pendingNewCategory.value = newCategory;
             editingCategoryId.value = newCategory.id;
             editingCategoryName.value = "";
             isNewCategory.value = true;
@@ -55,9 +63,15 @@ export const useCategoryStore = defineStore(
 
         function confirmCategoryEdit(name: string) {
             if (!editingCategoryId.value) return;
-            const target = categories.value.find((item) => item.id === editingCategoryId.value);
-            if (target) {
-                target.name = name.trim();
+            if (isNewCategory.value && pendingNewCategory.value) {
+                const confirmed = { ...pendingNewCategory.value, name: name.trim() };
+                categories.value.push(confirmed);
+                pendingNewCategory.value = null;
+            } else {
+                const target = categories.value.find((item) => item.id === editingCategoryId.value);
+                if (target) {
+                    target.name = name.trim();
+                }
             }
             editingCategoryId.value = null;
             editingCategoryName.value = "";
@@ -65,11 +79,8 @@ export const useCategoryStore = defineStore(
         }
 
         function cancelCategoryEdit() {
-            if (isNewCategory.value && editingCategoryId.value) {
-                const index = categories.value.findIndex((item) => item.id === editingCategoryId.value);
-                if (index !== -1) {
-                    categories.value.splice(index, 1);
-                }
+            if (isNewCategory.value) {
+                pendingNewCategory.value = null;
             }
             editingCategoryId.value = null;
             editingCategoryName.value = "";
@@ -118,6 +129,7 @@ export const useCategoryStore = defineStore(
             currentCategoryId,
             isNewCategory,
             categories,
+            displayCategories,
             createCategoryId,
             setCurrentCategory,
             getCategoryById,

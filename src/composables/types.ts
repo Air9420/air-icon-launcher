@@ -96,6 +96,11 @@ export type DropRecord = {
     target: DropTargetInfo | null;
 };
 
+export type DropIconsEvent = {
+    drop_id: string;
+    icon_base64s: Array<string | null>;
+};
+
 /**
  * 右键菜单的上下文状态
  * 

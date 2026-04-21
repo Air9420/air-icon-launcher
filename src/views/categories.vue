@@ -51,7 +51,7 @@
             </div>
 
             <CategoryGrid
-                :categories="categories"
+                :categories="displayCategories"
                 :cols="categoryCols"
                 :is-editing="isEditingCategory"
                 :editing-category-id="editingCategoryId"
@@ -111,7 +111,7 @@ const {
 } = storeToRefs(store);
 const { categoryCols } = storeToRefs(uiStore);
 const {
-    categories,
+    displayCategories,
     editingCategoryId,
     editingCategoryName,
     isEditingCategory,

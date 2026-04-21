@@ -36,6 +36,12 @@ pub struct DropRecord {
     pub target: Option<DropTargetInfo>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DropIconsEvent {
+    pub drop_id: String,
+    pub icon_base64s: Vec<Option<String>>,
+}
+
 /// 为主窗口注册“拖拽文件/图标进入并释放”的监听，并把结果发送到前端事件中。
 pub fn setup_drag_drop(app: &AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
@@ -56,15 +62,14 @@ pub fn setup_drag_drop(app: &AppHandle) {
 
         let paths = dedupe_windows_shortcut_target_paths(paths.clone());
         let drop_id = new_drop_id();
-        let icon_base64s = extract_icon_base64s(&paths);
         let (paths, directories) = extract_paths_and_directories(paths);
         let position = physical_to_logical_position(&window_for_cb, *position);
 
         let record = DropRecord {
             drop_id: drop_id.clone(),
-            paths,
-            directories,
-            icon_base64s,
+            paths: paths.clone(),
+            directories: directories.clone(),
+            icon_base64s: vec![None; paths.len()],
             position,
             target: None,
         };
@@ -74,6 +79,31 @@ pub fn setup_drag_drop(app: &AppHandle) {
         }
 
         let _ = window_for_cb.emit("drag-drop", record);
+
+        let app_handle_bg = app_handle.clone();
+        let window_bg = window_for_cb.clone();
+        let drop_id_bg = drop_id.clone();
+        let paths_bg = paths.clone();
+        std::thread::spawn(move || {
+            let path_bufs: Vec<PathBuf> = paths_bg.iter().map(PathBuf::from).collect();
+            let icon_base64s = extract_icon_base64s(&path_bufs);
+
+            if let Ok(mut guard) = app_handle_bg.state::<DragDropState>().last_drop.lock() {
+                if let Some(last) = guard.as_mut() {
+                    if last.drop_id == drop_id_bg {
+                        last.icon_base64s = icon_base64s.clone();
+                    }
+                }
+            }
+
+            let _ = window_bg.emit(
+                "drag-drop-icons",
+                DropIconsEvent {
+                    drop_id: drop_id_bg,
+                    icon_base64s,
+                },
+            );
+        });
     });
 }
 
