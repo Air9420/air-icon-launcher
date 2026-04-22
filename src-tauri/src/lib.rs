@@ -46,6 +46,13 @@ pub fn run() {
             let clipboard_state = std::sync::Arc::new(clipboard_state);
             app.manage(clipboard_state.clone());
 
+            corner_hotspot::update_corner_hotspot_config(
+                &handle,
+                app_config.corner_hotspot_enabled,
+                &app_config.corner_hotspot_position,
+                &app_config.corner_hotspot_sensitivity,
+            );
+
             clipboard::start_clipboard_monitor(handle.clone(), clipboard_state);
             if autostart_service::is_autostart_launch() {
                 if let Some(window) = handle.get_webview_window("main") {
@@ -66,7 +73,7 @@ pub fn run() {
 
                 if let Some(config) = keyboard_hook::parse_hotkey(toggle.as_str()) {
                     keyboard_hook::register_hotkey(config);
-                    keyboard_hook::enable_hook(true);
+                    keyboard_hook::enable_hook(app_config.strong_shortcut_mode);
                 }
 
                 keyboard_hook::set_app_handle(handle.clone());
@@ -79,7 +86,6 @@ pub fn run() {
             drag::report_drop_target,
             drag::get_last_drop,
             drag::extract_icons_from_paths,
-            app_settings::get_app_settings,
             app_settings::set_follow_mouse_on_show,
             app_settings::set_follow_mouse_y_anchor,
             app_settings::set_toggle_shortcut,
@@ -119,6 +125,7 @@ pub fn run() {
             config::get_config_paths,
             config::read_raw_config_json,
             config::save_config,
+            config::patch_config,
             config::get_launcher_data,
             config::save_launcher_data,
             config::create_backup,

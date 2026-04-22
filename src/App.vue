@@ -45,9 +45,6 @@ const {
     performanceMode,
     showGuideOnStartup,
     followMouseOnShow,
-    cornerHotspotEnabled,
-    cornerHotspotPosition,
-    cornerHotspotSensitivity,
 } = storeToRefs(settingsStore);
 
 const {
@@ -126,7 +123,6 @@ const hasLauncherItems = computed(() =>
 
 onMounted(async () => {
     await settingsStore.hydratePersistedConfig();
-    await settingsStore.hydrateAppSettings();
     await settingsStore.refreshAutostartStatus();
 
     const pluginManager = getPluginManager();
@@ -152,12 +148,6 @@ onMounted(async () => {
     applyTheme(theme.value);
     applyEffectsDisabled(!windowEffectsEnabled.value);
     watchThemeChanges();
-
-    safeInvoke('set_corner_hotspot_config', {
-        enabled: cornerHotspotEnabled.value,
-        position: cornerHotspotPosition.value,
-        sensitivity: cornerHotspotSensitivity.value,
-    });
 
     const isAutostart = await invoke<boolean>("check_is_autostart_launch");
     if (!isAutostart) {

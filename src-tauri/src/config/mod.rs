@@ -31,6 +31,165 @@ fn redacted_config(config: &AppConfig) -> AppConfig {
     sanitized
 }
 
+fn insert_config_value_if_missing<T: serde::Serialize>(
+    config: &mut serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    aliases: &[&str],
+    value: T,
+) -> Result<(), String> {
+    if aliases.iter().any(|alias| config.contains_key(*alias)) {
+        return Ok(());
+    }
+
+    let serialized = serde_json::to_value(value).map_err(|e| e.to_string())?;
+    config.insert(field.to_string(), serialized);
+    Ok(())
+}
+
+fn preserve_missing_imported_config_fields(
+    config_value: &mut serde_json::Value,
+    current: &AppConfig,
+) -> Result<(), String> {
+    let Some(config) = config_value.as_object_mut() else {
+        return Ok(());
+    };
+
+    insert_config_value_if_missing(
+        config,
+        "ctrl_drag_enabled",
+        &["ctrl_drag_enabled", "ctrlDragEnabled"],
+        current.ctrl_drag_enabled,
+    )?;
+    insert_config_value_if_missing(
+        config,
+        "auto_hide_after_launch",
+        &["auto_hide_after_launch", "autoHideAfterLaunch"],
+        current.auto_hide_after_launch,
+    )?;
+    insert_config_value_if_missing(
+        config,
+        "show_guide_on_startup",
+        &["show_guide_on_startup", "showGuideOnStartup"],
+        current.show_guide_on_startup,
+    )?;
+    insert_config_value_if_missing(
+        config,
+        "hide_on_ctrl_right_click",
+        &["hide_on_ctrl_right_click", "hideOnCtrlRightClick"],
+        current.hide_on_ctrl_right_click,
+    )?;
+    insert_config_value_if_missing(
+        config,
+        "corner_hotspot_enabled",
+        &["corner_hotspot_enabled", "cornerHotspotEnabled"],
+        current.corner_hotspot_enabled,
+    )?;
+    insert_config_value_if_missing(
+        config,
+        "corner_hotspot_position",
+        &["corner_hotspot_position", "cornerHotspotPosition"],
+        current.corner_hotspot_position.as_str(),
+    )?;
+    insert_config_value_if_missing(
+        config,
+        "corner_hotspot_sensitivity",
+        &["corner_hotspot_sensitivity", "cornerHotspotSensitivity"],
+        current.corner_hotspot_sensitivity.as_str(),
+    )?;
+    insert_config_value_if_missing(
+        config,
+        "performance_mode",
+        &["performance_mode", "performanceMode"],
+        current.performance_mode,
+    )?;
+    insert_config_value_if_missing(
+        config,
+        "window_effect_type",
+        &["window_effect_type", "windowEffectType"],
+        current.window_effect_type.as_str(),
+    )?;
+    insert_config_value_if_missing(
+        config,
+        "strong_shortcut_mode",
+        &["strong_shortcut_mode", "strongShortcutMode"],
+        current.strong_shortcut_mode,
+    )?;
+
+    Ok(())
+}
+
+fn deserialize_export_data_with_current_config(
+    content: &str,
+    current_config: &AppConfig,
+) -> AppResult<ExportData> {
+    let mut raw: serde_json::Value =
+        serde_json::from_str(content).map_err(|e| AppError::new("PARSE_ERROR", e.to_string()))?;
+
+    if let Some(settings) = raw.get_mut("settings") {
+        preserve_missing_imported_config_fields(settings, current_config)
+            .map_err(|e| AppError::new("PARSE_ERROR", e))?;
+    }
+
+    serde_json::from_value(raw).map_err(|e| AppError::new("PARSE_ERROR", e.to_string()))
+}
+
+fn apply_app_config_patch(config: &mut AppConfig, patch: AppConfigPatch) {
+    if let Some(value) = patch.theme {
+        config.theme = value;
+    }
+    if let Some(value) = patch.toggle_shortcut {
+        config.toggle_shortcut = value;
+    }
+    if let Some(value) = patch.clipboard_shortcut {
+        config.clipboard_shortcut = value;
+    }
+    if let Some(value) = patch.follow_mouse_on_show {
+        config.follow_mouse_on_show = value;
+    }
+    if let Some(value) = patch.follow_mouse_y_anchor {
+        config.follow_mouse_y_anchor = value;
+    }
+    if let Some(value) = patch.ctrl_drag_enabled {
+        config.ctrl_drag_enabled = value;
+    }
+    if let Some(value) = patch.auto_hide_after_launch {
+        config.auto_hide_after_launch = value;
+    }
+    if let Some(value) = patch.show_guide_on_startup {
+        config.show_guide_on_startup = value;
+    }
+    if let Some(value) = patch.hide_on_ctrl_right_click {
+        config.hide_on_ctrl_right_click = value;
+    }
+    if let Some(value) = patch.corner_hotspot_enabled {
+        config.corner_hotspot_enabled = value;
+    }
+    if let Some(value) = patch.corner_hotspot_position {
+        config.corner_hotspot_position = value;
+    }
+    if let Some(value) = patch.corner_hotspot_sensitivity {
+        config.corner_hotspot_sensitivity = value;
+    }
+    if let Some(value) = patch.performance_mode {
+        config.performance_mode = value;
+    }
+    if let Some(value) = patch.window_effect_type {
+        config.window_effect_type = value;
+    }
+    if let Some(value) = patch.strong_shortcut_mode {
+        config.strong_shortcut_mode = value;
+    }
+    if let Some(value) = patch.ai_organizer_base_url {
+        config.ai_organizer_base_url = value;
+    }
+    if let Some(value) = patch.ai_organizer_model {
+        config.ai_organizer_model = value;
+    }
+    if let Some(value) = patch.ai_organizer_api_key {
+        config.ai_organizer_api_key = value;
+    }
+}
+
 fn sanitize_launcher_data(mut launcher_data: LauncherData) -> LauncherData {
     let mut item_ids = HashSet::new();
     let mut item_refs = HashSet::new();
@@ -350,8 +509,13 @@ impl ConfigManager {
 
         let content = fs::read_to_string(&backup_path).map_err(|e| e.to_string())?;
 
-        let backup: serde_json::Value =
+        let mut backup: serde_json::Value =
             serde_json::from_str(&content).map_err(|e| e.to_string())?;
+        let current_config = self.load_config();
+
+        if let Some(config) = backup.get_mut("config") {
+            preserve_missing_imported_config_fields(config, &current_config)?;
+        }
 
         let config: AppConfig = backup
             .get("config")
@@ -416,6 +580,19 @@ pub fn save_config(manager: tauri::State<'_, ConfigManager>, config: AppConfig) 
     manager
         .save_config_with_runtime_ai_key(&config)
         .map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))
+}
+
+#[tauri::command]
+pub fn patch_config(
+    manager: tauri::State<'_, ConfigManager>,
+    patch: AppConfigPatch,
+) -> AppResult<AppConfig> {
+    let mut current = manager.load_config();
+    apply_app_config_patch(&mut current, patch);
+    manager
+        .save_config_with_runtime_ai_key(&current)
+        .map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))?;
+    Ok(current)
 }
 
 #[tauri::command]
@@ -580,6 +757,16 @@ fn import_data_internal(
             current.clipboard_shortcut = settings.clipboard_shortcut;
             current.follow_mouse_on_show = settings.follow_mouse_on_show;
             current.follow_mouse_y_anchor = settings.follow_mouse_y_anchor;
+            current.ctrl_drag_enabled = settings.ctrl_drag_enabled;
+            current.auto_hide_after_launch = settings.auto_hide_after_launch;
+            current.show_guide_on_startup = settings.show_guide_on_startup;
+            current.hide_on_ctrl_right_click = settings.hide_on_ctrl_right_click;
+            current.corner_hotspot_enabled = settings.corner_hotspot_enabled;
+            current.corner_hotspot_position = settings.corner_hotspot_position;
+            current.corner_hotspot_sensitivity = settings.corner_hotspot_sensitivity;
+            current.performance_mode = settings.performance_mode;
+            current.window_effect_type = settings.window_effect_type;
+            current.strong_shortcut_mode = settings.strong_shortcut_mode;
             current.clipboard_history_enabled = settings.clipboard_history_enabled;
             current.home_section_layouts = settings.home_section_layouts;
             current.clipboard_max_records = settings.clipboard_max_records;
@@ -811,6 +998,7 @@ pub fn import_from_file(
 ) -> AppResult<ExportData> {
     let path = PathBuf::from(&path);
 
+    let current_config = manager.load_config();
     let data: ExportData = if path.extension().map(|e| e == "zip").unwrap_or(false) {
         let file = fs::File::open(&path).map_err(|e| AppError::io_error(e.to_string()))?;
         let mut archive =
@@ -824,10 +1012,10 @@ pub fn import_from_file(
         std::io::Read::read_to_string(&mut json_file, &mut content)
             .map_err(|e| AppError::io_error(e.to_string()))?;
 
-        serde_json::from_str(&content).map_err(|e| AppError::new("PARSE_ERROR", e.to_string()))?
+        deserialize_export_data_with_current_config(&content, &current_config)?
     } else {
         let content = fs::read_to_string(&path).map_err(|e| AppError::io_error(e.to_string()))?;
-        serde_json::from_str(&content).map_err(|e| AppError::new("PARSE_ERROR", e.to_string()))?
+        deserialize_export_data_with_current_config(&content, &current_config)?
     };
 
     import_data_with_rollback(
@@ -876,10 +1064,111 @@ mod tests {
         assert_eq!(config.theme, "dark");
         assert_eq!(config.clipboard_max_records, 200);
         assert_eq!(config.toggle_shortcut, "alt+space");
+        assert!(config.ctrl_drag_enabled);
+        assert!(!config.auto_hide_after_launch);
+        assert!(config.show_guide_on_startup);
+        assert!(!config.hide_on_ctrl_right_click);
+        assert!(!config.corner_hotspot_enabled);
+        assert_eq!(config.corner_hotspot_position, "top-right");
+        assert_eq!(config.corner_hotspot_sensitivity, "medium");
+        assert!(!config.performance_mode);
+        assert_eq!(config.window_effect_type, "blur");
+        assert!(config.strong_shortcut_mode);
         assert_eq!(config.clipboard_max_image_size_mb, 1.0);
         assert_eq!(config.backup_frequency, "none");
         assert_eq!(config.home_section_layouts.pinned.preset, "1x5");
         assert_eq!(config.home_section_layouts.recent.cols, 5);
+    }
+
+    #[test]
+    fn deserialize_app_config_accepts_legacy_camel_case_window_effect_fields() {
+        let json = r#"{
+            "theme":"dark",
+            "performanceMode": false,
+            "windowEffectType": "Acrylic",
+            "ctrlDragEnabled": false,
+            "showGuideOnStartup": false
+        }"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+
+        assert_eq!(config.theme, "dark");
+        assert!(!config.performance_mode);
+        assert_eq!(config.window_effect_type, "acrylic");
+        assert!(!config.ctrl_drag_enabled);
+        assert!(!config.show_guide_on_startup);
+    }
+
+    #[test]
+    fn deserialize_export_data_preserves_current_values_for_missing_new_config_fields() {
+        let mut current_config = AppConfig::default();
+        current_config.ctrl_drag_enabled = false;
+        current_config.auto_hide_after_launch = true;
+        current_config.show_guide_on_startup = false;
+        current_config.hide_on_ctrl_right_click = true;
+        current_config.corner_hotspot_enabled = true;
+        current_config.corner_hotspot_position = "bottom-left".to_string();
+        current_config.corner_hotspot_sensitivity = "high".to_string();
+        current_config.performance_mode = true;
+        current_config.window_effect_type = "acrylic".to_string();
+        current_config.strong_shortcut_mode = false;
+
+        let raw = r#"{
+            "version":"1.0",
+            "export_time":1,
+            "settings":{
+                "theme":"transparent",
+                "toggle_shortcut":"alt+m"
+            },
+            "launcher_data":{
+                "version":"1.0",
+                "categories":[],
+                "favorite_item_ids":[],
+                "recent_used_items":[]
+            }
+        }"#;
+
+        let parsed = deserialize_export_data_with_current_config(raw, &current_config).unwrap();
+        let settings = parsed.settings.unwrap();
+
+        assert_eq!(settings.theme, "transparent");
+        assert_eq!(settings.toggle_shortcut, "alt+m");
+        assert!(!settings.ctrl_drag_enabled);
+        assert!(settings.auto_hide_after_launch);
+        assert!(!settings.show_guide_on_startup);
+        assert!(settings.hide_on_ctrl_right_click);
+        assert!(settings.corner_hotspot_enabled);
+        assert_eq!(settings.corner_hotspot_position, "bottom-left");
+        assert_eq!(settings.corner_hotspot_sensitivity, "high");
+        assert!(settings.performance_mode);
+        assert_eq!(settings.window_effect_type, "acrylic");
+        assert!(!settings.strong_shortcut_mode);
+    }
+
+    #[test]
+    fn app_config_patch_only_updates_provided_fields() {
+        let mut config = AppConfig::default();
+        config.theme = "dark".to_string();
+        config.ctrl_drag_enabled = true;
+        config.performance_mode = false;
+        config.window_effect_type = "blur".to_string();
+        config.strong_shortcut_mode = true;
+
+        apply_app_config_patch(
+            &mut config,
+            AppConfigPatch {
+                performance_mode: Some(true),
+                corner_hotspot_position: Some("bottom-left".to_string()),
+                strong_shortcut_mode: Some(false),
+                ..AppConfigPatch::default()
+            },
+        );
+
+        assert_eq!(config.theme, "dark");
+        assert!(config.ctrl_drag_enabled);
+        assert!(config.performance_mode);
+        assert_eq!(config.window_effect_type, "blur");
+        assert_eq!(config.corner_hotspot_position, "bottom-left");
+        assert!(!config.strong_shortcut_mode);
     }
 
     #[test]
@@ -1072,6 +1361,58 @@ mod tests {
         assert_eq!(launcher_data.favorite_item_ids.len(), 2);
         assert_eq!(launcher_data.recent_used_items.len(), 1);
         assert_eq!(launcher_data.recent_used_items[0].item_id, "item-imported");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn restore_backup_preserves_current_values_for_missing_new_config_fields() {
+        let base = create_test_base("restore-backup-preserve-missing");
+        let manager = create_test_manager(&base);
+        std::fs::create_dir_all(manager.get_backups_dir()).unwrap();
+
+        let mut current_config = AppConfig::default();
+        current_config.window_effect_type = "acrylic".to_string();
+        current_config.performance_mode = true;
+        current_config.ctrl_drag_enabled = false;
+        current_config.corner_hotspot_enabled = true;
+        current_config.corner_hotspot_position = "bottom-left".to_string();
+        current_config.corner_hotspot_sensitivity = "high".to_string();
+        current_config.strong_shortcut_mode = false;
+        manager.save_config(&current_config).unwrap();
+
+        let backup_path = manager.get_backups_dir().join("legacy-backup.json");
+        let backup_content = serde_json::json!({
+            "version": CONFIG_VERSION,
+            "backup_time": 1,
+            "config": {
+                "theme": "transparent",
+                "toggle_shortcut": "alt+m"
+            },
+            "launcher_data": {
+                "version": CONFIG_VERSION,
+                "categories": [],
+                "favorite_item_ids": [],
+                "recent_used_items": []
+            }
+        });
+        std::fs::write(
+            &backup_path,
+            serde_json::to_string_pretty(&backup_content).unwrap(),
+        )
+        .unwrap();
+
+        let (restored, _) = manager.restore_backup("legacy-backup.json").unwrap();
+
+        assert_eq!(restored.theme, "transparent");
+        assert_eq!(restored.toggle_shortcut, "alt+m");
+        assert_eq!(restored.window_effect_type, "acrylic");
+        assert!(restored.performance_mode);
+        assert!(!restored.ctrl_drag_enabled);
+        assert!(restored.corner_hotspot_enabled);
+        assert_eq!(restored.corner_hotspot_position, "bottom-left");
+        assert_eq!(restored.corner_hotspot_sensitivity, "high");
+        assert!(!restored.strong_shortcut_mode);
 
         let _ = std::fs::remove_dir_all(&base);
     }

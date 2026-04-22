@@ -206,7 +206,6 @@
 <script setup lang="ts">
 import { storeToRefs } from "pinia";
 import { onMounted, ref, watchEffect, computed } from "vue";
-import { safeInvoke } from "../../utils/invoke-wrapper";
 import { useSettingsStore, type AutostartType } from "../../stores";
 
 const settingsStore = useSettingsStore();
@@ -300,45 +299,32 @@ async function onSelectAutostartMethod(method: AutostartType) {
     }
 }
 
-function onCtrlDragChange() {
-    settingsStore.setCtrlDragEnabled(ctrlDragDraft.value);
+async function onCtrlDragChange() {
+    await settingsStore.setCtrlDragEnabled(ctrlDragDraft.value);
 }
 
-function onAutoHideAfterLaunchChange() {
-    settingsStore.setAutoHideAfterLaunch(autoHideAfterLaunchDraft.value);
+async function onAutoHideAfterLaunchChange() {
+    await settingsStore.setAutoHideAfterLaunch(autoHideAfterLaunchDraft.value);
 }
 
 async function onCornerHotspotChange() {
-    settingsStore.setCornerHotspotEnabled(cornerHotspotEnabledDraft.value);
-    await safeInvoke('set_corner_hotspot_config', {
-        enabled: cornerHotspotEnabledDraft.value,
-        position: cornerHotspotPositionDraft.value,
-        sensitivity: cornerHotspotSensitivityDraft.value,
-    });
+    await settingsStore.setCornerHotspotEnabled(cornerHotspotEnabledDraft.value);
 }
 
 async function onSetCornerPosition(position: string) {
     cornerHotspotPositionDraft.value = position;
-    settingsStore.setCornerHotspotPosition(position as "top-left" | "top-right" | "bottom-left" | "bottom-right");
-    await safeInvoke('set_corner_hotspot_config', {
-        enabled: cornerHotspotEnabledDraft.value,
-        position,
-        sensitivity: cornerHotspotSensitivityDraft.value,
-    });
+    await settingsStore.setCornerHotspotPosition(
+        position as "top-left" | "top-right" | "bottom-left" | "bottom-right"
+    );
 }
 
 async function onSetCornerSensitivity(sensitivity: string) {
     cornerHotspotSensitivityDraft.value = sensitivity;
-    settingsStore.setCornerHotspotSensitivity(sensitivity as "low" | "medium" | "high");
-    await safeInvoke('set_corner_hotspot_config', {
-        enabled: cornerHotspotEnabledDraft.value,
-        position: cornerHotspotPositionDraft.value,
-        sensitivity,
-    });
+    await settingsStore.setCornerHotspotSensitivity(sensitivity as "low" | "medium" | "high");
 }
 
-function onHideOnCtrlRightClickChange() {
-    settingsStore.setHideOnCtrlRightClick(hideOnCtrlRightClickDraft.value);
+async function onHideOnCtrlRightClickChange() {
+    await settingsStore.setHideOnCtrlRightClick(hideOnCtrlRightClickDraft.value);
 }
 </script>
 

@@ -8,12 +8,12 @@ import { useUIStore } from "./uiStore";
 import { useClipboardStore } from "./clipboardStore";
 
 export type ThemeMode = "light" | "dark" | "system" | "transparent";
-
-type AppSettings = {
-    toggle_shortcut: string;
-    follow_mouse_on_show: boolean;
-    follow_mouse_y_anchor: "top" | "center" | "bottom";
-};
+export type CornerHotspotPosition =
+    | "top-left"
+    | "top-right"
+    | "bottom-left"
+    | "bottom-right";
+export type CornerHotspotSensitivity = "low" | "medium" | "high";
 
 export type AutostartType = "Service" | "Registry" | "TaskScheduler";
 
@@ -57,6 +57,49 @@ export type WindowEffectCompatibilityResult = {
     support: WindowEffectSupportInfo | null;
 };
 
+type SetWindowEffectTypeOptions = {
+    applyRuntime?: boolean;
+};
+
+function normalizeThemeMode(theme: string | null | undefined): ThemeMode {
+    return theme === "light" || theme === "dark" || theme === "transparent"
+        ? theme
+        : "system";
+}
+
+function normalizeFollowMouseAnchor(
+    anchor: string | null | undefined
+): "top" | "center" | "bottom" {
+    return anchor === "top" || anchor === "bottom" ? anchor : "center";
+}
+
+function normalizeWindowEffectType(type: string | null | undefined): WindowEffectType {
+    return type === "acrylic" ? "acrylic" : "blur";
+}
+
+function normalizeCornerHotspotPosition(
+    position: string | null | undefined
+): CornerHotspotPosition {
+    if (
+        position === "top-left"
+        || position === "top-right"
+        || position === "bottom-left"
+        || position === "bottom-right"
+    ) {
+        return position;
+    }
+    return "top-right";
+}
+
+function normalizeCornerHotspotSensitivity(
+    sensitivity: string | null | undefined
+): CornerHotspotSensitivity {
+    if (sensitivity === "low" || sensitivity === "high") {
+        return sensitivity;
+    }
+    return "medium";
+}
+
 export const useSettingsStore = defineStore(
     "settings",
     () => {
@@ -66,8 +109,8 @@ export const useSettingsStore = defineStore(
         const autoHideAfterLaunch = ref<boolean>(false);
         const showGuideOnStartup = ref<boolean>(true);
         const cornerHotspotEnabled = ref<boolean>(false);
-        const cornerHotspotPosition = ref<"top-left" | "top-right" | "bottom-left" | "bottom-right">("top-right");
-        const cornerHotspotSensitivity = ref<"low" | "medium" | "high">("medium");
+        const cornerHotspotPosition = ref<CornerHotspotPosition>("top-right");
+        const cornerHotspotSensitivity = ref<CornerHotspotSensitivity>("medium");
         const toggleShortcut = ref<string>("alt+space");
         const clipboardShortcut = ref<string>("alt+v");
         const followMouseOnShow = ref<boolean>(false);
@@ -83,37 +126,79 @@ export const useSettingsStore = defineStore(
         const windowEffectSupport = ref<WindowEffectSupportInfo | null>(null);
         const strongShortcutMode = ref<boolean>(true);
 
+        async function persistWindowEffectPreferences() {
+            await saveAppConfigPatch({
+                theme: theme.value,
+                performance_mode: performanceMode.value,
+                window_effect_type: windowEffectType.value,
+            });
+        }
+
+        async function pushCornerHotspotRuntime(
+            overrides: Partial<{
+                enabled: boolean;
+                position: CornerHotspotPosition;
+                sensitivity: CornerHotspotSensitivity;
+            }> = {}
+        ) {
+            await invokeOrThrow("set_corner_hotspot_config", {
+                enabled: overrides.enabled ?? cornerHotspotEnabled.value,
+                position: overrides.position ?? cornerHotspotPosition.value,
+                sensitivity: overrides.sensitivity ?? cornerHotspotSensitivity.value,
+            });
+        }
+
         async function setTheme(newTheme: ThemeMode) {
             theme.value = newTheme;
             await saveAppConfigPatch({ theme: newTheme });
         }
 
-        function setWindowEffectsEnabled(enabled: boolean) {
-            windowEffectsEnabled.value = enabled;
-        }
-
-        function setCtrlDragEnabled(enabled: boolean) {
+        async function setCtrlDragEnabled(enabled: boolean) {
+            await saveAppConfigPatch({ ctrl_drag_enabled: enabled });
             ctrlDragEnabled.value = enabled;
         }
 
-        function setAutoHideAfterLaunch(enabled: boolean) {
+        async function setAutoHideAfterLaunch(enabled: boolean) {
+            await saveAppConfigPatch({ auto_hide_after_launch: enabled });
             autoHideAfterLaunch.value = enabled;
         }
 
-        function setShowGuideOnStartup(show: boolean) {
+        async function setShowGuideOnStartup(show: boolean) {
+            await saveAppConfigPatch({ show_guide_on_startup: show });
             showGuideOnStartup.value = show;
         }
 
-        function setCornerHotspotEnabled(enabled: boolean) {
-            cornerHotspotEnabled.value = enabled;
+        async function setCornerHotspotEnabled(enabled: boolean) {
+            try {
+                await pushCornerHotspotRuntime({ enabled });
+                await saveAppConfigPatch({ corner_hotspot_enabled: enabled });
+                cornerHotspotEnabled.value = enabled;
+            } catch (e) {
+                console.error(e);
+                throw e;
+            }
         }
 
-        function setCornerHotspotPosition(position: "top-left" | "top-right" | "bottom-left" | "bottom-right") {
-            cornerHotspotPosition.value = position;
+        async function setCornerHotspotPosition(position: CornerHotspotPosition) {
+            try {
+                await pushCornerHotspotRuntime({ position });
+                await saveAppConfigPatch({ corner_hotspot_position: position });
+                cornerHotspotPosition.value = position;
+            } catch (e) {
+                console.error(e);
+                throw e;
+            }
         }
 
-        function setCornerHotspotSensitivity(sensitivity: "low" | "medium" | "high") {
-            cornerHotspotSensitivity.value = sensitivity;
+        async function setCornerHotspotSensitivity(sensitivity: CornerHotspotSensitivity) {
+            try {
+                await pushCornerHotspotRuntime({ sensitivity });
+                await saveAppConfigPatch({ corner_hotspot_sensitivity: sensitivity });
+                cornerHotspotSensitivity.value = sensitivity;
+            } catch (e) {
+                console.error(e);
+                throw e;
+            }
         }
 
         async function setToggleShortcut(shortcut: string) {
@@ -167,7 +252,28 @@ export const useSettingsStore = defineStore(
         function applyPersistedConfig(config: AppConfigSnapshot) {
             const uiStore = useUIStore();
             const clipboardStore = useClipboardStore();
-            theme.value = (config.theme as ThemeMode) || "system";
+
+            theme.value = normalizeThemeMode(config.theme);
+            ctrlDragEnabled.value = config.ctrl_drag_enabled ?? true;
+            autoHideAfterLaunch.value = config.auto_hide_after_launch ?? false;
+            showGuideOnStartup.value = config.show_guide_on_startup ?? true;
+            hideOnCtrlRightClick.value = config.hide_on_ctrl_right_click ?? false;
+            cornerHotspotEnabled.value = config.corner_hotspot_enabled ?? false;
+            cornerHotspotPosition.value = normalizeCornerHotspotPosition(
+                config.corner_hotspot_position
+            );
+            cornerHotspotSensitivity.value = normalizeCornerHotspotSensitivity(
+                config.corner_hotspot_sensitivity
+            );
+            toggleShortcut.value = config.toggle_shortcut || "alt+space";
+            clipboardShortcut.value = config.clipboard_shortcut || "alt+v";
+            followMouseOnShow.value = !!config.follow_mouse_on_show;
+            followMouseYAnchor.value = normalizeFollowMouseAnchor(config.follow_mouse_y_anchor);
+            performanceMode.value = config.performance_mode ?? false;
+            windowEffectsEnabled.value = !performanceMode.value;
+            windowEffectType.value = normalizeWindowEffectType(config.window_effect_type);
+            strongShortcutMode.value = config.strong_shortcut_mode ?? true;
+
             uiStore.setCategoryCols(config.category_cols);
             uiStore.setLauncherCols(config.launcher_cols);
             uiStore.setHomeSectionLayouts(config.home_section_layouts);
@@ -179,19 +285,6 @@ export const useSettingsStore = defineStore(
             try {
                 const config = await getAppConfig();
                 applyPersistedConfig(config);
-            } catch (e) {
-                console.error(e);
-            }
-        }
-
-        async function hydrateAppSettings() {
-            try {
-                const settings = await invoke<AppSettings>("get_app_settings");
-                if (!settings) return;
-
-                toggleShortcut.value = settings?.toggle_shortcut || "alt+space";
-                followMouseOnShow.value = !!settings?.follow_mouse_on_show;
-                followMouseYAnchor.value = settings?.follow_mouse_y_anchor || "center";
             } catch (e) {
                 console.error(e);
             }
@@ -220,8 +313,8 @@ export const useSettingsStore = defineStore(
                     typeof e === "string"
                         ? e
                         : e instanceof Error && e.message
-                          ? String(e.message)
-                          : "开机自启设置失败";
+                            ? String(e.message)
+                            : "开机自启设置失败";
                 autostartError.value = message;
                 console.error(e);
                 await refreshAutostartStatus();
@@ -230,7 +323,8 @@ export const useSettingsStore = defineStore(
             }
         }
 
-        function setHideOnCtrlRightClick(enabled: boolean) {
+        async function setHideOnCtrlRightClick(enabled: boolean) {
+            await saveAppConfigPatch({ hide_on_ctrl_right_click: enabled });
             hideOnCtrlRightClick.value = enabled;
         }
 
@@ -240,7 +334,9 @@ export const useSettingsStore = defineStore(
 
         async function refreshWindowEffectSupport(): Promise<WindowEffectSupportInfo | null> {
             try {
-                const support = await invokeOrThrow<WindowEffectSupportInfo>("get_window_effect_support_info");
+                const support = await invokeOrThrow<WindowEffectSupportInfo>(
+                    "get_window_effect_support_info"
+                );
                 windowEffectSupport.value = support;
                 return support;
             } catch (e) {
@@ -274,27 +370,41 @@ export const useSettingsStore = defineStore(
         }
 
         async function disableWindowEffectsInternal() {
-            if (theme.value === "transparent") {
-                theme.value = "system";
-            }
+            const previousTheme = theme.value;
+            const previousPerformanceMode = performanceMode.value;
+            const nextTheme = previousTheme === "transparent" ? "system" : previousTheme;
+            const shouldPersist =
+                nextTheme !== previousTheme || previousPerformanceMode !== true;
+
+            theme.value = nextTheme;
             await invokeOrThrow("set_window_effects", { enabled: false });
             windowEffectsEnabled.value = false;
             performanceMode.value = true;
+
+            if (shouldPersist) {
+                await persistWindowEffectPreferences();
+            }
         }
 
         async function applyResolvedWindowEffect(
             preferredType: WindowEffectType
         ): Promise<WindowEffectCompatibilityResult> {
             const support = await refreshWindowEffectSupport();
-            const preferredSupported = preferredType === "blur"
-                ? support?.blurSupported ?? true
-                : support?.acrylicSupported ?? true;
+            const preferredSupported =
+                preferredType === "blur"
+                    ? support?.blurSupported ?? true
+                    : support?.acrylicSupported ?? true;
 
             if (preferredSupported) {
+                const shouldPersist =
+                    performanceMode.value || windowEffectType.value !== preferredType;
                 await invokeOrThrow("set_window_effect_type", { effectType: preferredType });
                 windowEffectsEnabled.value = true;
                 performanceMode.value = false;
                 windowEffectType.value = preferredType;
+                if (shouldPersist) {
+                    await persistWindowEffectPreferences();
+                }
                 return {
                     changed: false,
                     action: "unchanged",
@@ -305,10 +415,18 @@ export const useSettingsStore = defineStore(
 
             const fallbackType = normalizeFallbackEffectType(support?.fallbackEffectType ?? null);
             if (fallbackType) {
+                const shouldPersist =
+                    performanceMode.value || windowEffectType.value !== preferredType;
                 await invokeOrThrow("set_window_effect_type", { effectType: fallbackType });
                 windowEffectsEnabled.value = true;
                 performanceMode.value = false;
-                windowEffectType.value = fallbackType;
+                // Keep the stored preference as the user's chosen effect type.
+                // The runtime may temporarily fall back to a safer effect, but export/import
+                // should preserve the original preference instead of rewriting it.
+                windowEffectType.value = preferredType;
+                if (shouldPersist) {
+                    await persistWindowEffectPreferences();
+                }
                 return {
                     changed: true,
                     action: "switched-effect",
@@ -332,8 +450,7 @@ export const useSettingsStore = defineStore(
             const support = await refreshWindowEffectSupport();
 
             if (performanceMode.value) {
-                await invokeOrThrow("set_window_effects", { enabled: false });
-                windowEffectsEnabled.value = false;
+                await disableWindowEffectsInternal();
                 return {
                     changed: false,
                     action: "performance-mode",
@@ -345,7 +462,9 @@ export const useSettingsStore = defineStore(
             return applyResolvedWindowEffect(windowEffectType.value);
         }
 
-        async function setPerformanceMode(enabled: boolean): Promise<WindowEffectCompatibilityResult> {
+        async function setPerformanceMode(
+            enabled: boolean
+        ): Promise<WindowEffectCompatibilityResult> {
             try {
                 if (enabled) {
                     const changed = !performanceMode.value || windowEffectsEnabled.value;
@@ -365,8 +484,24 @@ export const useSettingsStore = defineStore(
             }
         }
 
-        async function setWindowEffectType(type: WindowEffectType): Promise<WindowEffectCompatibilityResult> {
+        async function setWindowEffectType(
+            type: WindowEffectType,
+            options: SetWindowEffectTypeOptions = {}
+        ): Promise<WindowEffectCompatibilityResult> {
             try {
+                if (options.applyRuntime === false) {
+                    const shouldPersist = windowEffectType.value !== type;
+                    windowEffectType.value = type;
+                    if (shouldPersist) {
+                        await persistWindowEffectPreferences();
+                    }
+                    return {
+                        changed: false,
+                        action: "unchanged",
+                        resolvedEffectType: performanceMode.value ? null : type,
+                        support: windowEffectSupport.value,
+                    };
+                }
                 return await applyResolvedWindowEffect(type);
             } catch (e) {
                 console.error(e);
@@ -377,6 +512,7 @@ export const useSettingsStore = defineStore(
         async function setStrongShortcutMode(enabled: boolean) {
             try {
                 await invokeOrThrow("set_strong_shortcut_mode", { enabled });
+                await saveAppConfigPatch({ strong_shortcut_mode: enabled });
                 strongShortcutMode.value = enabled;
             } catch (e) {
                 console.error(e);
@@ -408,7 +544,6 @@ export const useSettingsStore = defineStore(
             windowEffectSupport,
             strongShortcutMode,
             setTheme,
-            setWindowEffectsEnabled,
             setCtrlDragEnabled,
             setAutoHideAfterLaunch,
             setShowGuideOnStartup,
@@ -421,7 +556,6 @@ export const useSettingsStore = defineStore(
             setFollowMouseYAnchor,
             applyPersistedConfig,
             hydratePersistedConfig,
-            hydrateAppSettings,
             refreshAutostartStatus,
             setAutostartEnabled,
             setHideOnCtrlRightClick,
@@ -433,25 +567,24 @@ export const useSettingsStore = defineStore(
             setStrongShortcutMode,
         };
     },
-    { persist: createVersionedPersistConfig("settings", [
-        "theme",
-        "windowEffectsEnabled",
-        "ctrlDragEnabled",
-        "autoHideAfterLaunch",
-        "showGuideOnStartup",
-        "cornerHotspotEnabled",
-        "cornerHotspotPosition",
-        "cornerHotspotSensitivity",
-        "toggleShortcut",
-        "clipboardShortcut",
-        "followMouseOnShow",
-        "followMouseYAnchor",
-        "autostartEnabled",
-        "autostartMethod",
-        "hideOnCtrlRightClick",
-        "windowPosition",
-        "performanceMode",
-        "windowEffectType",
-        "strongShortcutMode",
-    ]) }
+    {
+        persist: createVersionedPersistConfig("settings", [
+            "theme",
+            "ctrlDragEnabled",
+            "autoHideAfterLaunch",
+            "showGuideOnStartup",
+            "cornerHotspotEnabled",
+            "cornerHotspotPosition",
+            "cornerHotspotSensitivity",
+            "toggleShortcut",
+            "clipboardShortcut",
+            "followMouseOnShow",
+            "followMouseYAnchor",
+            "hideOnCtrlRightClick",
+            "windowPosition",
+            "performanceMode",
+            "windowEffectType",
+            "strongShortcutMode",
+        ]),
+    }
 );

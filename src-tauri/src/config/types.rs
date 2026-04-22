@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 pub const CONFIG_VERSION: &str = "1.0";
 
@@ -41,24 +41,81 @@ impl Default for HomeSectionLayouts {
 pub struct AppConfig {
     pub version: String,
     pub theme: String,
+    #[serde(alias = "categoryCols")]
     pub category_cols: u32,
+    #[serde(alias = "launcherCols")]
     pub launcher_cols: u32,
+    #[serde(alias = "toggleShortcut")]
     pub toggle_shortcut: String,
+    #[serde(alias = "clipboardShortcut")]
     pub clipboard_shortcut: String,
+    #[serde(alias = "followMouseOnShow")]
     pub follow_mouse_on_show: bool,
+    #[serde(alias = "followMouseYAnchor")]
     pub follow_mouse_y_anchor: String,
+    #[serde(alias = "ctrlDragEnabled")]
+    pub ctrl_drag_enabled: bool,
+    #[serde(alias = "autoHideAfterLaunch")]
+    pub auto_hide_after_launch: bool,
+    #[serde(alias = "showGuideOnStartup")]
+    pub show_guide_on_startup: bool,
+    #[serde(alias = "hideOnCtrlRightClick")]
+    pub hide_on_ctrl_right_click: bool,
+    #[serde(alias = "cornerHotspotEnabled")]
+    pub corner_hotspot_enabled: bool,
+    #[serde(alias = "cornerHotspotPosition")]
+    pub corner_hotspot_position: String,
+    #[serde(alias = "cornerHotspotSensitivity")]
+    pub corner_hotspot_sensitivity: String,
+    #[serde(alias = "performanceMode")]
+    pub performance_mode: bool,
+    #[serde(
+        alias = "windowEffectType",
+        deserialize_with = "deserialize_window_effect_type"
+    )]
+    pub window_effect_type: String,
+    #[serde(alias = "strongShortcutMode")]
+    pub strong_shortcut_mode: bool,
+    #[serde(alias = "clipboardHistoryEnabled")]
     pub clipboard_history_enabled: bool,
+    #[serde(alias = "homeSectionLayouts")]
     pub home_section_layouts: HomeSectionLayouts,
+    #[serde(alias = "clipboardMaxRecords")]
     pub clipboard_max_records: usize,
+    #[serde(alias = "clipboardMaxImageSizeMb")]
     pub clipboard_max_image_size_mb: f64,
+    #[serde(alias = "clipboardEncrypted")]
     pub clipboard_encrypted: bool,
+    #[serde(alias = "clipboardStoragePath")]
     pub clipboard_storage_path: Option<String>,
+    #[serde(alias = "backupOnExit")]
     pub backup_on_exit: bool,
+    #[serde(alias = "backupFrequency")]
     pub backup_frequency: String,
+    #[serde(alias = "backupRetention")]
     pub backup_retention: usize,
+    #[serde(alias = "aiOrganizerBaseUrl")]
     pub ai_organizer_base_url: String,
+    #[serde(alias = "aiOrganizerModel")]
     pub ai_organizer_model: String,
+    #[serde(alias = "aiOrganizerApiKey")]
     pub ai_organizer_api_key: String,
+}
+
+fn deserialize_window_effect_type<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    Ok(normalize_window_effect_type(&value))
+}
+
+fn normalize_window_effect_type(value: &str) -> String {
+    if value.trim().eq_ignore_ascii_case("acrylic") {
+        "acrylic".to_string()
+    } else {
+        "blur".to_string()
+    }
 }
 
 impl Default for AppConfig {
@@ -72,6 +129,16 @@ impl Default for AppConfig {
             clipboard_shortcut: "alt+v".to_string(),
             follow_mouse_on_show: false,
             follow_mouse_y_anchor: "center".to_string(),
+            ctrl_drag_enabled: true,
+            auto_hide_after_launch: false,
+            show_guide_on_startup: true,
+            hide_on_ctrl_right_click: false,
+            corner_hotspot_enabled: false,
+            corner_hotspot_position: "top-right".to_string(),
+            corner_hotspot_sensitivity: "medium".to_string(),
+            performance_mode: false,
+            window_effect_type: "blur".to_string(),
+            strong_shortcut_mode: true,
             clipboard_history_enabled: true,
             home_section_layouts: HomeSectionLayouts::default(),
             clipboard_max_records: 100,
@@ -86,6 +153,29 @@ impl Default for AppConfig {
             ai_organizer_api_key: String::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AppConfigPatch {
+    pub theme: Option<String>,
+    pub toggle_shortcut: Option<String>,
+    pub clipboard_shortcut: Option<String>,
+    pub follow_mouse_on_show: Option<bool>,
+    pub follow_mouse_y_anchor: Option<String>,
+    pub ctrl_drag_enabled: Option<bool>,
+    pub auto_hide_after_launch: Option<bool>,
+    pub show_guide_on_startup: Option<bool>,
+    pub hide_on_ctrl_right_click: Option<bool>,
+    pub corner_hotspot_enabled: Option<bool>,
+    pub corner_hotspot_position: Option<String>,
+    pub corner_hotspot_sensitivity: Option<String>,
+    pub performance_mode: Option<bool>,
+    pub window_effect_type: Option<String>,
+    pub strong_shortcut_mode: Option<bool>,
+    pub ai_organizer_base_url: Option<String>,
+    pub ai_organizer_model: Option<String>,
+    pub ai_organizer_api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

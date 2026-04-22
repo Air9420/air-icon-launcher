@@ -99,10 +99,13 @@ async function onRestoreBackup(filename: string) {
 
     try {
         isProcessing.value = true;
-        await dataManagement.restoreBackup(filename);
+        const restored = await dataManagement.restoreBackup(filename);
         const launcherStore = useLauncherStore();
         await launcherStore.syncSearchIndex();
         showToast("备份恢复成功！", { type: "success" });
+        restored.notices.forEach((notice) => {
+            showToast(notice, { type: "info", duration: 5000 });
+        });
         showBackupDialog.value = false;
     } catch (e) {
         console.error("Failed to restore backup:", e);

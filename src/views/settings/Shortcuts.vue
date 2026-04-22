@@ -186,8 +186,7 @@ async function onRecordKeyDown(ev: KeyboardEvent) {
             return;
         }
         try {
-            await invokeOrThrow("set_toggle_shortcut", { shortcut: next });
-            toggleShortcut.value = next;
+            await settingsStore.setToggleShortcut(next);
             suspendedMainShortcut.value = "";
         } catch (e: unknown) {
             shortcutError.value = typeof e === "string" ? e : e instanceof Error ? e.message || "设置失败" : "设置失败";

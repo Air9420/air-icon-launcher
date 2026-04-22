@@ -159,15 +159,6 @@ fn cursor_position() -> Option<(i32, i32)> {
 }
 
 #[tauri::command]
-pub fn get_app_settings(state: tauri::State<'_, AppSettingsState>) -> AppResult<AppSettings> {
-    state
-        .inner
-        .lock()
-        .map(|g| g.clone())
-        .map_err(|_| AppError::internal("Failed to lock app settings state"))
-}
-
-#[tauri::command]
 pub fn set_follow_mouse_on_show(
     state: tauri::State<'_, AppSettingsState>,
     enabled: bool,

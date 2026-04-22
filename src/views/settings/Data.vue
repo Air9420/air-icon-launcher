@@ -107,6 +107,9 @@ async function onImportData() {
         const imported = await dataManagement.importData(importMergeMode.value);
         if (imported) {
             showToast("导入成功！", { type: "success" });
+            imported.notices.forEach((notice) => {
+                showToast(notice, { type: "info", duration: 5000 });
+            });
         }
     } catch (e) {
         console.error("Failed to import data:", e);

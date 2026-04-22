@@ -1,6 +1,13 @@
 import { invokeOrThrow } from "./invoke-wrapper";
 
 export type FollowMouseAnchor = "top" | "center" | "bottom";
+export type CornerHotspotPosition =
+    | "top-left"
+    | "top-right"
+    | "bottom-left"
+    | "bottom-right";
+export type CornerHotspotSensitivity = "low" | "medium" | "high";
+export type WindowEffectPreference = "blur" | "acrylic";
 
 export type AppConfigSnapshot = {
     version: string;
@@ -11,6 +18,16 @@ export type AppConfigSnapshot = {
     clipboard_shortcut: string;
     follow_mouse_on_show: boolean;
     follow_mouse_y_anchor: FollowMouseAnchor;
+    ctrl_drag_enabled: boolean;
+    auto_hide_after_launch: boolean;
+    show_guide_on_startup: boolean;
+    hide_on_ctrl_right_click: boolean;
+    corner_hotspot_enabled: boolean;
+    corner_hotspot_position: CornerHotspotPosition;
+    corner_hotspot_sensitivity: CornerHotspotSensitivity;
+    performance_mode: boolean;
+    window_effect_type: WindowEffectPreference;
+    strong_shortcut_mode: boolean;
     clipboard_history_enabled: boolean;
     home_section_layouts: unknown;
     clipboard_max_records: number;
@@ -36,11 +53,5 @@ export async function saveAppConfig(config: AppConfigSnapshot): Promise<void> {
 export async function saveAppConfigPatch(
     patch: Partial<AppConfigSnapshot>
 ): Promise<AppConfigSnapshot> {
-    const current = await getAppConfig();
-    const next = {
-        ...current,
-        ...patch,
-    };
-    await saveAppConfig(next);
-    return next;
+    return invokeOrThrow<AppConfigSnapshot>("patch_config", { patch });
 }

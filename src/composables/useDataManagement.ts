@@ -75,6 +75,16 @@ type ImportedSettings = {
     clipboard_shortcut?: string;
     follow_mouse_on_show?: boolean;
     follow_mouse_y_anchor?: "top" | "center" | "bottom";
+    ctrl_drag_enabled?: boolean;
+    auto_hide_after_launch?: boolean;
+    show_guide_on_startup?: boolean;
+    hide_on_ctrl_right_click?: boolean;
+    corner_hotspot_enabled?: boolean;
+    corner_hotspot_position?: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+    corner_hotspot_sensitivity?: "low" | "medium" | "high";
+    performance_mode?: boolean;
+    window_effect_type?: "blur" | "acrylic";
+    strong_shortcut_mode?: boolean;
     clipboard_history_enabled?: boolean;
     home_section_layouts?: unknown;
     clipboard_max_records?: number;
@@ -113,6 +123,10 @@ type ImportValidationResult = {
     errors: string[];
 };
 
+export type ImportExecutionResult = {
+    notices: string[];
+};
+
 type FrontendImportSnapshot = {
     settings: {
         theme: ThemeMode;
@@ -123,6 +137,16 @@ type FrontendImportSnapshot = {
         clipboardShortcut: string;
         followMouseOnShow: boolean;
         followMouseYAnchor: "top" | "center" | "bottom";
+        ctrlDragEnabled: boolean;
+        autoHideAfterLaunch: boolean;
+        showGuideOnStartup: boolean;
+        hideOnCtrlRightClick: boolean;
+        cornerHotspotEnabled: boolean;
+        cornerHotspotPosition: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+        cornerHotspotSensitivity: "low" | "medium" | "high";
+        performanceMode: boolean;
+        windowEffectType: "blur" | "acrylic";
+        strongShortcutMode: boolean;
         clipboardHistoryEnabled: boolean;
         clipboardMaxRecords: number;
     };
@@ -161,6 +185,13 @@ function toErrorMessage(error: unknown): string {
 
 function buildValidationError(errors: string[]): Error {
     return new Error(`导入数据校验失败：${errors.join("；")}`);
+}
+
+function appendImportNotice(notices: Set<string>, message?: string) {
+    const normalized = message?.trim();
+    if (normalized) {
+        notices.add(normalized);
+    }
 }
 
 function buildImportedItemReferenceIndex(categories: ImportedCategory[]) {
@@ -228,6 +259,14 @@ export function validateImportedData(result: ImportedDataPayload): ImportValidat
     if (settings) {
         const allowedThemes = new Set(["light", "dark", "transparent", "system"]);
         const allowedAnchors = new Set(["top", "center", "bottom"]);
+        const allowedWindowEffects = new Set(["blur", "acrylic"]);
+        const allowedCornerPositions = new Set([
+            "top-left",
+            "top-right",
+            "bottom-left",
+            "bottom-right",
+        ]);
+        const allowedCornerSensitivity = new Set(["low", "medium", "high"]);
 
         if (settings.theme !== undefined && !allowedThemes.has(settings.theme)) {
             errors.push(`settings.theme 非法: ${String(settings.theme)}`);
@@ -259,6 +298,66 @@ export function validateImportedData(result: ImportedDataPayload): ImportValidat
             !allowedAnchors.has(settings.follow_mouse_y_anchor)
         ) {
             errors.push(`settings.follow_mouse_y_anchor 非法: ${String(settings.follow_mouse_y_anchor)}`);
+        }
+        if (
+            settings.ctrl_drag_enabled !== undefined &&
+            typeof settings.ctrl_drag_enabled !== "boolean"
+        ) {
+            errors.push("settings.ctrl_drag_enabled 必须是布尔值");
+        }
+        if (
+            settings.auto_hide_after_launch !== undefined &&
+            typeof settings.auto_hide_after_launch !== "boolean"
+        ) {
+            errors.push("settings.auto_hide_after_launch 必须是布尔值");
+        }
+        if (
+            settings.show_guide_on_startup !== undefined &&
+            typeof settings.show_guide_on_startup !== "boolean"
+        ) {
+            errors.push("settings.show_guide_on_startup 必须是布尔值");
+        }
+        if (
+            settings.hide_on_ctrl_right_click !== undefined &&
+            typeof settings.hide_on_ctrl_right_click !== "boolean"
+        ) {
+            errors.push("settings.hide_on_ctrl_right_click 必须是布尔值");
+        }
+        if (
+            settings.corner_hotspot_enabled !== undefined &&
+            typeof settings.corner_hotspot_enabled !== "boolean"
+        ) {
+            errors.push("settings.corner_hotspot_enabled 必须是布尔值");
+        }
+        if (
+            settings.corner_hotspot_position !== undefined &&
+            !allowedCornerPositions.has(settings.corner_hotspot_position)
+        ) {
+            errors.push(`settings.corner_hotspot_position 非法: ${String(settings.corner_hotspot_position)}`);
+        }
+        if (
+            settings.corner_hotspot_sensitivity !== undefined &&
+            !allowedCornerSensitivity.has(settings.corner_hotspot_sensitivity)
+        ) {
+            errors.push(`settings.corner_hotspot_sensitivity 非法: ${String(settings.corner_hotspot_sensitivity)}`);
+        }
+        if (
+            settings.performance_mode !== undefined &&
+            typeof settings.performance_mode !== "boolean"
+        ) {
+            errors.push("settings.performance_mode 必须是布尔值");
+        }
+        if (
+            settings.window_effect_type !== undefined &&
+            !allowedWindowEffects.has(settings.window_effect_type)
+        ) {
+            errors.push(`settings.window_effect_type 非法: ${String(settings.window_effect_type)}`);
+        }
+        if (
+            settings.strong_shortcut_mode !== undefined &&
+            typeof settings.strong_shortcut_mode !== "boolean"
+        ) {
+            errors.push("settings.strong_shortcut_mode 必须是布尔值");
         }
         if (
             settings.clipboard_history_enabled !== undefined &&
@@ -521,6 +620,16 @@ export function useDataManagement() {
                 clipboardShortcut: settingsStore.clipboardShortcut,
                 followMouseOnShow: settingsStore.followMouseOnShow,
                 followMouseYAnchor: settingsStore.followMouseYAnchor,
+                ctrlDragEnabled: settingsStore.ctrlDragEnabled,
+                autoHideAfterLaunch: settingsStore.autoHideAfterLaunch,
+                showGuideOnStartup: settingsStore.showGuideOnStartup,
+                hideOnCtrlRightClick: settingsStore.hideOnCtrlRightClick,
+                cornerHotspotEnabled: settingsStore.cornerHotspotEnabled,
+                cornerHotspotPosition: settingsStore.cornerHotspotPosition,
+                cornerHotspotSensitivity: settingsStore.cornerHotspotSensitivity,
+                performanceMode: settingsStore.performanceMode,
+                windowEffectType: settingsStore.windowEffectType,
+                strongShortcutMode: settingsStore.strongShortcutMode,
                 clipboardHistoryEnabled: clipboardStore.clipboardHistoryEnabled,
                 clipboardMaxRecords: clipboardStore.maxRecords,
             },
@@ -548,7 +657,44 @@ export function useDataManagement() {
         };
     }
 
-    async function restoreFrontendState(snapshot: FrontendImportSnapshot): Promise<void> {
+    async function applyImportedWindowEffectSettings(
+        config: Pick<ImportedSettings, "performance_mode" | "window_effect_type">,
+        notices: Set<string>
+    ) {
+        if (typeof config.performance_mode === "boolean") {
+            if (config.performance_mode) {
+                if (config.window_effect_type) {
+                    await settingsStore.setWindowEffectType(config.window_effect_type, {
+                        applyRuntime: false,
+                    });
+                }
+                const result = await settingsStore.setPerformanceMode(true);
+                appendImportNotice(notices, result.message);
+                return;
+            }
+
+            if (config.window_effect_type) {
+                const result = await settingsStore.setWindowEffectType(config.window_effect_type);
+                appendImportNotice(notices, result.message);
+                return;
+            }
+
+            const result = await settingsStore.setPerformanceMode(false);
+            appendImportNotice(notices, result.message);
+            return;
+        }
+
+        if (config.window_effect_type) {
+            const result = await settingsStore.setWindowEffectType(config.window_effect_type);
+            appendImportNotice(notices, result.message);
+        }
+    }
+
+    async function restoreFrontendState(
+        snapshot: FrontendImportSnapshot
+    ): Promise<ImportExecutionResult> {
+        const notices = new Set<string>();
+
         await settingsStore.setTheme(snapshot.settings.theme);
         uiStore.setCategoryCols(snapshot.settings.categoryCols);
         uiStore.setLauncherCols(snapshot.settings.launcherCols);
@@ -557,6 +703,21 @@ export function useDataManagement() {
         await settingsStore.setClipboardShortcut(snapshot.settings.clipboardShortcut);
         await settingsStore.setFollowMouseOnShow(snapshot.settings.followMouseOnShow);
         await settingsStore.setFollowMouseYAnchor(snapshot.settings.followMouseYAnchor);
+        await settingsStore.setCtrlDragEnabled(snapshot.settings.ctrlDragEnabled);
+        await settingsStore.setAutoHideAfterLaunch(snapshot.settings.autoHideAfterLaunch);
+        await settingsStore.setShowGuideOnStartup(snapshot.settings.showGuideOnStartup);
+        await settingsStore.setHideOnCtrlRightClick(snapshot.settings.hideOnCtrlRightClick);
+        await settingsStore.setCornerHotspotPosition(snapshot.settings.cornerHotspotPosition);
+        await settingsStore.setCornerHotspotSensitivity(snapshot.settings.cornerHotspotSensitivity);
+        await settingsStore.setCornerHotspotEnabled(snapshot.settings.cornerHotspotEnabled);
+        await applyImportedWindowEffectSettings(
+            {
+                performance_mode: snapshot.settings.performanceMode,
+                window_effect_type: snapshot.settings.windowEffectType,
+            },
+            notices
+        );
+        await settingsStore.setStrongShortcutMode(snapshot.settings.strongShortcutMode);
         clipboardStore.setClipboardHistoryEnabled(snapshot.settings.clipboardHistoryEnabled);
         clipboardStore.setMaxRecords(snapshot.settings.clipboardMaxRecords);
         categoryStore.importCategories(snapshot.categories);
@@ -565,6 +726,10 @@ export function useDataManagement() {
         store.importPinnedItemIds(snapshot.pinnedItemIds);
         store.importRecentUsedItems(snapshot.recentUsedItems);
         await store.syncSearchIndex();
+
+        return {
+            notices: [...notices],
+        };
     }
 
     async function rollbackToSnapshot(snapshot: ImportSnapshot): Promise<void> {
@@ -595,7 +760,9 @@ export function useDataManagement() {
         }
     }
 
-    async function applyImportedData(result: ImportedDataPayload) {
+    async function applyImportedData(result: ImportedDataPayload): Promise<ImportExecutionResult> {
+        const notices = new Set<string>();
+
         if (result.settings) {
             const config = result.settings;
             if (config.theme) {
@@ -621,6 +788,31 @@ export function useDataManagement() {
             }
             if (config.follow_mouse_y_anchor) {
                 await settingsStore.setFollowMouseYAnchor(config.follow_mouse_y_anchor);
+            }
+            if (typeof config.ctrl_drag_enabled === "boolean") {
+                await settingsStore.setCtrlDragEnabled(config.ctrl_drag_enabled);
+            }
+            if (typeof config.auto_hide_after_launch === "boolean") {
+                await settingsStore.setAutoHideAfterLaunch(config.auto_hide_after_launch);
+            }
+            if (typeof config.show_guide_on_startup === "boolean") {
+                await settingsStore.setShowGuideOnStartup(config.show_guide_on_startup);
+            }
+            if (typeof config.hide_on_ctrl_right_click === "boolean") {
+                await settingsStore.setHideOnCtrlRightClick(config.hide_on_ctrl_right_click);
+            }
+            if (config.corner_hotspot_position) {
+                await settingsStore.setCornerHotspotPosition(config.corner_hotspot_position);
+            }
+            if (config.corner_hotspot_sensitivity) {
+                await settingsStore.setCornerHotspotSensitivity(config.corner_hotspot_sensitivity);
+            }
+            if (typeof config.corner_hotspot_enabled === "boolean") {
+                await settingsStore.setCornerHotspotEnabled(config.corner_hotspot_enabled);
+            }
+            await applyImportedWindowEffectSettings(config, notices);
+            if (typeof config.strong_shortcut_mode === "boolean") {
+                await settingsStore.setStrongShortcutMode(config.strong_shortcut_mode);
             }
             if (typeof config.clipboard_history_enabled === "boolean") {
                 clipboardStore.setClipboardHistoryEnabled(config.clipboard_history_enabled);
@@ -661,11 +853,15 @@ export function useDataManagement() {
         }
 
         await store.syncSearchIndex();
+
+        return {
+            notices: [...notices],
+        };
     }
 
     async function executeImportTransaction(
         action: () => Promise<ImportedDataPayload>
-    ): Promise<boolean> {
+    ): Promise<ImportExecutionResult> {
         const snapshot = await snapshotCurrentState();
 
         try {
@@ -674,8 +870,7 @@ export function useDataManagement() {
             if (!validation.valid) {
                 throw buildValidationError(validation.errors);
             }
-            await applyImportedData(result);
-            return true;
+            return await applyImportedData(result);
         } catch (error) {
             try {
                 await rollbackToSnapshot(snapshot);
@@ -772,7 +967,7 @@ export function useDataManagement() {
     }
 
     async function restoreBackup(filename: string) {
-        await executeImportTransaction(() =>
+        return executeImportTransaction(() =>
             invokeOrThrow<ImportedDataPayload>("restore_backup", { filename })
         );
     }
