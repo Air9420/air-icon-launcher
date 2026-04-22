@@ -740,6 +740,51 @@ export const useLauncherStore = defineStore(
             return newItem.id;
         }
 
+        function createLauncherItemInCategory(
+            categoryId: string,
+            payload: {
+                name: string;
+                path?: string;
+                url?: string;
+                itemType: 'file' | 'url';
+                isDirectory?: boolean;
+                iconBase64?: string | null;
+                launchDependencies?: LaunchDependency[];
+                launchDelaySeconds?: number;
+            }
+        ): string {
+            const existing = getLauncherItemsByCategoryId(categoryId);
+            const iconBase64 = normalizeIconBase64(payload.iconBase64 ?? null);
+            const id = createLauncherItemId();
+
+            if (payload.itemType === 'file' && payload.path) {
+                cacheOriginalIconForFileItem(payload.itemType, payload.path, iconBase64);
+            }
+
+            const newItem: LauncherItem = {
+                id,
+                name: payload.name,
+                path: payload.itemType === 'url' ? '' : (payload.path ?? ''),
+                url: payload.itemType === 'url' ? payload.url : undefined,
+                itemType: payload.itemType,
+                isDirectory: payload.itemType === 'file' ? !!payload.isDirectory : false,
+                iconBase64,
+                originalIconBase64: iconBase64,
+                launchDependencies: normalizeLaunchDependencies(payload.launchDependencies, {
+                    categoryId,
+                    itemId: id,
+                }),
+                launchDelaySeconds: normalizeDelaySeconds(payload.launchDelaySeconds),
+            };
+
+            setLauncherItemsByCategoryId(categoryId, [...existing, newItem]);
+            enqueueSearchChanges({
+                added: [toSearchIndexItem(categoryId, newItem)],
+            });
+
+            return id;
+        }
+
         function updateLauncherItemIcon(categoryId: string, itemId: string, iconBase64: string) {
             const list = getLauncherItemsByCategoryId(categoryId);
             const index = list.findIndex((x) => x.id === itemId);
@@ -1106,84 +1151,7 @@ export const useLauncherStore = defineStore(
             return { item, category };
         }
 
-        function getRecentUsedMergedItems(limit: number = 5, excludePinned?: { visible: boolean }): RecentUsedMergedItem[] {
-            const categoryStore = useCategoryStore();
-            const uiStore = useUIStore();
-            const categories = categoryStore.categories;
-            const categoryById = new Map(categories.map((category) => [category.id, category] as const));
-            const { itemById, itemByCompositeKey } = buildLauncherItemIndexes(categories);
-
-            const pinnedKeys = new Set<string>();
-            if (excludePinned?.visible) {
-                const visibleLimit = uiStore.getHomeSectionLimit("pinned");
-                for (const itemId of pinnedItemIds.value.slice(0, visibleLimit)) {
-                    const entry = itemById.get(itemId);
-                    if (!entry) continue;
-                    const key = getLauncherItemMergeKey(entry.item);
-                    if (key) pinnedKeys.add(key);
-                }
-            }
-
-            const mergedByKey = new Map<
-                string,
-                {
-                    key: string;
-                    usedAt: number;
-                    recent: RecentUsedItem;
-                    item: LauncherItem;
-                    categoryIds: Set<string>;
-                }
-            >();
-
-            for (const recent of recentUsedItems.value) {
-                const item = itemByCompositeKey.get(`${recent.categoryId}:${recent.itemId}`);
-                if (!item) continue;
-
-                const key = getLauncherItemMergeKey(item);
-                if (!key) continue;
-                if (pinnedKeys.has(key)) continue;
-
-                const existing = mergedByKey.get(key);
-                if (!existing) {
-                    mergedByKey.set(key, {
-                        key,
-                        usedAt: recent.usedAt,
-                        recent,
-                        item,
-                        categoryIds: new Set([recent.categoryId]),
-                    });
-                } else {
-                    existing.categoryIds.add(recent.categoryId);
-                }
-            }
-
-            const mergedItems: RecentUsedMergedItem[] = [];
-            for (const entry of mergedByKey.values()) {
-                const mergedCategories: Category[] = [];
-                for (const categoryId of entry.categoryIds) {
-                    const category = categoryById.get(categoryId);
-                    if (category) {
-                        mergedCategories.push(category);
-                    }
-                }
-
-                mergedItems.push({
-                    key: entry.key,
-                    usedAt: entry.usedAt,
-                    recent: entry.recent,
-                    item: entry.item,
-                    categories: mergedCategories,
-                });
-
-                if (mergedItems.length >= limit) {
-                    break;
-                }
-            }
-
-            return mergedItems;
-        }
-
-        function getPinnedMergedItems(limit: number = 10): PinnedMergedItem[] {
+        const pinnedMergedItemsBase = computed<PinnedMergedItem[]>(() => {
             const categoryStore = useCategoryStore();
             const categories = categoryStore.categories;
             const categoryById = new Map(categories.map((category) => [category.id, category] as const));
@@ -1263,11 +1231,88 @@ export const useLauncherStore = defineStore(
                 pinnedItemIds.value = validPinnedIds;
             }
 
-            if (mergedItems.length <= limit) {
-                return mergedItems;
+            return mergedItems;
+        });
+
+        const recentUsedMergedItemsBase = computed<RecentUsedMergedItem[]>(() => {
+            const categoryStore = useCategoryStore();
+            const categories = categoryStore.categories;
+            const categoryById = new Map(categories.map((category) => [category.id, category] as const));
+            const { itemByCompositeKey } = buildLauncherItemIndexes(categories);
+
+            const mergedByKey = new Map<
+                string,
+                {
+                    key: string;
+                    usedAt: number;
+                    recent: RecentUsedItem;
+                    item: LauncherItem;
+                    categoryIds: Set<string>;
+                }
+            >();
+
+            for (const recent of recentUsedItems.value) {
+                const item = itemByCompositeKey.get(`${recent.categoryId}:${recent.itemId}`);
+                if (!item) continue;
+
+                const key = getLauncherItemMergeKey(item);
+                if (!key) continue;
+
+                const existing = mergedByKey.get(key);
+                if (!existing) {
+                    mergedByKey.set(key, {
+                        key,
+                        usedAt: recent.usedAt,
+                        recent,
+                        item,
+                        categoryIds: new Set([recent.categoryId]),
+                    });
+                } else {
+                    existing.categoryIds.add(recent.categoryId);
+                }
+            }
+
+            const mergedItems: RecentUsedMergedItem[] = [];
+            for (const entry of mergedByKey.values()) {
+                const mergedCategories: Category[] = [];
+                for (const categoryId of entry.categoryIds) {
+                    const category = categoryById.get(categoryId);
+                    if (category) {
+                        mergedCategories.push(category);
+                    }
+                }
+
+                mergedItems.push({
+                    key: entry.key,
+                    usedAt: entry.usedAt,
+                    recent: entry.recent,
+                    item: entry.item,
+                    categories: mergedCategories,
+                });
+            }
+
+            return mergedItems;
+        });
+
+        function getRecentUsedMergedItems(limit: number = 5, excludePinned?: { visible: boolean }): RecentUsedMergedItem[] {
+            const uiStore = useUIStore();
+            let mergedItems = recentUsedMergedItemsBase.value;
+
+            if (excludePinned?.visible) {
+                const visibleLimit = uiStore.getHomeSectionLimit("pinned");
+                const pinnedKeys = new Set(
+                    pinnedMergedItemsBase.value
+                        .slice(0, visibleLimit)
+                        .map((item) => item.key)
+                );
+                mergedItems = mergedItems.filter((item) => !pinnedKeys.has(item.key));
             }
 
             return mergedItems.slice(0, limit);
+        }
+
+        function getPinnedMergedItems(limit: number = 10): PinnedMergedItem[] {
+            return pinnedMergedItemsBase.value.slice(0, limit);
         }
 
         function getSmartSortedItems(categoryId: string): LauncherItem[] {
@@ -1316,6 +1361,7 @@ export const useLauncherStore = defineStore(
             addLauncherItemsToCategoryBatched,
             applyDropIcons,
             addUrlLauncherItemToCategory,
+            createLauncherItemInCategory,
             updateLauncherItemIcon,
             deleteCategoryCleanup,
             setLauncherItemIcon,

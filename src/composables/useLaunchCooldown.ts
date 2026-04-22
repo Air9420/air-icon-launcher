@@ -30,7 +30,16 @@ export function useLaunchCooldown(options: UseLaunchCooldownOptions = {}) {
     const cooldownMs = options.cooldown ?? 2500;
     const itemCooldowns = ref<Map<string, number>>(new Map());
 
+    function pruneExpiredCooldowns(now: number = Date.now()) {
+        for (const [itemId, timestamp] of itemCooldowns.value.entries()) {
+            if (now - timestamp >= cooldownMs) {
+                itemCooldowns.value.delete(itemId);
+            }
+        }
+    }
+
     function isInCooldown(itemId: string): boolean {
+        pruneExpiredCooldowns();
         const lastTime = itemCooldowns.value.get(itemId);
         if (!lastTime) return false;
         return Date.now() - lastTime < cooldownMs;
@@ -41,6 +50,7 @@ export function useLaunchCooldown(options: UseLaunchCooldownOptions = {}) {
         fn: T,
         ...args: Parameters<T>
     ): boolean {
+        pruneExpiredCooldowns();
         if (isInCooldown(itemId)) {
             return false;
         }
@@ -64,6 +74,7 @@ export function useLaunchCooldown(options: UseLaunchCooldownOptions = {}) {
         isInCooldown,
         exec,
         createCooldown,
+        pruneExpiredCooldowns,
     };
 }
 

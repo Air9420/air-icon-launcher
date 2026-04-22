@@ -1,8 +1,15 @@
 import { storeToRefs } from "pinia";
-import { getCurrentWindow, currentMonitor, availableMonitors, primaryMonitor } from "@tauri-apps/api/window";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow, availableMonitors, primaryMonitor, type Monitor } from "@tauri-apps/api/window";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
 import { useSettingsStore, type WindowPosition } from "../stores/settingsStore";
+import { getCurrentMonitorFingerprint } from "../utils/system-commands";
+
+const POSITION_SAVE_DEBOUNCE_MS = 400;
+
+function buildMonitorFingerprint(monitor: Monitor): string {
+    return `${monitor.name ?? "unknown"}::${monitor.position.x}:${monitor.position.y}::${monitor.size.width}x${monitor.size.height}::${monitor.scaleFactor.toFixed(3)}`;
+}
 
 export function useWindowPosition() {
     const settingsStore = useSettingsStore();
@@ -15,12 +22,12 @@ export function useWindowPosition() {
         try {
             const win = getCurrentWindow();
             const position = await win.outerPosition();
-            const monitor = await currentMonitor();
+            const monitor = await getCurrentMonitorFingerprint();
             
             const pos: WindowPosition = {
                 x: position.x,
                 y: position.y,
-                monitorId: monitor ? String(monitor.position.x) + "_" + String(monitor.position.y) : null,
+                monitorId: monitor?.fingerprint ?? null,
                 monitorName: monitor?.name ?? undefined,
                 savedAt: Date.now(),
             };
@@ -36,8 +43,8 @@ export function useWindowPosition() {
             clearTimeout(saveTimeout);
         }
         saveTimeout = setTimeout(() => {
-            saveWindowPosition();
-        }, 100);
+            void saveWindowPosition();
+        }, POSITION_SAVE_DEBOUNCE_MS);
     }
 
     async function restoreWindowPosition(): Promise<boolean> {
@@ -49,7 +56,7 @@ export function useWindowPosition() {
             const win = getCurrentWindow();
             const monitors = await availableMonitors();
             const savedMonitor = monitors.find((m) => {
-                const monitorId = String(m.position.x) + "_" + String(m.position.y);
+                const monitorId = buildMonitorFingerprint(m);
                 return monitorId === windowPosition.value!.monitorId;
             });
 
@@ -84,15 +91,32 @@ export function useWindowPosition() {
     }
 
     async function initializePositionTracking(): Promise<void> {
-        const unlistenMove = await listen("tauri://move", () => {
+        const win = getCurrentWindow();
+
+        const unlistenMove = await win.onMoved(() => {
             debouncedSave();
         });
         unlisteners.push(unlistenMove);
 
-        const unlistenClose = await listen("tauri://close-requested", async () => {
+        const unlistenClose = await win.onCloseRequested(async () => {
+            if (saveTimeout) {
+                clearTimeout(saveTimeout);
+                saveTimeout = null;
+            }
             await saveWindowPosition();
         });
         unlisteners.push(unlistenClose);
+
+        const unlistenFocus = await win.onFocusChanged(async ({ payload: focused }) => {
+            if (!focused) {
+                if (saveTimeout) {
+                    clearTimeout(saveTimeout);
+                    saveTimeout = null;
+                }
+                await saveWindowPosition();
+            }
+        });
+        unlisteners.push(unlistenFocus);
 
         window.addEventListener("beforeunload", saveWindowPosition);
     }

@@ -84,20 +84,22 @@ defineExpose({
     align-items: center;
     gap: 8px;
     padding: 8px 12px;
-    background: rgba(255, 255, 255, 0.92);
+    background: var(--input-bg);
+    border: 1px solid var(--border-color);
     border-radius: 12px;
-    box-shadow: 0 0 10px rgba(0, 0, 0, 0.12);
-    transition: box-shadow 0.2s ease;
+    box-shadow: var(--card-shadow);
+    transition: box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
 
     &:focus-within {
-        box-shadow: 0 0 14px rgba(0, 0, 0, 0.2);
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 40%, transparent);
     }
 }
 
 .search-icon {
     width: 18px;
     height: 18px;
-    color: #888;
+    color: var(--text-hint);
     flex-shrink: 0;
 }
 
@@ -107,11 +109,11 @@ defineExpose({
     outline: none;
     background: transparent;
     font-size: 14px;
-    color: #333;
+    color: var(--text-color);
     min-width: 0;
 
     &::placeholder {
-        color: #aaa;
+        color: var(--text-hint);
     }
 }
 
@@ -123,7 +125,7 @@ defineExpose({
     height: 18px;
     padding: 0;
     border: none;
-    background: rgba(0, 0, 0, 0.08);
+    background: var(--hover-bg);
     border-radius: 50%;
     cursor: pointer;
     transition: background 0.15s ease;
@@ -131,11 +133,11 @@ defineExpose({
     svg {
         width: 12px;
         height: 12px;
-        color: #666;
+        color: var(--text-secondary);
     }
 
     &:hover {
-        background: rgba(0, 0, 0, 0.15);
+        background: var(--hover-bg-strong);
     }
 }
 </style>

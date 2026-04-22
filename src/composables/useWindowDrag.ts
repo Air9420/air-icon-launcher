@@ -97,19 +97,23 @@ export function useWindowDrag() {
      * 5. 递归检查父元素
      */
     function shouldExcludeFromDrag(element: HTMLElement | null): boolean {
-        if (!element) return false;
-
         const interactiveTags = ['BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'A', 'OPTION'];
-        if (interactiveTags.includes(element.tagName)) return true;
+        let current = element;
+        let depth = 0;
 
-        if (element.hasAttribute('data-no-drag')) return true;
+        while (current && depth < 6) {
+            if (interactiveTags.includes(current.tagName)) return true;
+            if (current.hasAttribute('data-no-drag')) return true;
 
-        const style = window.getComputedStyle(element);
+            const style = window.getComputedStyle(current);
+            if (style.cursor === 'pointer') return true;
 
-        if (style.cursor === 'pointer') return true;
+            if (!current.parentElement || current.parentElement === document.body) {
+                break;
+            }
 
-        if (element.parentElement && element.parentElement !== document.body) {
-            return shouldExcludeFromDrag(element.parentElement);
+            current = current.parentElement;
+            depth += 1;
         }
 
         return false;

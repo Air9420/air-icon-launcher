@@ -20,9 +20,11 @@
 <script setup lang="ts">
 import { useRouter } from "vue-router";
 import { Store } from "../../stores";
+import { useConfirmDialog } from "../../composables/useConfirmDialog";
 
 const router = useRouter();
 const store = Store();
+const { confirm } = useConfirmDialog();
 
 function onOpenPlugins() {
     router.push("/plugins");
@@ -32,7 +34,18 @@ function onOpenAiOrganizer() {
     router.push("/ai-organizer");
 }
 
-function onClearRecentUsed() {
+async function onClearRecentUsed() {
+    const confirmed = await confirm({
+        title: "清除最近使用记录",
+        message: "确定要清空最近使用记录吗？此操作不会删除启动项本身。",
+        confirmText: "清空",
+        cancelText: "取消",
+    });
+
+    if (!confirmed) {
+        return;
+    }
+
     store.clearRecentUsed();
 }
 </script>

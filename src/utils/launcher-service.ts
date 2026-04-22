@@ -1,4 +1,3 @@
-import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { showToast } from "../composables/useGlobalToast";
 import { Store, type LauncherItem } from "../stores";
 import {
@@ -7,6 +6,7 @@ import {
     type ExecutableLauncherItem,
     type LauncherItemRef,
 } from "./launcher-executor";
+import { openPathWithSystem, openUrlWithSystem } from "./system-commands";
 
 export interface LaunchStoredItemOptions {
     store?: ReturnType<typeof Store>;
@@ -27,12 +27,12 @@ export async function launchWithSystemOpener(
     item: Pick<LauncherItem, "itemType" | "url" | "path">
 ): Promise<void> {
     if (item.itemType === "url" && item.url) {
-        await openUrl(ensureUrlProtocol(item.url));
+        await openUrlWithSystem(ensureUrlProtocol(item.url));
         return;
     }
 
     if (item.path) {
-        await openPath(item.path);
+        await openPathWithSystem(item.path);
         return;
     }
 

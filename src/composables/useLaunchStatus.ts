@@ -1,4 +1,4 @@
-import { ref, type Ref } from "vue";
+import { shallowRef, triggerRef, type Ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export type LaunchStatus = "launching" | "success";
@@ -9,7 +9,7 @@ export interface UseLaunchStatusOptions {
 
 export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
     const { autoHideAfterLaunch } = options;
-    const launchStatusMap = ref<Map<string, LaunchStatus>>(new Map());
+    const launchStatusMap = shallowRef<Map<string, LaunchStatus>>(new Map());
 
     let isCtrlPressed = false;
     let hasLaunchedWhileCtrlPressed = false;
@@ -42,7 +42,7 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
 
     function setLaunchStatus(itemId: string, status: LaunchStatus) {
         launchStatusMap.value.set(itemId, status);
-        launchStatusMap.value = new Map(launchStatusMap.value);
+        triggerRef(launchStatusMap);
         if (status === "success") {
             if (isCtrlPressed) {
                 hasLaunchedWhileCtrlPressed = true;
@@ -68,14 +68,14 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
             }
             setTimeout(() => {
                 launchStatusMap.value.delete(itemId);
-                launchStatusMap.value = new Map(launchStatusMap.value);
+                triggerRef(launchStatusMap);
             }, 2000);
         }
     }
 
     function clearLaunchStatus(itemId: string) {
         launchStatusMap.value.delete(itemId);
-        launchStatusMap.value = new Map(launchStatusMap.value);
+        triggerRef(launchStatusMap);
     }
 
     function getLaunchStatus(itemId: string): LaunchStatus | undefined {

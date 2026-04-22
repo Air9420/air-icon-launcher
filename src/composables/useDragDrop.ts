@@ -7,6 +7,8 @@ import { enumContextMenuType } from "../menus/contextMenuTypes";
 import type { DropRecord, DropIconsEvent, DropTargetInfo } from "./types";
 
 const __DEV_LOG__ = false;
+const PROCESSED_DROP_TTL_MS = 5 * 60 * 1000;
+const MAX_PROCESSED_DROP_IDS = 200;
 
 export interface UseDragDropOptions {
     getDropTargetInfoAtPoint: (x: number, y: number) => DropTargetInfo | null;
@@ -19,15 +21,35 @@ export function useDragDrop(options: UseDragDropOptions) {
 
     const lastDrop = ref<DropRecord | null>(null);
     const processedDropIds = new Set<string>();
+    const processedDropTimestamps = new Map<string, number>();
     const pendingDropPaths = new Map<string, { categoryId: string; paths: string[] }>();
 
     let unlistenDragDrop: (() => void) | null = null;
     let unlistenDragDropIcons: (() => void) | null = null;
 
+    function pruneProcessedDropIds(now: number = Date.now()) {
+        for (const [dropId, timestamp] of processedDropTimestamps.entries()) {
+            if (now - timestamp > PROCESSED_DROP_TTL_MS) {
+                processedDropTimestamps.delete(dropId);
+                processedDropIds.delete(dropId);
+            }
+        }
+
+        while (processedDropIds.size > MAX_PROCESSED_DROP_IDS) {
+            const oldest = processedDropTimestamps.entries().next().value as
+                | [string, number]
+                | undefined;
+            if (!oldest) break;
+            processedDropTimestamps.delete(oldest[0]);
+            processedDropIds.delete(oldest[0]);
+        }
+    }
+
     async function initializeDragDrop() {
         unlistenDragDrop = await listen<DropRecord>("drag-drop", async (event) => {
             lastDrop.value = event.payload;
             const { drop_id, position, paths, directories } = event.payload;
+            pruneProcessedDropIds();
             const target = getDropTargetInfoAtPoint(position.x, position.y);
             await safeInvoke("report_drop_target", { dropId: drop_id, target });
 
@@ -56,6 +78,7 @@ export function useDragDrop(options: UseDragDropOptions) {
 
                 pendingDropPaths.set(drop_id, { categoryId, paths });
                 processedDropIds.add(drop_id);
+                processedDropTimestamps.set(drop_id, Date.now());
                 categoryStore.setCurrentCategory(categoryId);
 
                 if (__DEV_LOG__) {
@@ -72,6 +95,7 @@ export function useDragDrop(options: UseDragDropOptions) {
 
         unlistenDragDropIcons = await listen<DropIconsEvent>("drag-drop-icons", (event) => {
             const { drop_id, icon_base64s } = event.payload;
+            pruneProcessedDropIds();
             const pending = pendingDropPaths.get(drop_id);
             if (!pending) return;
 

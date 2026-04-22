@@ -1,4 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
+import { readLocalImageAsDataUrl } from "./system-commands";
+
+const IMAGE_LOAD_TIMEOUT_MS = 8000;
 
 export async function selectAndConvertIcon(): Promise<string | null> {
     const selected = await open({
@@ -27,71 +30,64 @@ export async function selectAndConvertIcon(): Promise<string | null> {
 }
 
 async function loadImageAsBase64(filePath: string): Promise<string> {
-    const { readFile } = await import("@tauri-apps/plugin-fs");
-    const fileData = await readFile(filePath);
-
-    const ext = filePath.split(".").pop()?.toLowerCase() || "png";
-    const mimeType = getMimeType(ext);
+    const sourceDataUrl = await readLocalImageAsDataUrl(filePath);
 
     return new Promise((resolve, reject) => {
-        const blob = new Blob([fileData], { type: mimeType });
-        const url = URL.createObjectURL(blob);
         const img = new Image();
+        let settled = false;
+        const timeout = window.setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            reject(new Error("Image load timeout"));
+        }, IMAGE_LOAD_TIMEOUT_MS);
+
+        function finalize(fn: () => void) {
+            if (settled) return;
+            settled = true;
+            window.clearTimeout(timeout);
+            fn();
+        }
 
         img.onload = () => {
-            URL.revokeObjectURL(url);
+            finalize(() => {
+                const targetSize = 128;
+                const canvas = document.createElement("canvas");
+                canvas.width = targetSize;
+                canvas.height = targetSize;
 
-            const targetSize = 128;
-            const canvas = document.createElement("canvas");
-            canvas.width = targetSize;
-            canvas.height = targetSize;
+                const ctx = canvas.getContext("2d");
+                if (!ctx) {
+                    reject(new Error("Failed to get canvas context"));
+                    return;
+                }
 
-            const ctx = canvas.getContext("2d");
-            if (!ctx) {
-                reject(new Error("Failed to get canvas context"));
-                return;
-            }
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = "high";
 
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = "high";
+                let drawWidth = targetSize;
+                let drawHeight = targetSize;
+                let offsetX = 0;
+                let offsetY = 0;
 
-            let drawWidth = targetSize;
-            let drawHeight = targetSize;
-            let offsetX = 0;
-            let offsetY = 0;
+                if (img.width !== img.height) {
+                    const scale = Math.min(targetSize / img.width, targetSize / img.height);
+                    drawWidth = img.width * scale;
+                    drawHeight = img.height * scale;
+                    offsetX = (targetSize - drawWidth) / 2;
+                    offsetY = (targetSize - drawHeight) / 2;
+                }
 
-            if (img.width !== img.height) {
-                const scale = Math.min(targetSize / img.width, targetSize / img.height);
-                drawWidth = img.width * scale;
-                drawHeight = img.height * scale;
-                offsetX = (targetSize - drawWidth) / 2;
-                offsetY = (targetSize - drawHeight) / 2;
-            }
+                ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
 
-            ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
-
-            const resizedBase64 = canvas.toDataURL("image/png");
-            resolve(resizedBase64);
+                const resizedBase64 = canvas.toDataURL("image/png");
+                resolve(resizedBase64);
+            });
         };
 
         img.onerror = () => {
-            URL.revokeObjectURL(url);
-            reject(new Error("Failed to load image"));
+            finalize(() => reject(new Error("Failed to load image")));
         };
 
-        img.src = url;
+        img.src = sourceDataUrl;
     });
-}
-
-function getMimeType(ext: string): string {
-    const mimeTypes: Record<string, string> = {
-        png: "image/png",
-        jpg: "image/jpeg",
-        jpeg: "image/jpeg",
-        ico: "image/x-icon",
-        svg: "image/svg+xml",
-        bmp: "image/bmp",
-        webp: "image/webp",
-    };
-    return mimeTypes[ext] || "image/png";
 }

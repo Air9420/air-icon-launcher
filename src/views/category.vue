@@ -17,7 +17,7 @@
             :delay-on-touch-only="false" :animation="150" :force-fallback="true" fallback-class="icon-drag"
             :fallback-tolerance="5" data-menu-type="Icon-View" :data-category-id="categoryId">
             <template #item="{ element }">
-                <div v-show="!localSearchKeyword.trim() ||
+                <div v-show="!filteredSearchKeyword.trim() ||
                     matchesSearch(element.name)
                     " class="icon-item" :class="{ 'is-pinned': isItemPinned(element.id) }" data-menu-type="Icon-Item"
                     :data-category-id="categoryId" :data-item-id="element.id"
@@ -57,7 +57,7 @@
             将文件/快捷方式拖进来即可添加到此类目
         </div>
 
-        <div v-else-if="localSearchKeyword.trim() && filteredCount === 0" class="empty-tip" data-menu-type="Icon-View"
+        <div v-else-if="filteredSearchKeyword.trim() && filteredCount === 0" class="empty-tip" data-menu-type="Icon-View"
             :data-category-id="categoryId">
             未找到匹配的启动项
         </div>
@@ -79,6 +79,7 @@ import { useRouter } from "vue-router";
 import draggable from "vuedraggable";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
+import { useThrottleFn } from "@vueuse/core";
 
 import { useLaunchCooldown } from "../composables/useLaunchCooldown";
 import { Store } from "../stores";
@@ -87,6 +88,7 @@ import { useCategoryStore } from "../stores/categoryStore";
 import type { LauncherItem } from "../stores";
 import SearchBox from "../components/SearchBox.vue";
 import { launchStoredItem } from "../utils/launcher-service";
+import { SEARCH_THROTTLE_MS } from "../utils/search-config";
 
 const props = defineProps<{
     categoryId: string;
@@ -98,6 +100,7 @@ const uiStore = useUIStore();
 const categoryStore = useCategoryStore();
 const { launcherCols } = storeToRefs(uiStore);
 const localSearchKeyword = ref<string>("");
+const filteredSearchKeyword = ref<string>("");
 const searchBoxRef = ref<InstanceType<typeof SearchBox> | null>(null);
 
 type LaunchStatus = "launching" | "success";
@@ -185,13 +188,13 @@ function isItemPinned(itemId: string): boolean {
 }
 
 const filteredCount = computed(() => {
-    const keyword = localSearchKeyword.value.trim();
+    const keyword = filteredSearchKeyword.value.trim();
     if (!keyword) return items.value.length;
     return items.value.filter((item) => matchesSearch(item.name)).length;
 });
 
 function matchesSearch(name: string): boolean {
-    const keyword = localSearchKeyword.value.trim();
+    const keyword = filteredSearchKeyword.value.trim();
     if (!keyword) return true;
     const lowerName = name.toLowerCase();
     const lowerKeyword = keyword.toLowerCase();
@@ -208,6 +211,22 @@ function matchesSearch(name: string): boolean {
     }
     return keywordIndex === lowerKeyword.length;
 }
+
+const applyFilteredSearchKeyword = useThrottleFn((keyword: string) => {
+    filteredSearchKeyword.value = keyword;
+}, SEARCH_THROTTLE_MS);
+
+watch(
+    localSearchKeyword,
+    (keyword) => {
+        if (!keyword.trim()) {
+            filteredSearchKeyword.value = "";
+            return;
+        }
+        applyFilteredSearchKeyword(keyword);
+    },
+    { immediate: true }
+);
 
 watchEffect(() => {
     categoryStore.setCurrentCategory(props.categoryId);

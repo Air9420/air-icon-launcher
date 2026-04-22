@@ -12,41 +12,41 @@ export interface ConfirmState extends ConfirmOptions {
     resolve: ((value: boolean) => void) | null;
 }
 
-export function useConfirmDialog() {
-    const state = ref<ConfirmState>({
-        visible: false,
-        title: "",
-        message: "",
-        confirmText: "确认",
-        cancelText: "取消",
+const state = ref<ConfirmState>({
+    visible: false,
+    title: "",
+    message: "",
+    confirmText: "确认",
+    cancelText: "取消",
+    resolve: null,
+});
+
+async function confirm(options: ConfirmOptions): Promise<boolean> {
+    state.value = {
+        visible: true,
+        title: options.title,
+        message: options.message,
+        confirmText: options.confirmText || "确认",
+        cancelText: options.cancelText || "取消",
         resolve: null,
+    };
+
+    return new Promise((resolve) => {
+        state.value.resolve = resolve;
     });
+}
 
-    async function confirm(options: ConfirmOptions): Promise<boolean> {
-        state.value = {
-            visible: true,
-            title: options.title,
-            message: options.message,
-            confirmText: options.confirmText || "确认",
-            cancelText: options.cancelText || "取消",
-            resolve: null,
-        };
+function handleConfirm() {
+    state.value.resolve?.(true);
+    state.value.visible = false;
+}
 
-        return new Promise((resolve) => {
-            state.value.resolve = resolve;
-        });
-    }
+function handleCancel() {
+    state.value.resolve?.(false);
+    state.value.visible = false;
+}
 
-    function handleConfirm() {
-        state.value.resolve?.(true);
-        state.value.visible = false;
-    }
-
-    function handleCancel() {
-        state.value.resolve?.(false);
-        state.value.visible = false;
-    }
-
+export function useConfirmDialog() {
     return {
         state,
         confirm,

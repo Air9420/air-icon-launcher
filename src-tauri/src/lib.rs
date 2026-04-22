@@ -150,8 +150,12 @@ pub fn run() {
             commands::installed_apps::scan_installed_apps,
             commands::ai_organizer::refine_installed_apps_with_ai,
             system::open_url,
+            system::open_path,
             system::open_browser_search,
             system::fetch_favicon_from_url,
+            system::read_local_image_as_data_url,
+            system::write_text_file,
+            system::get_current_monitor_fingerprint,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

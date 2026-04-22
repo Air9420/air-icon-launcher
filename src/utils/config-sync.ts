@@ -28,6 +28,7 @@ export type AppConfigSnapshot = {
     performance_mode: boolean;
     window_effect_type: WindowEffectPreference;
     strong_shortcut_mode: boolean;
+    plugin_sandbox_enabled: boolean;
     clipboard_history_enabled: boolean;
     home_section_layouts: unknown;
     clipboard_max_records: number;

@@ -21,6 +21,8 @@ export interface PluginManifest {
 export interface SandboxMessage {
   id: string;
   type: "request" | "response" | "event" | "error" | "loaded" | "ready";
+  sandbox_id?: string;
+  nonce?: string;
   method?: string;
   params?: unknown;
   result?: unknown;
@@ -55,6 +57,8 @@ export type SandboxStatus = "idle" | "loading" | "ready" | "error" | "destroyed"
 
 export interface SandboxInstance {
   id: string;
+  sandboxId: string;
+  nonce: string;
   iframe: HTMLIFrameElement;
   status: SandboxStatus;
   permissions: Permission[];
@@ -64,42 +68,51 @@ export interface SandboxInstance {
   }>;
 }
 
-export const SANDBOX_HTML = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'unsafe-inline' 'unsafe-eval'; script-src 'unsafe-inline' 'unsafe-eval'; connect-src 'none'; img-src 'none'; style-src 'unsafe-inline';">
-</head>
-<body>
-<script>
+const SANDBOX_SCRIPT_TEMPLATE = String.raw`
 (function() {
   'use strict';
 
-  let pluginExports = null;
-  let permissions = [];
-  let manifest = null;
-  let messageId = 0;
-  const pendingRequests = new Map();
-  const contextMenuHandlers = new Map();
+  var SANDBOX_ID = "__SANDBOX_ID__";
+  var SANDBOX_NONCE = "__SANDBOX_NONCE__";
+  var pluginExports = null;
+  var permissions = [];
+  var manifest = null;
+  var messageId = 0;
+  var pendingRequests = new Map();
+  var contextMenuHandlers = new Map();
+
+  function buildMessage(type, data) {
+    var payload = data || {};
+    return Object.assign({
+      id: payload.id || ('msg_' + (++messageId)),
+      type: type,
+      sandbox_id: SANDBOX_ID,
+      nonce: SANDBOX_NONCE
+    }, payload);
+  }
 
   function sendMessage(type, data) {
-    var id = data && data.id || ('msg_' + (++messageId));
-    var msgData = Object.assign({ id: id, type: type }, data);
-    window.parent.postMessage(msgData, '*');
-    return id;
+    var msg = buildMessage(type, data);
+    window.parent.postMessage(msg, '*');
+    return msg.id;
+  }
+
+  function isTrustedMessage(msg) {
+    return !!msg
+      && msg.sandbox_id === SANDBOX_ID
+      && msg.nonce === SANDBOX_NONCE;
   }
 
   function sendRequest(method, params) {
-    return new Promise((resolve, reject) => {
-      const id = 'req_' + (++messageId);
-      pendingRequests.set(id, { resolve, reject });
-      window.parent.postMessage({
-        id,
-        type: 'request',
-        method,
-        params
-      }, '*');
-      
+    return new Promise(function(resolve, reject) {
+      var id = 'req_' + (++messageId);
+      pendingRequests.set(id, { resolve: resolve, reject: reject });
+      window.parent.postMessage(buildMessage('request', {
+        id: id,
+        method: method,
+        params: params
+      }), '*');
+
       setTimeout(function() {
         if (pendingRequests.has(id)) {
           pendingRequests.delete(id);
@@ -118,7 +131,7 @@ export const SANDBOX_HTML = `<!DOCTYPE html>
   function createSandboxedAPI() {
     return {
       app: {
-        getInfo() {
+        getInfo: function() {
           return {
             version: '1.0.0',
             name: 'Air Icon Launcher',
@@ -126,64 +139,63 @@ export const SANDBOX_HTML = `<!DOCTYPE html>
           };
         }
       },
-      
+
       launcher: {
-        async getCategories() {
+        getCategories: async function() {
           checkPermission('launcher.read');
           return sendRequest('launcher.getCategories', []);
         },
-        async getItems(categoryId) {
+        getItems: async function(categoryId) {
           checkPermission('launcher.read');
           return sendRequest('launcher.getItems', [categoryId]);
         },
-        async open(categoryId, itemId) {
+        open: async function(categoryId, itemId) {
           checkPermission('launcher.open');
           return sendRequest('launcher.open', [categoryId, itemId]);
         }
       },
-      
+
       clipboard: {
-        async readText() {
+        readText: async function() {
           checkPermission('clipboard.readText');
           return sendRequest('clipboard.readText', []);
         },
-        async readImage() {
+        readImage: async function() {
           checkPermission('clipboard.readImage');
           return sendRequest('clipboard.readImage', []);
         },
-        async writeText(text) {
+        writeText: async function(text) {
           checkPermission('clipboard.writeText');
           return sendRequest('clipboard.writeText', [text]);
         },
-        async writeImage(blob) {
+        writeImage: async function(blob) {
           checkPermission('clipboard.writeImage');
           return sendRequest('clipboard.writeImage', [blob]);
         }
       },
-      
+
       storage: {
         _data: new Map(),
-        get(key) {
+        get: function(key) {
           return this._data.get(key);
         },
-        set(key, value) {
+        set: function(key, value) {
           this._data.set(key, value);
         },
-        remove(key) {
+        remove: function(key) {
           this._data.delete(key);
         },
-        clear() {
+        clear: function() {
           this._data.clear();
         }
       },
-      
+
       ui: {
-        showToast(message, type) {
-          type = type || 'info';
+        showToast: function(message, type) {
           checkPermission('toast');
-          sendRequest('ui.showToast', [message, type]);
+          return sendRequest('ui.showToast', [message, type || 'info']);
         },
-        registerContextMenuItems(menuType, items) {
+        registerContextMenuItems: function(menuType, items) {
           checkPermission('contextMenu');
           var serializableItems = [];
           for (var i = 0; i < items.length; i++) {
@@ -206,11 +218,11 @@ export const SANDBOX_HTML = `<!DOCTYPE html>
           }
           return sendRequest('ui.registerContextMenuItems', [menuType, serializableItems]);
         },
-        unregisterContextMenuItems(menuType) {
+        unregisterContextMenuItems: function(menuType) {
           return sendRequest('ui.unregisterContextMenuItems', [menuType]);
         }
       },
-      
+
       _executeContextMenuHandler: function(commandId) {
         var handler = contextMenuHandlers.get(commandId);
         if (handler) {
@@ -220,36 +232,41 @@ export const SANDBOX_HTML = `<!DOCTYPE html>
 
       events: {
         _listeners: new Map(),
-        on(event, callback) {
+        on: function(event, callback) {
           var self = this;
           if (!this._listeners.has(event)) {
             this._listeners.set(event, new Set());
           }
           this._listeners.get(event).add(callback);
-
           sendRequest('events.on', [event]);
 
           return function() {
-            self._listeners.get(event).delete(callback);
+            var listeners = self._listeners.get(event);
+            if (listeners) {
+              listeners.delete(callback);
+            }
             sendRequest('events.off', [event]);
           };
         },
-        off(event, callback) {
-          this._listeners.get(event).delete(callback);
+        off: function(event, callback) {
+          var listeners = this._listeners.get(event);
+          if (listeners) {
+            listeners.delete(callback);
+          }
           sendRequest('events.off', [event]);
         },
-        emit(event) {
+        emit: function(event) {
           var args = Array.prototype.slice.call(arguments, 1);
           sendRequest('events.emit', [event].concat(args));
         },
-        _handleEvent(event, args) {
+        _handleEvent: function(event, args) {
           var listeners = this._listeners.get(event);
           if (listeners) {
             listeners.forEach(function(cb) {
               try {
                 cb.apply(null, args || []);
-              } catch (e) {
-                console.error('Event listener error:', e);
+              } catch (error) {
+                console.error('Event listener error:', error);
               }
             });
           }
@@ -258,15 +275,15 @@ export const SANDBOX_HTML = `<!DOCTYPE html>
 
       commands: {
         _commands: new Map(),
-        register(id, handler) {
+        register: function(id, handler) {
           this._commands.set(id, handler);
           sendRequest('commands.register', [id]);
         },
-        unregister(id) {
+        unregister: function(id) {
           this._commands.delete(id);
           sendRequest('commands.unregister', [id]);
         },
-        execute(id) {
+        execute: function(id) {
           var args = Array.prototype.slice.call(arguments, 1);
           var handler = this._commands.get(id);
           if (handler) {
@@ -274,7 +291,7 @@ export const SANDBOX_HTML = `<!DOCTYPE html>
           }
           return sendRequest('commands.execute', [id].concat(args));
         },
-        _handleCommand(id, args) {
+        _handleCommand: function(id, args) {
           var handler = this._commands.get(id);
           if (handler) {
             return handler.apply(null, args);
@@ -287,29 +304,27 @@ export const SANDBOX_HTML = `<!DOCTYPE html>
   function executePluginCode(code, manifestData, perms) {
     manifest = manifestData;
     permissions = perms;
-    
+
     var api = createSandboxedAPI();
-    
+
     try {
       var cleanCode = code.trim();
       if (cleanCode.charAt(cleanCode.length - 1) === ';') {
         cleanCode = cleanCode.slice(0, -1);
       }
-      
+
       var wrappedCode = 'return (' + cleanCode + ')(manifest, api);';
-      
       var factory = new Function('manifest', 'api', wrappedCode);
       pluginExports = factory(manifest, api);
-      
+
       if (!pluginExports || typeof pluginExports !== 'object') {
         pluginExports = {};
       }
-      
-      sendMessage('ready', { success: true });
+
+      sendMessage('ready', { result: true });
     } catch (error) {
-      sendMessage('error', { 
-        error: error.message,
-        stack: error.stack
+      sendMessage('error', {
+        error: error && error.message ? error.message : String(error)
       });
     }
   }
@@ -317,22 +332,24 @@ export const SANDBOX_HTML = `<!DOCTYPE html>
   async function callLifecycle(method) {
     var args = Array.prototype.slice.call(arguments, 1);
     if (pluginExports && typeof pluginExports[method] === 'function') {
-      try {
-        return await pluginExports[method].apply(null, args);
-      } catch (error) {
-        console.error('Lifecycle error:', method, error);
-        throw error;
-      }
+      return pluginExports[method].apply(null, args);
     }
   }
 
   window.addEventListener('message', async function(event) {
+    if (event.source !== window.parent) {
+      return;
+    }
+
     var msg = event.data;
-    
+    if (!isTrustedMessage(msg)) {
+      return;
+    }
+
     if (msg.type === 'response' && pendingRequests.has(msg.id)) {
       var item = pendingRequests.get(msg.id);
       pendingRequests.delete(msg.id);
-      
+
       if (msg.error) {
         item.reject(new Error(msg.error));
       } else {
@@ -340,17 +357,14 @@ export const SANDBOX_HTML = `<!DOCTYPE html>
       }
       return;
     }
-    
+
     if (msg.type === 'event') {
-      var eventType = msg.eventType;
-      var eventData = msg.eventData;
-      if (eventType && eventData) {
-        var api = createSandboxedAPI();
-        api.events._handleEvent(eventType, eventData.args || []);
+      if (msg.eventType && msg.eventData) {
+        createSandboxedAPI().events._handleEvent(msg.eventType, msg.eventData.args || []);
       }
       return;
     }
-    
+
     if (msg.type === 'request' && msg.method === 'ui.executeContextMenuHandler') {
       var commandId = msg.params && msg.params[0];
       if (commandId) {
@@ -362,47 +376,79 @@ export const SANDBOX_HTML = `<!DOCTYPE html>
       sendMessage('response', { id: msg.id, result: true });
       return;
     }
-    
+
     if (msg.command === 'init') {
       executePluginCode(msg.code, msg.manifest, msg.permissions);
       return;
     }
-    
+
     if (msg.command === 'onLoad') {
-      await callLifecycle('onLoad', createSandboxedAPI());
-      sendMessage('response', { id: msg.id, result: true });
+      try {
+        await callLifecycle('onLoad', createSandboxedAPI());
+        sendMessage('response', { id: msg.id, result: true });
+      } catch (error) {
+        sendMessage('response', { id: msg.id, error: error && error.message ? error.message : String(error) });
+      }
       return;
     }
-    
+
     if (msg.command === 'onUnload') {
-      await callLifecycle('onUnload');
-      sendMessage('response', { id: msg.id, result: true });
+      try {
+        await callLifecycle('onUnload');
+        sendMessage('response', { id: msg.id, result: true });
+      } catch (error) {
+        sendMessage('response', { id: msg.id, error: error && error.message ? error.message : String(error) });
+      }
       return;
     }
-    
+
     if (msg.command === 'onEnable') {
-      await callLifecycle('onEnable', createSandboxedAPI());
-      sendMessage('response', { id: msg.id, result: true });
+      try {
+        await callLifecycle('onEnable', createSandboxedAPI());
+        sendMessage('response', { id: msg.id, result: true });
+      } catch (error) {
+        sendMessage('response', { id: msg.id, error: error && error.message ? error.message : String(error) });
+      }
       return;
     }
-    
+
     if (msg.command === 'onDisable') {
-      await callLifecycle('onDisable');
-      sendMessage('response', { id: msg.id, result: true });
+      try {
+        await callLifecycle('onDisable');
+        sendMessage('response', { id: msg.id, result: true });
+      } catch (error) {
+        sendMessage('response', { id: msg.id, error: error && error.message ? error.message : String(error) });
+      }
       return;
     }
-    
+
     if (msg.command === 'destroy') {
       pluginExports = null;
       permissions = [];
       manifest = null;
+      pendingRequests.clear();
+      contextMenuHandlers.clear();
       sendMessage('response', { id: msg.id, result: true });
-      return;
     }
   });
 
-  sendMessage('loaded', {});
+  sendMessage('loaded', { result: true });
 })();
-</script>
+`;
+
+export function renderSandboxHtml(sandboxId: string, nonce: string): string {
+  const script = SANDBOX_SCRIPT_TEMPLATE
+    .replace(/__SANDBOX_ID__/g, sandboxId)
+    .replace(/__SANDBOX_NONCE__/g, nonce);
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'unsafe-inline' 'unsafe-eval'; script-src 'unsafe-inline' 'unsafe-eval'; connect-src 'none'; img-src 'none'; style-src 'unsafe-inline';">
+</head>
+<body>
+<script>${script}<\/script>
 </body>
 </html>`;
+}

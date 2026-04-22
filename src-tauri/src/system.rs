@@ -1,15 +1,17 @@
 use crate::error::{AppError, AppResult};
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use reqwest::{header::CONTENT_TYPE, redirect::Policy, Client, Url};
 use std::collections::HashSet;
 use std::fmt::Write as _;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 #[cfg(target_os = "windows")]
 use rusqlite::{Connection, OpenFlags};
-#[cfg(target_os = "windows")]
-use std::{fs, path::PathBuf};
 #[cfg(target_os = "windows")]
 use windows::Win32::Foundation::HWND;
 #[cfg(target_os = "windows")]
@@ -40,6 +42,17 @@ static ATTR_RE: Lazy<Regex> = Lazy::new(|| {
 static SEARCH_TEMPLATE_PLACEHOLDER_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\{[^{}]+\}").expect("invalid search template regex"));
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MonitorFingerprintInfo {
+    pub fingerprint: String,
+    pub name: Option<String>,
+    pub position_x: i32,
+    pub position_y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub scale_factor: f64,
+}
+
 #[tauri::command]
 pub fn open_url(url: String) -> AppResult<()> {
     let url = url.trim();
@@ -66,6 +79,42 @@ pub fn open_url(url: String) -> AppResult<()> {
             .arg(&url)
             .spawn()
             .map_err(|e| AppError::internal(format!("Failed to open URL on Linux: {}", e)))?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn open_path(path: String) -> AppResult<()> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::invalid_input("Path cannot be empty"));
+    }
+
+    let target = PathBuf::from(trimmed);
+    if !target.exists() {
+        return Err(AppError::not_found(format!("Path: {:?}", target)));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        open_path_with_shell_execute(&target)?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&target)
+            .spawn()
+            .map_err(|e| AppError::internal(format!("Failed to open path on macOS: {}", e)))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(&target)
+            .spawn()
+            .map_err(|e| AppError::internal(format!("Failed to open path on Linux: {}", e)))?;
     }
 
     Ok(())
@@ -112,8 +161,157 @@ fn open_url_with_shell_execute(url: &str) -> AppResult<()> {
 }
 
 #[cfg(target_os = "windows")]
+fn open_path_with_shell_execute(path: &Path) -> AppResult<()> {
+    let operation = widestring("open");
+    let path_str = path.to_string_lossy().to_string();
+    let target = widestring(&path_str);
+
+    let result = unsafe {
+        ShellExecuteW(
+            HWND::default(),
+            windows::core::PCWSTR(operation.as_ptr()),
+            windows::core::PCWSTR(target.as_ptr()),
+            windows::core::PCWSTR::null(),
+            windows::core::PCWSTR::null(),
+            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+        )
+    };
+
+    let code = result.0 as isize;
+    if code > 32 {
+        return Ok(());
+    }
+
+    Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "Start-Process -LiteralPath $args[0]",
+            "--",
+            path_str.as_str(),
+        ])
+        .spawn()
+        .map_err(|e| {
+            AppError::internal(format!(
+                "Failed to open path via ShellExecuteW ({}) and PowerShell fallback: {}",
+                code, e
+            ))
+        })?;
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
 fn widestring(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+fn guess_image_mime_type(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        Some("gif") => "image/gif",
+        Some("svg") => "image/svg+xml",
+        Some("ico") => "image/x-icon",
+        _ => "image/png",
+    }
+}
+
+#[tauri::command]
+pub fn read_local_image_as_data_url(path: String) -> AppResult<String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::invalid_input("Image path cannot be empty"));
+    }
+
+    let file_path = PathBuf::from(trimmed);
+    if !file_path.exists() {
+        return Err(AppError::not_found(format!("Image path: {:?}", file_path)));
+    }
+
+    let bytes = fs::read(&file_path)
+        .map_err(|e| AppError::io_error(format!("Failed to read image file: {}", e)))?;
+    let encoded = BASE64_STANDARD.encode(bytes);
+    let mime = guess_image_mime_type(&file_path);
+    Ok(format!("data:{};base64,{}", mime, encoded))
+}
+
+#[tauri::command]
+pub fn write_text_file(path: String, content: String) -> AppResult<()> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::invalid_input("File path cannot be empty"));
+    }
+
+    let file_path = PathBuf::from(trimmed);
+    if let Some(parent) = file_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| AppError::io_error(format!("Failed to create directory: {}", e)))?;
+    }
+
+    fs::write(&file_path, content)
+        .map_err(|e| AppError::io_error(format!("Failed to write file: {}", e)))?;
+    Ok(())
+}
+
+fn build_monitor_fingerprint(
+    name: Option<&str>,
+    position_x: i32,
+    position_y: i32,
+    width: u32,
+    height: u32,
+    scale_factor: f64,
+) -> String {
+    format!(
+        "{}::{}:{}::{}x{}::{:.3}",
+        name.unwrap_or("unknown"),
+        position_x,
+        position_y,
+        width,
+        height,
+        scale_factor
+    )
+}
+
+fn monitor_to_fingerprint_info(monitor: &tauri::Monitor) -> MonitorFingerprintInfo {
+    let name = monitor.name().map(|value| value.to_string());
+    let position = monitor.position();
+    let size = monitor.size();
+    let scale_factor = monitor.scale_factor();
+
+    MonitorFingerprintInfo {
+        fingerprint: build_monitor_fingerprint(
+            name.as_deref(),
+            position.x,
+            position.y,
+            size.width,
+            size.height,
+            scale_factor,
+        ),
+        name,
+        position_x: position.x,
+        position_y: position.y,
+        width: size.width,
+        height: size.height,
+        scale_factor,
+    }
+}
+
+#[tauri::command]
+pub fn get_current_monitor_fingerprint(
+    window: tauri::WebviewWindow,
+) -> AppResult<Option<MonitorFingerprintInfo>> {
+    let monitor = window
+        .current_monitor()
+        .map_err(|e| AppError::internal(format!("Failed to read current monitor: {}", e)))?;
+    Ok(monitor.as_ref().map(monitor_to_fingerprint_info))
 }
 
 #[cfg(target_os = "windows")]

@@ -30,18 +30,18 @@
             </div>
         </header>
 
-        <div class="content">
+        <div v-if="isCreateMode || item" class="content">
             <div class="preview-wrapper">
                 <div class="preview">
                     <img
-                        v-if="item?.iconBase64"
+                        v-if="previewIcon"
                         class="preview-img"
-                        :src="getIconSrc(item.iconBase64)"
+                        :src="getIconSrc(previewIcon)"
                         alt=""
                         draggable="false"
                     />
                     <div v-else class="preview-fallback">
-                        {{ getFallbackText(item?.name || "") }}
+                        {{ getFallbackText(name) }}
                     </div>
                 </div>
                 <button class="change-icon-btn" type="button" @click="onChangeIcon">
@@ -50,6 +50,15 @@
             </div>
 
             <div class="form">
+                <label v-if="isCreateMode" class="field">
+                    <div class="label">类型</div>
+                    <select v-model="createItemType" class="input">
+                        <option value="file">文件</option>
+                        <option value="directory">文件夹</option>
+                        <option value="url">网址</option>
+                    </select>
+                </label>
+
                 <label class="field">
                     <div class="label">名称</div>
                     <input
@@ -61,24 +70,34 @@
                 </label>
 
                 <label class="field">
-                    <div class="label">{{ item?.itemType === 'url' ? '网址' : '路径' }}</div>
+                    <div class="label">{{ pathFieldLabel }}</div>
                     <input
-                        v-if="item?.itemType === 'url'"
+                        v-if="isUrlItem"
                         v-model="url"
                         class="input url-input"
                         type="url"
                         placeholder="https://..."
                     />
-                    <input
-                        v-else
-                        class="input"
-                        type="text"
-                        :value="item?.path || ''"
-                        readonly
-                    />
+                    <div v-else class="path-input-row">
+                        <input
+                            v-model="path"
+                            class="input"
+                            type="text"
+                            :placeholder="pathPlaceholder"
+                            :readonly="!isCreateMode"
+                        />
+                        <button
+                            v-if="isCreateMode"
+                            class="btn neutral small"
+                            type="button"
+                            @click="onBrowsePath"
+                        >
+                            浏览
+                        </button>
+                    </div>
                 </label>
 
-                <label v-if="item" class="field">
+                <label class="field">
                     <div class="label">主项启动前等待（秒）</div>
                     <input
                         class="input"
@@ -90,7 +109,7 @@
                     />
                 </label>
 
-                <div v-if="item" class="field">
+                <div class="field">
                     <div class="label">启动依赖</div>
                     <div class="dependency-picker">
                         <select
@@ -187,33 +206,43 @@
             </div>
         </div>
 
-        <div v-if="!item" class="empty">启动项不存在或已被删除</div>
+        <div v-if="!isCreateMode && !item" class="empty">启动项不存在或已被删除</div>
     </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch, watchEffect } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { Store, useCategoryStore } from "../stores";
 import type { LaunchDependency, LauncherItem } from "../stores";
+import { showToast } from "../composables/useGlobalToast";
+import { useConfirmDialog } from "../composables/useConfirmDialog";
+import { selectAndConvertIcon } from "../utils/iconUtils";
+
+type CreateItemType = "file" | "directory" | "url";
 
 const props = defineProps<{
     categoryId: string;
     itemId?: string;
 }>();
 
+const route = useRoute();
 const router = useRouter();
 const store = Store();
 const categoryStore = useCategoryStore();
+const { confirm } = useConfirmDialog();
 const name = ref<string>("");
 const url = ref<string>("");
+const path = ref<string>("");
 const launchDelaySeconds = ref<number>(0);
 const launchDependencies = ref<LaunchDependency[]>([]);
 const selectedDependencyKey = ref<string>("");
 const isCreateMode = computed(() => !props.itemId || props.itemId === "new");
 const hasCustomIcon = ref<boolean>(false);
+const draftIconBase64 = ref<string | null>(null);
+const createItemType = ref<CreateItemType>("file");
 
 const item = computed<LauncherItem | null>(() => {
     if (isCreateMode.value) return null;
@@ -234,15 +263,39 @@ watch(
     { immediate: true }
 );
 
+watch(
+    () => route.query.type,
+    (value) => {
+        if (!isCreateMode.value) return;
+        const raw = Array.isArray(value) ? value[0] : value;
+        createItemType.value = raw === "url" || raw === "directory" ? raw : "file";
+    },
+    { immediate: true }
+);
+
+const previewIcon = computed(() => item.value?.iconBase64 || draftIconBase64.value);
+const isUrlItem = computed(() =>
+    isCreateMode.value ? createItemType.value === "url" : item.value?.itemType === "url"
+);
+const pathFieldLabel = computed(() => {
+    if (isUrlItem.value) return "网址";
+    return createItemType.value === "directory" ? "文件夹路径" : "路径";
+});
+const pathPlaceholder = computed(() =>
+    createItemType.value === "directory"
+        ? "请输入文件夹路径"
+        : "请输入文件或快捷方式路径"
+);
+
 const dependencyCandidates = computed(() => {
-    if (!item.value) return [];
+    if (!item.value && !isCreateMode.value) return [];
 
     return categoryStore.categories.flatMap((category) =>
         store
             .getLauncherItemsByCategoryId(category.id)
             .filter(
                 (candidate) =>
-                    !(category.id === props.categoryId && candidate.id === props.itemId)
+                    !(item.value && category.id === props.categoryId && candidate.id === props.itemId)
             )
             .map((candidate) => ({
                 key: `${category.id}:${candidate.id}`,
@@ -293,13 +346,23 @@ function syncSelectedDependencyKey() {
 watch(
     () => [props.categoryId, props.itemId, item.value?.id],
     () => {
-        if (!item.value) return;
-        name.value = item.value.name;
-        url.value = item.value.url || "";
-        launchDelaySeconds.value = item.value.launchDelaySeconds;
-        launchDependencies.value = item.value.launchDependencies.map((dependency) => ({
-            ...dependency,
-        }));
+        if (item.value) {
+            name.value = item.value.name;
+            url.value = item.value.url || "";
+            path.value = item.value.path || "";
+            launchDelaySeconds.value = item.value.launchDelaySeconds;
+            launchDependencies.value = item.value.launchDependencies.map((dependency) => ({
+                ...dependency,
+            }));
+            draftIconBase64.value = null;
+        } else if (isCreateMode.value) {
+            name.value = "";
+            url.value = "";
+            path.value = "";
+            launchDelaySeconds.value = 0;
+            launchDependencies.value = [];
+            draftIconBase64.value = null;
+        }
         syncSelectedDependencyKey();
     },
     { immediate: true }
@@ -308,6 +371,8 @@ watch(
 watchEffect(() => {
     if (item.value) {
         hasCustomIcon.value = store.hasCustomIcon(props.categoryId, props.itemId!);
+    } else {
+        hasCustomIcon.value = !!draftIconBase64.value;
     }
 });
 
@@ -328,6 +393,7 @@ function onBack() {
  */
 function onSave() {
     if (isCreateMode.value) {
+        void createLauncherItem();
         return;
     }
     if (!item.value) return;
@@ -364,6 +430,95 @@ function onSave() {
     onBack();
 }
 
+function buildCreateItemName(): string {
+    const trimmedName = name.value.trim();
+    if (trimmedName) return trimmedName;
+
+    if (isUrlItem.value) {
+        const currentUrl = normalizeUrlInput(url.value.trim());
+        try {
+            return new URL(currentUrl).hostname;
+        } catch {
+            return currentUrl;
+        }
+    }
+
+    return store.getNameFromPath(path.value.trim());
+}
+
+function normalizeUrlInput(rawUrl: string): string {
+    if (!rawUrl) return rawUrl;
+    if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
+        return rawUrl;
+    }
+    return `https://${rawUrl}`;
+}
+
+async function createLauncherItem() {
+    const finalName = buildCreateItemName().trim();
+    if (!finalName) {
+        showToast("名称不能为空", { type: "error" });
+        return;
+    }
+
+    const normalizedDependencies = launchDependencies.value.map((dependency: LaunchDependency) => ({
+        ...dependency,
+        delayAfterSeconds: normalizeDelaySeconds(dependency.delayAfterSeconds),
+    }));
+    const normalizedLaunchDelay = normalizeDelaySeconds(launchDelaySeconds.value);
+
+    if (isUrlItem.value) {
+        const normalizedUrl = normalizeUrlInput(url.value.trim());
+        if (!normalizedUrl) {
+            showToast("网址不能为空", { type: "error" });
+            return;
+        }
+
+        const itemId = store.createLauncherItemInCategory(props.categoryId, {
+            name: finalName,
+            url: normalizedUrl,
+            itemType: "url",
+            iconBase64: draftIconBase64.value,
+            launchDependencies: normalizedDependencies,
+            launchDelaySeconds: normalizedLaunchDelay,
+        });
+
+        if (!draftIconBase64.value) {
+            fetchFaviconAsync(props.categoryId, itemId, normalizedUrl);
+        }
+
+        onBack();
+        return;
+    }
+
+    const normalizedPath = path.value.trim();
+    if (!normalizedPath) {
+        showToast("路径不能为空", { type: "error" });
+        return;
+    }
+
+    const itemId = store.createLauncherItemInCategory(props.categoryId, {
+        name: finalName,
+        path: normalizedPath,
+        itemType: "file",
+        isDirectory: createItemType.value === "directory",
+        iconBase64: draftIconBase64.value,
+        launchDependencies: normalizedDependencies,
+        launchDelaySeconds: normalizedLaunchDelay,
+    });
+
+    if (!draftIconBase64.value) {
+        void store.hydrateMissingIconsForItems([
+            {
+                categoryId: props.categoryId,
+                itemId,
+            },
+        ]);
+    }
+
+    onBack();
+}
+
 function fetchFaviconAsync(categoryId: string, itemId: string, currentUrl: string) {
     invoke<string | null>("fetch_favicon_from_url", { url: currentUrl })
         .then((iconBase64) => {
@@ -379,8 +534,20 @@ function fetchFaviconAsync(categoryId: string, itemId: string, currentUrl: strin
 /**
  * 删除当前启动项。
  */
-function onDelete() {
+async function onDelete() {
     if (isCreateMode.value || !item.value) return;
+
+    const confirmed = await confirm({
+        title: "删除启动项",
+        message: `确定要删除 "${item.value.name}" 吗？`,
+        confirmText: "删除",
+        cancelText: "取消",
+    });
+
+    if (!confirmed) {
+        return;
+    }
+
     store.deleteLauncherItem(props.categoryId, props.itemId!);
     onBack();
 }
@@ -463,26 +630,37 @@ function getDependencyLabel(dependency: LaunchDependency) {
 }
 
 async function onChangeIcon() {
-    if (!item.value) return;
+    const iconBase64 = await selectAndConvertIcon();
+    if (!iconBase64) return;
+
+    if (item.value) {
+        store.updateLauncherItemIcon(props.categoryId, props.itemId!, iconBase64);
+    } else {
+        draftIconBase64.value = iconBase64;
+    }
+
+    hasCustomIcon.value = true;
+}
+
+async function onBrowsePath() {
+    if (!isCreateMode.value || isUrlItem.value) return;
 
     const selected = await open({
+        directory: createItemType.value === "directory",
         multiple: false,
-        filters: [
-            { name: "图片文件", extensions: ["png", "jpg", "jpeg", "ico", "bmp", "svg"] },
-            { name: "所有文件", extensions: ["*"] },
-        ],
+        filters: createItemType.value === "directory"
+            ? undefined
+            : [
+                { name: "可执行文件与快捷方式", extensions: ["exe", "lnk", "url", "bat", "cmd"] },
+                { name: "所有文件", extensions: ["*"] },
+            ],
     });
 
-    if (!selected || typeof selected !== "string") return;
-
-    try {
-        const iconBase64 = await invoke<string | null>("extract_icon_from_file", { path: selected });
-        if (iconBase64) {
-            store.updateLauncherItemIcon(props.categoryId, props.itemId!, iconBase64);
-            hasCustomIcon.value = true;
+    if (typeof selected === "string") {
+        path.value = selected;
+        if (!name.value.trim()) {
+            name.value = buildCreateItemName();
         }
-    } catch (e) {
-        console.error("Failed to extract icon:", e);
     }
 }
 </script>
@@ -592,6 +770,11 @@ async function onChangeIcon() {
     display: flex;
     flex-direction: column;
     gap: 12px;
+}
+
+.path-input-row {
+    display: flex;
+    gap: 8px;
 }
 
 .field {

@@ -76,6 +76,8 @@ pub struct AppConfig {
     pub window_effect_type: String,
     #[serde(alias = "strongShortcutMode")]
     pub strong_shortcut_mode: bool,
+    #[serde(alias = "pluginSandboxEnabled")]
+    pub plugin_sandbox_enabled: bool,
     #[serde(alias = "clipboardHistoryEnabled")]
     pub clipboard_history_enabled: bool,
     #[serde(alias = "homeSectionLayouts")]
@@ -139,6 +141,7 @@ impl Default for AppConfig {
             performance_mode: false,
             window_effect_type: "blur".to_string(),
             strong_shortcut_mode: true,
+            plugin_sandbox_enabled: true,
             clipboard_history_enabled: true,
             home_section_layouts: HomeSectionLayouts::default(),
             clipboard_max_records: 100,
@@ -173,6 +176,7 @@ pub struct AppConfigPatch {
     pub performance_mode: Option<bool>,
     pub window_effect_type: Option<String>,
     pub strong_shortcut_mode: Option<bool>,
+    pub plugin_sandbox_enabled: Option<bool>,
     pub ai_organizer_base_url: Option<String>,
     pub ai_organizer_model: Option<String>,
     pub ai_organizer_api_key: Option<String>,

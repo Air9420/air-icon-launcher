@@ -26,7 +26,13 @@
             >
                 <div class="item-content">
                     <template v-if="item.content_type === 'image'">
-                        <img :src="getRecordContent(item)" class="item-image" alt="剪贴板图片" />
+                        <img
+                            v-if="imagePreviewMap[item.id]"
+                            :src="imagePreviewMap[item.id]"
+                            class="item-image"
+                            alt="剪贴板图片"
+                        />
+                        <div v-else class="item-image-placeholder">图片预览加载中</div>
                     </template>
                     <template v-else>
                         <div class="item-text">{{ truncateText(getRecordContent(item)) }}</div>
@@ -60,11 +66,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { getRecordContent } from "../stores/clipboardStore";
 import { useClipboardStore } from "../stores/clipboardStore";
 import { useClipboardEvents } from "../composables/useClipboardEvents";
+import { readLocalImageAsDataUrl } from "../utils/system-commands";
 
 const router = useRouter();
 const clipboardStore = useClipboardStore();
@@ -78,9 +85,48 @@ const {
 } = useClipboardEvents();
 
 const currentHash = computed(() => clipboardStore.currentClipboardHash);
+const imagePreviewMap = ref<Record<string, string>>({});
+
+watch(
+    history,
+    (records) => {
+        void hydrateImagePreviews(records);
+    },
+    { immediate: true }
+);
 
 function onBack() {
     router.back();
+}
+
+async function hydrateImagePreviews(records: typeof history.value) {
+    const imageRecords = records.filter(
+        (record) => record.content_type === "image" && !!record.image_path
+    );
+    const nextMap = { ...imagePreviewMap.value };
+
+    await Promise.all(
+        imageRecords.map(async (record) => {
+            if (nextMap[record.id] || !record.image_path) {
+                return;
+            }
+
+            try {
+                nextMap[record.id] = await readLocalImageAsDataUrl(record.image_path);
+            } catch (error) {
+                console.warn("Failed to load clipboard image preview:", error);
+            }
+        })
+    );
+
+    const validIds = new Set(imageRecords.map((record) => record.id));
+    for (const id of Object.keys(nextMap)) {
+        if (!validIds.has(id)) {
+            delete nextMap[id];
+        }
+    }
+
+    imagePreviewMap.value = nextMap;
 }
 </script>
 
@@ -204,6 +250,15 @@ function onBack() {
     max-height: 120px;
     border-radius: 8px;
     margin-top: 8px;
+}
+
+.item-image-placeholder {
+    margin-top: 8px;
+    padding: 12px;
+    border-radius: 8px;
+    background: var(--hover-bg);
+    color: var(--text-hint);
+    font-size: 12px;
 }
 
 .delete-btn {

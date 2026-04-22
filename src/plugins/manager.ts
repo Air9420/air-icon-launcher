@@ -14,12 +14,14 @@ import {
 import { resourceTracker } from "./resource-tracker";
 import { sandboxManager } from "./sandbox";
 import { invokeOrThrow } from "../utils/invoke-wrapper";
+import { getAppConfig, saveAppConfigPatch } from "../utils/config-sync";
 
 const plugins = ref<Map<string, PluginInstance>>(new Map());
 
 const PLUGIN_STATE_KEY = "plugin-enabled-state";
-
 const SANDBOX_MODE_KEY = "plugin-sandbox-mode";
+const sandboxModeEnabled = ref<boolean>(true);
+let sandboxModePromise: Promise<boolean> | null = null;
 
 function loadPluginStates(): Record<string, boolean> {
   try {
@@ -42,20 +44,56 @@ function getPluginStates(): Record<string, boolean> {
   return loadPluginStates();
 }
 
-function isSandboxModeEnabled(): boolean {
-  try {
-    return localStorage.getItem(SANDBOX_MODE_KEY) === "true";
-  } catch {
-    return false;
+async function ensureSandboxModeLoaded(): Promise<boolean> {
+  if (sandboxModePromise) {
+    return sandboxModePromise;
   }
-}
 
-function setSandboxModeEnabled(enabled: boolean): void {
-  try {
-    localStorage.setItem(SANDBOX_MODE_KEY, String(enabled));
-  } catch (e) {
-    console.error("Failed to save sandbox mode:", e);
-  }
+  sandboxModePromise = (async () => {
+    let next = true;
+    let legacySandboxMode: boolean | null = null;
+
+    try {
+      const legacyRaw = localStorage.getItem(SANDBOX_MODE_KEY);
+      if (legacyRaw !== null) {
+        legacySandboxMode = legacyRaw === "true";
+      }
+    } catch (error) {
+      console.error("Failed to read legacy sandbox mode:", error);
+    }
+
+    try {
+      const config = await getAppConfig();
+      next = config.plugin_sandbox_enabled ?? true;
+
+      if (legacySandboxMode !== null && legacySandboxMode !== next) {
+        const updated = await saveAppConfigPatch({
+          plugin_sandbox_enabled: legacySandboxMode,
+        });
+        next = updated.plugin_sandbox_enabled ?? legacySandboxMode;
+      }
+    } catch (error) {
+      console.error("Failed to load sandbox mode from config:", error);
+      if (legacySandboxMode !== null) {
+        next = legacySandboxMode;
+      }
+    }
+
+    if (legacySandboxMode !== null) {
+      try {
+        localStorage.removeItem(SANDBOX_MODE_KEY);
+      } catch (error) {
+        console.error("Failed to clear legacy sandbox mode:", error);
+      }
+    }
+
+    sandboxModeEnabled.value = next;
+    return next;
+  })().finally(() => {
+    sandboxModePromise = null;
+  });
+
+  return sandboxModePromise;
 }
 
 export function usePluginManager() {
@@ -187,7 +225,7 @@ export function usePluginManager() {
       const permissions = parsePermissions(instance.manifest);
       instance.permissions = permissions;
 
-      const useSandbox = isSandboxModeEnabled();
+      const useSandbox = await ensureSandboxModeLoaded();
 
       if (useSandbox) {
         try {
@@ -294,7 +332,8 @@ export function usePluginManager() {
 
     if (instance.status === "enabled") return true;
 
-    const currentSandboxMode = isSandboxModeEnabled();
+    await ensureSandboxModeLoaded();
+    const currentSandboxMode = sandboxModeEnabled.value;
     const isRunningInSandbox = !!instance.sandbox;
     
     if (instance.status === "loaded" && isRunningInSandbox !== currentSandboxMode) {
@@ -411,6 +450,7 @@ export function usePluginManager() {
 
   async function refreshPlugins(): Promise<void> {
     try {
+      await ensureSandboxModeLoaded();
       const manifests = await scanPlugins();
       const savedStates = getPluginStates();
 
@@ -453,11 +493,48 @@ export function usePluginManager() {
   }
 
   function isSandboxMode(): boolean {
-    return isSandboxModeEnabled();
+    return sandboxModeEnabled.value;
   }
 
-  function setSandboxMode(enabled: boolean): void {
-    setSandboxModeEnabled(enabled);
+  async function loadSandboxMode(): Promise<boolean> {
+    return ensureSandboxModeLoaded();
+  }
+
+  async function setSandboxMode(
+    enabled: boolean
+  ): Promise<{ reloadedPluginIds: string[]; failedPluginIds: string[] }> {
+    await ensureSandboxModeLoaded();
+
+    if (sandboxModeEnabled.value === enabled) {
+      return {
+        reloadedPluginIds: [],
+        failedPluginIds: [],
+      };
+    }
+
+    const activePluginIds = enabledPlugins.value.map((plugin) => plugin.manifest.id);
+    const updated = await saveAppConfigPatch({
+      plugin_sandbox_enabled: enabled,
+    });
+    sandboxModeEnabled.value = updated.plugin_sandbox_enabled ?? enabled;
+
+    const reloadedPluginIds: string[] = [];
+    const failedPluginIds: string[] = [];
+
+    for (const pluginId of activePluginIds) {
+      await unloadPlugin(pluginId);
+      const success = await enablePlugin(pluginId);
+      if (success) {
+        reloadedPluginIds.push(pluginId);
+      } else {
+        failedPluginIds.push(pluginId);
+      }
+    }
+
+    return {
+      reloadedPluginIds,
+      failedPluginIds,
+    };
   }
 
   return {
@@ -477,6 +554,7 @@ export function usePluginManager() {
     getPlugin,
     getPluginPermissions,
     isSandboxMode,
+    loadSandboxMode,
     setSandboxMode,
   };
 }

@@ -97,6 +97,7 @@ import { useLaunchStatus } from "../composables/useLaunchStatus";
 import { showToast } from "../composables/useGlobalToast";
 import { invokeOrThrow } from "../utils/invoke-wrapper";
 import { launchStoredItem } from "../utils/launcher-service";
+import { SEARCH_THROTTLE_MS } from "../utils/search-config";
 
 const store = Store();
 const settingsStore = useSettingsStore();
@@ -293,7 +294,7 @@ watch(editingCategoryId, async (value) => {
 
 const throttledRustSearch = useThrottleFn(async (keyword: string) => {
     await store.rustSearch(keyword);
-}, 50);
+}, SEARCH_THROTTLE_MS);
 
 let ensureIndexPromise: Promise<void> | null = null;
 

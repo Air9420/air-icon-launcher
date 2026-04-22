@@ -89,10 +89,7 @@ export function useClipboardEvents() {
         try {
             const backendHistory = await invokeOrThrow<ClipboardRecord[]>("get_clipboard_history");
             const sortedHistory = [...backendHistory].sort((a, b) => b.timestamp - a.timestamp);
-            clipboardStore.clearClipboardHistory();
-            for (const record of [...sortedHistory].reverse()) {
-                clipboardStore.addClipboardRecord(record);
-            }
+            clipboardStore.replaceClipboardHistory(sortedHistory);
         } catch (e) {
             console.error("Failed to load clipboard history:", e);
         }

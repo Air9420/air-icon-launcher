@@ -114,6 +114,12 @@ fn preserve_missing_imported_config_fields(
         &["strong_shortcut_mode", "strongShortcutMode"],
         current.strong_shortcut_mode,
     )?;
+    insert_config_value_if_missing(
+        config,
+        "plugin_sandbox_enabled",
+        &["plugin_sandbox_enabled", "pluginSandboxEnabled"],
+        current.plugin_sandbox_enabled,
+    )?;
 
     Ok(())
 }
@@ -178,6 +184,9 @@ fn apply_app_config_patch(config: &mut AppConfig, patch: AppConfigPatch) {
     }
     if let Some(value) = patch.strong_shortcut_mode {
         config.strong_shortcut_mode = value;
+    }
+    if let Some(value) = patch.plugin_sandbox_enabled {
+        config.plugin_sandbox_enabled = value;
     }
     if let Some(value) = patch.ai_organizer_base_url {
         config.ai_organizer_base_url = value;

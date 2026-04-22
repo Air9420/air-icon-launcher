@@ -12,7 +12,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { createVersionedPersistConfig } from "../utils/versioned-persist";
-import { convertFileSrc } from "@tauri-apps/api/core";
 
 /**
  * 剪贴板记录类型
@@ -27,9 +26,6 @@ export type ClipboardRecord = {
 };
 
 export function getRecordContent(record: ClipboardRecord): string {
-    if (record.content_type === "image" && record.image_path) {
-        return convertFileSrc(record.image_path);
-    }
     return record.text_content || "";
 }
 
@@ -79,6 +75,10 @@ export const useClipboardStore = defineStore("clipboard", () => {
         currentClipboardHash.value = hash;
     }
 
+    function replaceClipboardHistory(records: ClipboardRecord[]) {
+        clipboardHistory.value = records;
+    }
+
     /**
      * 删除指定剪贴板记录
      *
@@ -125,10 +125,11 @@ export const useClipboardStore = defineStore("clipboard", () => {
         maxRecords,
         currentClipboardHash,
         addClipboardRecord,
+        replaceClipboardHistory,
         removeClipboardRecord,
         clearClipboardHistory,
         setClipboardHistoryEnabled,
         setMaxRecords,
         setCurrentClipboardHash,
     };
-}, { persist: createVersionedPersistConfig("clipboard", ["clipboardHistory", "clipboardHistoryEnabled"]) });
+}, { persist: createVersionedPersistConfig("clipboard", ["clipboardHistory", "clipboardHistoryEnabled", "maxRecords"]) });

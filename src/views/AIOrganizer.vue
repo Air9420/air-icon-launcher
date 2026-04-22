@@ -181,7 +181,6 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
-import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { Store, useCategoryStore, useGuideStore, type LauncherItem } from "../stores";
 import { showToast } from "../composables/useGlobalToast";
 import {
@@ -203,6 +202,7 @@ import {
     type AIOrganizerRefineResponse,
 } from "../utils/ai-organizer-ai";
 import { extractErrorMessage, invokeOrThrow } from "../utils/invoke-wrapper";
+import { writeTextFileViaCommand } from "../utils/system-commands";
 
 type DraftSuggestionItem = OrganizerSuggestionItem & {
     selected: boolean;
@@ -514,7 +514,7 @@ async function exportWebAiPrompt() {
         }
 
         const path = typeof selected === "string" ? selected : selected[0];
-        await writeTextFile(path, buildWebAiMarkdownPrompt());
+        await writeTextFileViaCommand(path, buildWebAiMarkdownPrompt());
         showToast("AI 精修 Markdown 已导出");
     } catch (error) {
         console.error(error);

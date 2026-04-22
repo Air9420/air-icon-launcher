@@ -7,13 +7,15 @@ import { setSandboxToastCallback } from "../plugins/sandbox";
 import type { Permission } from "../plugins/permissions";
 import PluginPermissionDialog from "../components/PluginPermissionDialog.vue";
 import { showToast } from "../composables/useGlobalToast";
+import { useConfirmDialog } from "../composables/useConfirmDialog";
 
 const router = useRouter();
 const pluginManager = getPluginManager();
+const { confirm } = useConfirmDialog();
 
 const loading = ref(false);
 const pluginDirectory = ref("");
-const sandboxMode = ref(false);
+const sandboxMode = ref(true);
 
 const permissionDialog = ref({
     visible: false,
@@ -22,14 +24,24 @@ const permissionDialog = ref({
     permissions: [] as Permission[],
 });
 
-const { pluginList, refreshPlugins, enablePlugin, disablePlugin, installPluginFromPath, uninstallPlugin, getPluginDirectory, isSandboxMode, setSandboxMode } = pluginManager;
+const {
+    pluginList,
+    refreshPlugins,
+    enablePlugin,
+    disablePlugin,
+    installPluginFromPath,
+    uninstallPlugin,
+    getPluginDirectory,
+    loadSandboxMode,
+    setSandboxMode,
+} = pluginManager;
 
 onMounted(async () => {
     setToastCallback((message, type) => showToast(message, { type, duration: 3000 }));
     setSandboxToastCallback((message, type) => showToast(message, { type, duration: 3000 }));
-    sandboxMode.value = isSandboxMode();
     loading.value = true;
     try {
+        sandboxMode.value = await loadSandboxMode();
         pluginDirectory.value = await getPluginDirectory();
         await refreshPlugins();
     } finally {
@@ -143,27 +155,65 @@ async function onInstallFromFolder() {
     }
 }
 
-function onToggleSandboxMode(event: Event) {
+async function onToggleSandboxMode(event: Event) {
     const target = event.target as HTMLInputElement;
     const enabled = target.checked;
-    
-    if (enabled && !confirm("启用沙箱模式后，需要重新加载插件才能生效。\n\n确定要启用沙箱模式吗？")) {
-        target.checked = sandboxMode.value;
-        return;
+
+    if (!enabled) {
+        const confirmed = await confirm({
+            title: "关闭沙箱模式",
+            message: "关闭后，插件将直接在主应用上下文执行，并可运行任意本地代码。只有在完全信任插件来源时才应继续。",
+            confirmText: "仍然关闭",
+            cancelText: "保持开启",
+        });
+        if (!confirmed) {
+            target.checked = sandboxMode.value;
+            return;
+        }
     }
-    
-    setSandboxMode(enabled);
-    sandboxMode.value = enabled;
-    
-    if (enabled) {
-        showToast("沙箱模式已启用，重新加载插件后生效", { type: "success" });
-    } else {
-        showToast("沙箱模式已禁用", { type: "success" });
+
+    loading.value = true;
+    try {
+        const result = await setSandboxMode(enabled);
+        sandboxMode.value = enabled;
+
+        if (result.failedPluginIds.length > 0) {
+            showToast(
+                `沙箱模式已更新，但有 ${result.failedPluginIds.length} 个插件重载失败`,
+                { type: "error" }
+            );
+            return;
+        }
+
+        if (result.reloadedPluginIds.length > 0) {
+            showToast(
+                `沙箱模式已更新，已重载 ${result.reloadedPluginIds.length} 个插件`,
+                { type: "success" }
+            );
+            return;
+        }
+
+        showToast(
+            enabled ? "沙箱模式已启用" : "沙箱模式已关闭",
+            { type: enabled ? "success" : "info" }
+        );
+    } catch (error) {
+        target.checked = sandboxMode.value;
+        showToast(`更新沙箱模式失败: ${error}`, { type: "error" });
+    } finally {
+        loading.value = false;
     }
 }
 
 async function onUninstall(pluginId: string) {
-    if (!confirm(`确定要卸载插件 "${pluginId}" 吗？`)) {
+    const confirmed = await confirm({
+        title: "卸载插件",
+        message: `确定要卸载插件 "${pluginId}" 吗？`,
+        confirmText: "卸载",
+        cancelText: "取消",
+    });
+
+    if (!confirmed) {
         return;
     }
 

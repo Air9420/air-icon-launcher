@@ -6,6 +6,7 @@ import {
     type GlobalSearchMergedResult,
     type RustSearchResult,
 } from "../stores/launcherStore";
+import { SEARCH_THROTTLE_MS } from "../utils/search-config";
 
 export type SearchResult = RustSearchResult;
 
@@ -71,7 +72,7 @@ export function useSearch() {
 
     const throttledSearch = useThrottleFn(async (keyword: string) => {
         await search({ keyword });
-    }, 50);
+    }, SEARCH_THROTTLE_MS);
 
     watch(searchKeyword, async (newKeyword) => {
         if (!newKeyword.trim()) {

@@ -8,10 +8,21 @@ import {
 import { Store, useCategoryStore } from "../../stores";
 import { toPluginCategories, toPluginLauncherItems } from "../dto";
 import type { SandboxMessage, SandboxConfig, SandboxStatus, SandboxInstance } from "./types";
-import { SANDBOX_HTML } from "./types";
+import { renderSandboxHtml } from "./types";
 import { launchStoredItem } from "../../utils/launcher-service";
 
 type ToastType = "info" | "success" | "error";
+
+interface SandboxContextMenuItem {
+  type?: string;
+  id: string;
+  label: string;
+  icon?: string;
+  order?: number;
+  commandId?: string;
+  handler?: () => void;
+  onClick?: () => void;
+}
 
 let toastCallback: ((message: string, type: ToastType) => void) | null = null;
 
@@ -29,7 +40,9 @@ class SandboxManagerImpl {
   private pluginStorage = new Map<string, Map<string, unknown>>();
 
   constructor() {
-    window.addEventListener("message", this.handleMessage.bind(this));
+    if (typeof window !== "undefined") {
+      window.addEventListener("message", this.handleMessage.bind(this));
+    }
     
     this.commandHandlers.set("launcher.getCategories", async () => {
       const categoryStore = useCategoryStore();
@@ -79,17 +92,6 @@ class SandboxManagerImpl {
         toastCallback(message as string, (type as ToastType) || "info");
       }
     });
-    
-interface SandboxContextMenuItem {
-  type?: string;
-  id: string;
-  label: string;
-  icon?: string;
-  order?: number;
-  commandId?: string;
-  handler?: () => void;
-  onClick?: () => void;
-}
 
     this.commandHandlers.set("ui.registerContextMenuItems", (pluginId, menuType, items) => {
       resourceTracker.trackContextMenu(pluginId, menuType as string);
@@ -175,47 +177,58 @@ interface SandboxContextMenuItem {
     });
   }
 
+  private createSandboxEnvelope(
+    sandbox: SandboxInstance,
+    msg: Partial<SandboxMessage>
+  ): SandboxMessage {
+    return {
+      id: msg.id || `msg_${++this.messageId}`,
+      sandbox_id: sandbox.sandboxId,
+      nonce: sandbox.nonce,
+      type: msg.type || "request",
+      ...msg,
+    } as SandboxMessage;
+  }
+
+  private isTrustedSandboxMessage(
+    sandbox: SandboxInstance,
+    msg: Partial<SandboxMessage>,
+    source: MessageEventSource | null
+  ): msg is SandboxMessage {
+    return (
+      !!msg &&
+      source === sandbox.iframe.contentWindow &&
+      msg.sandbox_id === sandbox.sandboxId &&
+      msg.nonce === sandbox.nonce &&
+      typeof msg.type === "string" &&
+      typeof msg.id === "string"
+    );
+  }
+
   private handleMessage(event: MessageEvent): void {
-    const msg = event.data as SandboxMessage;
-    
-    if (!msg || !msg.type) return;
-    
-    if (msg.type === "loaded") {
+    const msg = event.data as Partial<SandboxMessage>;
+    if (!msg || typeof msg.type !== "string") return;
+
+    const sandbox = [...this.sandboxes.values()].find((instance) =>
+      this.isTrustedSandboxMessage(instance, msg, event.source)
+    );
+    if (!sandbox) return;
+
+    const trustedMessage = msg as SandboxMessage;
+
+    if (trustedMessage.type === "error") {
+      console.error("[Sandbox] error:", trustedMessage.error);
       return;
     }
-    
-    if (msg.type === "ready") {
-      return;
-    }
-    
-    if (msg.type === "error") {
-      console.error("[Sandbox] error:", msg.error);
-      return;
-    }
-    
-    if (msg.type === "request" && msg.method && msg.id) {
-      this.handleRequest(msg, event.source);
+
+    if (trustedMessage.type === "request" && trustedMessage.method) {
+      void this.handleRequest(trustedMessage, sandbox);
     }
   }
 
-  private async handleRequest(msg: SandboxMessage, source: MessageEventSource | null): Promise<void> {
-    let pluginId: string | null = null;
-    let sandbox: SandboxInstance | null = null;
-    
-    for (const [id, instance] of this.sandboxes) {
-      if (instance.iframe.contentWindow === source) {
-        pluginId = id;
-        sandbox = instance;
-        break;
-      }
-    }
-    
-    if (!pluginId || !sandbox) {
-      return;
-    }
-    
+  private async handleRequest(msg: SandboxMessage, sandbox: SandboxInstance): Promise<void> {
+    const pluginId = sandbox.id;
     const handler = this.commandHandlers.get(msg.method || "");
-    
     if (!handler) {
       this.sendToSandbox(sandbox, {
         id: msg.id,
@@ -243,10 +256,9 @@ interface SandboxContextMenuItem {
 
   private sendToSandbox(sandbox: SandboxInstance, msg: Partial<SandboxMessage>): void {
     if (sandbox.iframe.contentWindow) {
-      const serializableMsg = JSON.parse(JSON.stringify({
-        id: msg.id || `msg_${++this.messageId}`,
-        ...msg,
-      }));
+      const serializableMsg = JSON.parse(
+        JSON.stringify(this.createSandboxEnvelope(sandbox, msg))
+      );
       sandbox.iframe.contentWindow.postMessage(serializableMsg, "*");
     }
   }
@@ -268,9 +280,14 @@ interface SandboxContextMenuItem {
     iframe.style.position = "absolute";
     iframe.style.top = "-9999px";
     iframe.style.left = "-9999px";
+
+    const sandboxId = `${pluginId}-${crypto.randomUUID()}`;
+    const nonce = crypto.randomUUID();
     
     const sandbox: SandboxInstance = {
       id: pluginId,
+      sandboxId,
+      nonce,
       iframe,
       status: "loading",
       permissions,
@@ -280,11 +297,8 @@ interface SandboxContextMenuItem {
     this.sandboxes.set(pluginId, sandbox);
 
     document.body.appendChild(iframe);
-    
-    const scriptContent = SANDBOX_HTML.match(/<script>([\s\S]*?)<\/script>/)?.[1] || '';
-    const sandboxHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'unsafe-inline' 'unsafe-eval'; script-src 'unsafe-inline' 'unsafe-eval'; connect-src 'none'; img-src 'none'; style-src 'unsafe-inline';"></head><body><script>${scriptContent}<\/script></body></html>`;
-    
-    iframe.srcdoc = sandboxHtml;
+
+    iframe.srcdoc = renderSandboxHtml(sandbox.sandboxId, sandbox.nonce);
     
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -292,9 +306,9 @@ interface SandboxContextMenuItem {
       }, 10000);
       
       const handler = (event: MessageEvent) => {
-        if (event.source !== iframe.contentWindow) return;
-        const msg = event.data;
-        if (msg && msg.type === "loaded") {
+        const msg = event.data as Partial<SandboxMessage>;
+        if (!this.isTrustedSandboxMessage(sandbox, msg, event.source)) return;
+        if (msg.type === "loaded") {
           clearTimeout(timeout);
           window.removeEventListener("message", handler);
           resolve();
@@ -312,9 +326,9 @@ interface SandboxContextMenuItem {
       }, 10000);
       
       const handler = (event: MessageEvent) => {
-        if (event.source !== iframe.contentWindow) return;
-        const msg = event.data;
-        if (msg && msg.type === "ready") {
+        const msg = event.data as Partial<SandboxMessage>;
+        if (!this.isTrustedSandboxMessage(sandbox, msg, event.source)) return;
+        if (msg.type === "ready") {
           clearTimeout(timeout);
           window.removeEventListener("message", handler);
           resolve();
@@ -349,8 +363,9 @@ interface SandboxContextMenuItem {
       const msgId = `lifecycle_${method}_${++this.messageId}`;
       
       const handler = (event: MessageEvent) => {
-        const msg = event.data;
-        if (msg && msg.id === msgId && msg.type === "response") {
+        const msg = event.data as Partial<SandboxMessage>;
+        if (!this.isTrustedSandboxMessage(sandbox, msg, event.source)) return;
+        if (msg.id === msgId && msg.type === "response") {
           clearTimeout(timeout);
           window.removeEventListener("message", handler);
           if (msg.error) {
@@ -381,8 +396,9 @@ interface SandboxContextMenuItem {
         const msgId = `destroy_${++this.messageId}`;
         
         const handler = (event: MessageEvent) => {
-          const msg = event.data;
-          if (msg && msg.id === msgId && msg.type === "response") {
+          const msg = event.data as Partial<SandboxMessage>;
+          if (!this.isTrustedSandboxMessage(sandbox, msg, event.source)) return;
+          if (msg.id === msgId && msg.type === "response") {
             clearTimeout(timeout);
             window.removeEventListener("message", handler);
             resolve();

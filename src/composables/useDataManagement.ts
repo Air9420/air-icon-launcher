@@ -17,6 +17,7 @@ import {
     saveAppConfig,
     type AppConfigSnapshot,
 } from "../utils/config-sync";
+import { getPluginManager } from "../plugins";
 
 export type DataExportFormat = "json" | "zip";
 
@@ -85,6 +86,7 @@ type ImportedSettings = {
     performance_mode?: boolean;
     window_effect_type?: "blur" | "acrylic";
     strong_shortcut_mode?: boolean;
+    plugin_sandbox_enabled?: boolean;
     clipboard_history_enabled?: boolean;
     home_section_layouts?: unknown;
     clipboard_max_records?: number;
@@ -147,6 +149,7 @@ type FrontendImportSnapshot = {
         performanceMode: boolean;
         windowEffectType: "blur" | "acrylic";
         strongShortcutMode: boolean;
+        pluginSandboxEnabled: boolean;
         clipboardHistoryEnabled: boolean;
         clipboardMaxRecords: number;
     };
@@ -609,7 +612,8 @@ export function useDataManagement() {
     const categoryStore = useCategoryStore();
     const clipboardStore = useClipboardStore();
 
-    function snapshotFrontendState(): FrontendImportSnapshot {
+    async function snapshotFrontendState(): Promise<FrontendImportSnapshot> {
+        const pluginManager = getPluginManager();
         return {
             settings: {
                 theme: settingsStore.theme,
@@ -630,6 +634,7 @@ export function useDataManagement() {
                 performanceMode: settingsStore.performanceMode,
                 windowEffectType: settingsStore.windowEffectType,
                 strongShortcutMode: settingsStore.strongShortcutMode,
+                pluginSandboxEnabled: await pluginManager.loadSandboxMode(),
                 clipboardHistoryEnabled: clipboardStore.clipboardHistoryEnabled,
                 clipboardMaxRecords: clipboardStore.maxRecords,
             },
@@ -652,7 +657,7 @@ export function useDataManagement() {
 
     async function snapshotCurrentState(): Promise<ImportSnapshot> {
         return {
-            frontend: snapshotFrontendState(),
+            frontend: await snapshotFrontendState(),
             backend: await snapshotBackendState(),
         };
     }
@@ -694,6 +699,7 @@ export function useDataManagement() {
         snapshot: FrontendImportSnapshot
     ): Promise<ImportExecutionResult> {
         const notices = new Set<string>();
+        const pluginManager = getPluginManager();
 
         await settingsStore.setTheme(snapshot.settings.theme);
         uiStore.setCategoryCols(snapshot.settings.categoryCols);
@@ -718,6 +724,7 @@ export function useDataManagement() {
             notices
         );
         await settingsStore.setStrongShortcutMode(snapshot.settings.strongShortcutMode);
+        await pluginManager.setSandboxMode(snapshot.settings.pluginSandboxEnabled);
         clipboardStore.setClipboardHistoryEnabled(snapshot.settings.clipboardHistoryEnabled);
         clipboardStore.setMaxRecords(snapshot.settings.clipboardMaxRecords);
         categoryStore.importCategories(snapshot.categories);
@@ -762,6 +769,7 @@ export function useDataManagement() {
 
     async function applyImportedData(result: ImportedDataPayload): Promise<ImportExecutionResult> {
         const notices = new Set<string>();
+        const pluginManager = getPluginManager();
 
         if (result.settings) {
             const config = result.settings;
@@ -813,6 +821,9 @@ export function useDataManagement() {
             await applyImportedWindowEffectSettings(config, notices);
             if (typeof config.strong_shortcut_mode === "boolean") {
                 await settingsStore.setStrongShortcutMode(config.strong_shortcut_mode);
+            }
+            if (typeof config.plugin_sandbox_enabled === "boolean") {
+                await pluginManager.setSandboxMode(config.plugin_sandbox_enabled);
             }
             if (typeof config.clipboard_history_enabled === "boolean") {
                 clipboardStore.setClipboardHistoryEnabled(config.clipboard_history_enabled);
