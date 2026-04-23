@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useLauncherStore } from "../launcherStore";
 import { createPinia, setActivePinia } from "pinia";
 import * as invokeWrapper from "../../utils/invoke-wrapper";
+import { SEARCH_REQUEST_TIMEOUT_MS } from "../../utils/search-config";
 import {
   clearLauncherIconCacheForTests,
   getCachedLauncherIcon,
@@ -79,6 +80,25 @@ describe("launcherStore - pure functions", () => {
 
       expect(store.searchKeyword).toBe("");
       expect(store.rustSearchResults).toEqual([]);
+    });
+
+    it("searchLauncherItems returns empty when rust invoke times out", async () => {
+      vi.useFakeTimers();
+      try {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        vi.spyOn(invokeWrapper, "invoke").mockImplementation(
+          () => new Promise(() => {}) as any
+        );
+
+        const pending = store.searchLauncherItems({ keyword: "lx" });
+        await vi.advanceTimersByTimeAsync(SEARCH_REQUEST_TIMEOUT_MS);
+        const results = await pending;
+
+        expect(results).toEqual([]);
+        expect(warnSpy).toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

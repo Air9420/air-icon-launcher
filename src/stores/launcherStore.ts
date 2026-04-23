@@ -5,6 +5,7 @@ import { useCategoryStore, type Category } from "./categoryStore";
 import { useUIStore } from "./uiStore";
 import { useStatsStore } from "./statsStore";
 import { createVersionedPersistConfig } from "../utils/versioned-persist";
+import { SEARCH_REQUEST_TIMEOUT_MS } from "../utils/search-config";
 import {
     getCachedLauncherIcon,
     setCachedLauncherIcon,
@@ -1019,6 +1020,25 @@ export const useLauncherStore = defineStore(
             await syncSearchIndexInternal(true);
         }
 
+        async function withTimeout<T>(
+            promise: Promise<T>,
+            timeoutMs: number
+        ): Promise<T | null> {
+            let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+            try {
+                return await Promise.race([
+                    promise,
+                    new Promise<null>((resolve) => {
+                        timeoutHandle = setTimeout(() => resolve(null), timeoutMs);
+                    }),
+                ]);
+            } finally {
+                if (timeoutHandle) {
+                    clearTimeout(timeoutHandle);
+                }
+            }
+        }
+
         async function searchLauncherItems(
             query: SearchLauncherItemsQuery
         ): Promise<RustSearchResult[]> {
@@ -1026,13 +1046,23 @@ export const useLauncherStore = defineStore(
                 return [];
             }
             try {
-                const result = await invoke<RustSearchResult[]>("search_apps", {
-                    query: {
-                        keyword: query.keyword,
-                        limit: query.limit ?? 20,
-                        category_id: query.categoryId ?? null,
-                    },
-                });
+                const result = await withTimeout(
+                    invoke<RustSearchResult[]>("search_apps", {
+                        query: {
+                            keyword: query.keyword,
+                            limit: query.limit ?? 20,
+                            category_id: query.categoryId ?? null,
+                        },
+                    }),
+                    SEARCH_REQUEST_TIMEOUT_MS
+                );
+                if (result === null) {
+                    console.warn(
+                        `Rust search timed out after ${SEARCH_REQUEST_TIMEOUT_MS}ms`,
+                        query.keyword
+                    );
+                    return [];
+                }
                 if (!result.ok) {
                     console.error("Rust search failed:", result.error);
                     return [];

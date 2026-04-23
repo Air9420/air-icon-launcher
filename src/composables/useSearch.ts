@@ -72,7 +72,7 @@ export function useSearch() {
 
     const throttledSearch = useThrottleFn(async (keyword: string) => {
         await search({ keyword });
-    }, SEARCH_THROTTLE_MS);
+    }, SEARCH_THROTTLE_MS, true);
 
     watch(searchKeyword, async (newKeyword) => {
         if (!newKeyword.trim()) {

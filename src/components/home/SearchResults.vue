@@ -194,7 +194,7 @@ function getNameSegments(result: GlobalSearchMergedResult) {
 
 .shortcut-hint {
     position: absolute;
-    left: -10px;
+    right: 10px;
     top: 50%;
     z-index: 1;
     width: 24px;

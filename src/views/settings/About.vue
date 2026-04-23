@@ -20,12 +20,6 @@
             <div class="author-info">
                 <span class="author-name">Air</span>
             </div>
-            <div class="contact-info">
-                <div class="contact-item">
-                    <span class="contact-label">QQ:</span>
-                    <span class="contact-value">951993674</span>
-                </div>
-            </div>
         </div>
 
         <div class="section">
@@ -69,7 +63,7 @@
                     <span>GitHub</span>
                 </button>
             </div>
-            <div class="hint">工具尚未开源，GitHub 链接暂未配置，敬请期待</div>
+            <div class="hint">开源不易，如果项目对你有帮助，欢迎点个 Star</div>
         </div>
 
         <div class="section">
@@ -101,7 +95,7 @@ onMounted(async () => {
 
 async function onOpenGitHub() {
     try {
-        await openUrl("https://github.com/Air9420");
+        await openUrl("https://github.com/Air9420/air-icon-launcher");
     } catch (e) {
         console.error("Failed to open GitHub:", e);
     }

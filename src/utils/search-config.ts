@@ -1,1 +1,2 @@
 export const SEARCH_THROTTLE_MS = 150;
+export const SEARCH_REQUEST_TIMEOUT_MS = 5000;

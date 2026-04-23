@@ -215,6 +215,7 @@ let unlistenFocus: (() => void) | null = null;
 let unlistenShow: (() => void) | null = null;
 let ensureIndexPromise: Promise<void> | null = null;
 let categorySearchRequestId = 0;
+let categorySearchContextId = 0;
 
 onMounted(async () => {
     const win = getCurrentWindow();
@@ -323,19 +324,26 @@ async function ensureRustSearchReady(): Promise<boolean> {
 }
 
 const applyCategorySearch = useThrottleFn(async (keyword: string, requestId: number) => {
-    const results = await store.searchLauncherItems({
-        keyword,
-        categoryId: props.categoryId,
-    });
-    if (requestId !== categorySearchRequestId) return;
-    categorySearchResults.value = results;
-    isCategorySearchPending.value = false;
-}, SEARCH_THROTTLE_MS);
+    try {
+        const contextId = categorySearchContextId;
+        const results = await store.searchLauncherItems({
+            keyword,
+            categoryId: props.categoryId,
+        });
+        if (requestId !== categorySearchRequestId || contextId !== categorySearchContextId) return;
+        categorySearchResults.value = results;
+    } finally {
+        if (requestId === categorySearchRequestId) {
+            isCategorySearchPending.value = false;
+        }
+    }
+}, SEARCH_THROTTLE_MS, true);
 
 watch(
     localSearchKeyword,
     async (keyword) => {
         const trimmedKeyword = keyword.trim();
+        const contextId = categorySearchContextId;
         categorySearchRequestId += 1;
         const requestId = categorySearchRequestId;
 
@@ -349,8 +357,15 @@ watch(
         isCategorySearchPending.value = true;
 
         const ready = await ensureRustSearchReady();
-        if (!ready || requestId !== categorySearchRequestId) {
-            if (requestId === categorySearchRequestId) {
+        if (
+            !ready ||
+            requestId !== categorySearchRequestId ||
+            contextId !== categorySearchContextId
+        ) {
+            if (
+                requestId === categorySearchRequestId &&
+                contextId === categorySearchContextId
+            ) {
                 isCategorySearchPending.value = false;
             }
             return;
@@ -359,6 +374,40 @@ watch(
         await applyCategorySearch(trimmedKeyword, requestId);
     },
     { immediate: true }
+);
+
+watch(
+    () => props.categoryId,
+    async () => {
+        categorySearchContextId += 1;
+        categorySearchRequestId += 1;
+        categorySearchResults.value = [];
+        isCategorySearchPending.value = false;
+
+        const keyword = localSearchKeyword.value.trim();
+        if (!keyword) return;
+
+        const contextId = categorySearchContextId;
+        const requestId = categorySearchRequestId;
+        isCategorySearchPending.value = true;
+
+        const ready = await ensureRustSearchReady();
+        if (
+            !ready ||
+            requestId !== categorySearchRequestId ||
+            contextId !== categorySearchContextId
+        ) {
+            if (
+                requestId === categorySearchRequestId &&
+                contextId === categorySearchContextId
+            ) {
+                isCategorySearchPending.value = false;
+            }
+            return;
+        }
+
+        await applyCategorySearch(keyword, requestId);
+    }
 );
 
 watchEffect(() => {

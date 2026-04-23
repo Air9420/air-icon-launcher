@@ -402,11 +402,16 @@ watch(editingCategoryId, async (value) => {
 });
 
 const throttledRustSearch = useThrottleFn(async (keyword: string, requestId: number) => {
-    const results = await store.searchLauncherItems({ keyword });
-    if (requestId !== homeSearchRequestId) return;
-    rustSearchResults.value = results;
-    isHomeSearchPending.value = false;
-}, SEARCH_THROTTLE_MS);
+    try {
+        const results = await store.searchLauncherItems({ keyword });
+        if (requestId !== homeSearchRequestId) return;
+        rustSearchResults.value = results;
+    } finally {
+        if (requestId === homeSearchRequestId) {
+            isHomeSearchPending.value = false;
+        }
+    }
+}, SEARCH_THROTTLE_MS, true);
 
 let ensureIndexPromise: Promise<void> | null = null;
 

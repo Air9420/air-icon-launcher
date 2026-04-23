@@ -55,6 +55,7 @@ export const useClipboardStore = defineStore("clipboard", () => {
     const clipboardHistoryEnabled = ref<boolean>(true);
     const maxRecords = ref<number>(100);
     const currentClipboardHash = ref<string | null>(null);
+    const favoriteHashes = ref<string[]>([]);
 
     function addClipboardRecord(record: ClipboardRecord, forcePromote: boolean = false) {
         const existingIndex = clipboardHistory.value.findIndex(r => r.hash === record.hash);
@@ -77,6 +78,8 @@ export const useClipboardStore = defineStore("clipboard", () => {
 
     function replaceClipboardHistory(records: ClipboardRecord[]) {
         clipboardHistory.value = records;
+        const recordHashes = new Set(records.map((record) => record.hash));
+        favoriteHashes.value = favoriteHashes.value.filter((hash) => recordHashes.has(hash));
     }
 
     /**
@@ -87,7 +90,10 @@ export const useClipboardStore = defineStore("clipboard", () => {
     function removeClipboardRecord(id: string) {
         const index = clipboardHistory.value.findIndex(r => r.id === id);
         if (index !== -1) {
-            clipboardHistory.value.splice(index, 1);
+            const [removed] = clipboardHistory.value.splice(index, 1);
+            if (removed) {
+                favoriteHashes.value = favoriteHashes.value.filter((hash) => hash !== removed.hash);
+            }
         }
     }
 
@@ -96,6 +102,26 @@ export const useClipboardStore = defineStore("clipboard", () => {
      */
     function clearClipboardHistory() {
         clipboardHistory.value = [];
+        favoriteHashes.value = [];
+    }
+
+    function isFavoriteHash(hash: string): boolean {
+        return favoriteHashes.value.includes(hash);
+    }
+
+    function setFavoriteHash(hash: string, favorite: boolean) {
+        if (!hash) return;
+        if (favorite) {
+            if (!favoriteHashes.value.includes(hash)) {
+                favoriteHashes.value = [hash, ...favoriteHashes.value];
+            }
+            return;
+        }
+        favoriteHashes.value = favoriteHashes.value.filter((target) => target !== hash);
+    }
+
+    function toggleFavoriteHash(hash: string) {
+        setFavoriteHash(hash, !isFavoriteHash(hash));
     }
 
     /**
@@ -124,6 +150,7 @@ export const useClipboardStore = defineStore("clipboard", () => {
         clipboardHistoryEnabled,
         maxRecords,
         currentClipboardHash,
+        favoriteHashes,
         addClipboardRecord,
         replaceClipboardHistory,
         removeClipboardRecord,
@@ -131,5 +158,8 @@ export const useClipboardStore = defineStore("clipboard", () => {
         setClipboardHistoryEnabled,
         setMaxRecords,
         setCurrentClipboardHash,
+        isFavoriteHash,
+        setFavoriteHash,
+        toggleFavoriteHash,
     };
-}, { persist: createVersionedPersistConfig("clipboard", ["clipboardHistory", "clipboardHistoryEnabled", "maxRecords"]) });
+}, { persist: createVersionedPersistConfig("clipboard", ["clipboardHistory", "clipboardHistoryEnabled", "maxRecords", "favoriteHashes"]) });
