@@ -46,6 +46,7 @@ export type GlobalSearchMergedResult = {
     item: LauncherItem;
     primaryCategoryId: string;
     categories: Category[];
+    matchType: RustSearchMatchType;
 };
 
 export type RecentUsedItem = {
@@ -75,15 +76,30 @@ export type LauncherItemRef = {
     itemId: string;
 };
 
+export type RustSearchMatchType =
+    | "exact"
+    | "prefix"
+    | "substring"
+    | "pinyin_full"
+    | "pinyin_initial"
+    | "fuzzy";
+
 export type RustSearchResult = {
     id: string;
     name: string;
     path: string;
     category_id: string;
+    match_type: RustSearchMatchType;
     fuzzy_score: number;
     matched_pinyin_initial: boolean;
     matched_pinyin_full: boolean;
     rank_score: number;
+};
+
+type SearchLauncherItemsQuery = {
+    keyword: string;
+    limit?: number;
+    categoryId?: string;
 };
 
 type SearchIndexItemPayload = {
@@ -1003,25 +1019,37 @@ export const useLauncherStore = defineStore(
             await syncSearchIndexInternal(true);
         }
 
-        async function rustSearch(keyword: string, limit: number = 20): Promise<void> {
-            if (!keyword.trim()) {
-                rustSearchResults.value = [];
-                return;
+        async function searchLauncherItems(
+            query: SearchLauncherItemsQuery
+        ): Promise<RustSearchResult[]> {
+            if (!query.keyword.trim()) {
+                return [];
             }
             try {
                 const result = await invoke<RustSearchResult[]>("search_apps", {
-                    query: { keyword, limit },
+                    query: {
+                        keyword: query.keyword,
+                        limit: query.limit ?? 20,
+                        category_id: query.categoryId ?? null,
+                    },
                 });
                 if (!result.ok) {
                     console.error("Rust search failed:", result.error);
-                    rustSearchResults.value = [];
-                    return;
+                    return [];
                 }
-                rustSearchResults.value = result.value;
+                return result.value;
             } catch (e) {
                 console.error("Rust search failed:", e);
-                rustSearchResults.value = [];
+                return [];
             }
+        }
+
+        async function rustSearch(keyword: string, limit: number = 20): Promise<void> {
+            rustSearchResults.value = await searchLauncherItems({ keyword, limit });
+        }
+
+        function setRustSearchResults(results: RustSearchResult[]) {
+            rustSearchResults.value = results;
         }
 
         const rustSearchMergedResults = computed<GlobalSearchMergedResult[]>(() => {
@@ -1035,6 +1063,7 @@ export const useLauncherStore = defineStore(
 
         function clearSearch() {
             searchKeyword.value = "";
+            rustSearchResults.value = [];
         }
 
         function getLauncherItemMergeKey(item: LauncherItem): string | null {
@@ -1384,7 +1413,9 @@ export const useLauncherStore = defineStore(
             getRecentUsedMergedItems,
             getPinnedMergedItems,
             syncSearchIndex,
+            searchLauncherItems,
             rustSearch,
+            setRustSearchResults,
             getSmartSortedItems,
             recordConfirmedSearch,
         };

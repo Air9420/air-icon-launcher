@@ -19,6 +19,14 @@
                 :data-category-id="result.categories[0]?.id || ''"
                 @click.left="$emit('select', result)"
             >
+                <div
+                    v-if="index < 9"
+                    class="shortcut-hint"
+                    :class="{ 'is-visible': !!showShortcutHints }"
+                    aria-hidden="true"
+                >
+                    {{ index + 1 }}
+                </div>
                 <div class="result-icon">
                     <img
                         v-if="result.item.iconBase64"
@@ -33,17 +41,36 @@
                 </div>
                 <div class="result-info">
                     <div class="result-name" :title="result.item.name">
-                        {{ result.item.name }}
-                    </div>
-                    <div class="result-categories">
-                        <span
-                            v-for="c in result.categories"
-                            :key="c.id"
-                            class="result-category-chip"
-                            :title="c.name"
+                        <template
+                            v-for="(segment, segmentIndex) in getNameSegments(result)"
+                            :key="`${result.key}-${segmentIndex}`"
                         >
-                            {{ c.name }}
+                            <mark
+                                v-if="segment.highlighted"
+                                class="result-name-highlight"
+                            >
+                                {{ segment.text }}
+                            </mark>
+                            <span v-else>{{ segment.text }}</span>
+                        </template>
+                    </div>
+                    <div class="result-meta">
+                        <span
+                            class="match-type-chip"
+                            :class="`is-${result.matchType}`"
+                        >
+                            {{ getSearchMatchTypeLabel(result.matchType) }}
                         </span>
+                        <div class="result-categories">
+                            <span
+                                v-for="c in result.categories"
+                                :key="c.id"
+                                class="result-category-chip"
+                                :title="c.name"
+                            >
+                                {{ c.name }}
+                            </span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -54,11 +81,17 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, type ComponentPublicInstance } from "vue";
 import type { GlobalSearchMergedResult } from "../../stores";
+import {
+    buildSearchHighlightSegments,
+    getSearchMatchTypeLabel,
+} from "../../utils/search-ui";
 
 const props = defineProps<{
     results: GlobalSearchMergedResult[];
     getLaunchStatus: (itemId: string) => "launching" | "success" | undefined;
     selectedIndex: number;
+    keyword: string;
+    showShortcutHints?: boolean;
 }>();
 
 defineEmits<{
@@ -91,6 +124,14 @@ function getFallbackText(name: string) {
     if (!text) return "?";
     return text.slice(0, 1).toUpperCase();
 }
+
+function getNameSegments(result: GlobalSearchMergedResult) {
+    return buildSearchHighlightSegments(
+        result.item.name,
+        props.keyword,
+        result.matchType
+    );
+}
 </script>
 
 <style lang="scss" scoped>
@@ -118,6 +159,7 @@ function getFallbackText(name: string) {
 }
 
 .search-result-item {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -148,6 +190,33 @@ function getFallbackText(name: string) {
         background: var(--card-bg-hover);
         box-shadow: 0 0 0 2px var(--primary-color, #0078d4), var(--card-shadow-light);
     }
+}
+
+.shortcut-hint {
+    position: absolute;
+    left: -10px;
+    top: 50%;
+    z-index: 1;
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: color-mix(in srgb, var(--primary-color) 18%, transparent);
+    border: 1px solid color-mix(in srgb, var(--primary-color) 45%, transparent);
+    color: var(--primary-color);
+    font-size: 12px;
+    font-weight: 700;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-50%) scale(0.92);
+    transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.shortcut-hint.is-visible {
+    opacity: 1;
+    transform: translateY(-50%) scale(1);
 }
 
 .result-icon {
@@ -192,18 +261,65 @@ function getFallbackText(name: string) {
     text-overflow: ellipsis;
 }
 
+.result-name-highlight {
+    background: color-mix(in srgb, var(--primary-color) 20%, transparent);
+    color: var(--text-color);
+    border-radius: 4px;
+    padding: 0 2px;
+}
+
+.result-meta {
+    margin-top: 4px;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    min-width: 0;
+}
+
 .result-categories {
-    margin-top: 3px;
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
     max-height: 34px;
     overflow-y: auto;
+    min-width: 0;
     scrollbar-width: none;
     -ms-overflow-style: none;
     &::-webkit-scrollbar {
         display: none;
     }
+}
+
+.match-type-chip {
+    flex-shrink: 0;
+    padding: 2px 6px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--bg-color-secondary);
+    color: var(--text-color-secondary);
+}
+
+.match-type-chip.is-exact,
+.match-type-chip.is-prefix {
+    background: color-mix(in srgb, var(--success-color, #4caf50) 18%, transparent);
+    color: var(--success-color, #2e7d32);
+}
+
+.match-type-chip.is-substring {
+    background: color-mix(in srgb, var(--primary-color) 18%, transparent);
+    color: var(--primary-color);
+}
+
+.match-type-chip.is-pinyin_full,
+.match-type-chip.is-pinyin_initial {
+    background: color-mix(in srgb, var(--warning-color, #ff9800) 18%, transparent);
+    color: var(--warning-color, #f57c00);
+}
+
+.match-type-chip.is-fuzzy {
+    background: color-mix(in srgb, var(--text-color-tertiary) 18%, transparent);
+    color: var(--text-color-secondary);
 }
 
 .result-category-chip {

@@ -58,6 +58,30 @@ describe("launcherStore - pure functions", () => {
     });
   });
 
+  describe("search state", () => {
+    it("clearSearch also clears shared rust search results", () => {
+      store.searchKeyword = "vscode";
+      store.setRustSearchResults([
+        {
+          id: "item-1",
+          name: "VSCode",
+          path: "C:\\VSCode.exe",
+          category_id: "cat-1",
+          match_type: "prefix",
+          fuzzy_score: 100,
+          matched_pinyin_initial: false,
+          matched_pinyin_full: false,
+          rank_score: 1,
+        },
+      ]);
+
+      store.clearSearch();
+
+      expect(store.searchKeyword).toBe("");
+      expect(store.rustSearchResults).toEqual([]);
+    });
+  });
+
   describe("CRUD operations", () => {
     it("addLauncherItemsToCategory adds items", () => {
       store.addLauncherItemsToCategory("cat-1", {

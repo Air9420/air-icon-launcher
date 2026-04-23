@@ -23,10 +23,22 @@ pub struct SearchResult {
     pub name: String,
     pub path: String,
     pub category_id: String,
+    pub match_type: SearchMatchType,
     pub fuzzy_score: i64,
     pub matched_pinyin_initial: bool,
     pub matched_pinyin_full: bool,
     pub rank_score: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchMatchType {
+    Exact,
+    Prefix,
+    Substring,
+    PinyinFull,
+    PinyinInitial,
+    Fuzzy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -53,6 +65,7 @@ pub struct SearchContext {
     pub keyword: String,
     pub limit: usize,
     pub now: i64,
+    pub category_id: Option<String>,
 }
 
 pub struct SearchIndex {
@@ -67,6 +80,20 @@ pub fn parse_search_input(input: &str) -> SearchContext {
         keyword: input.to_string(),
         limit: 20,
         now: chrono_now(),
+        category_id: None,
+    }
+}
+
+impl From<&MatchLevel> for SearchMatchType {
+    fn from(value: &MatchLevel) -> Self {
+        match value {
+            MatchLevel::Exact => SearchMatchType::Exact,
+            MatchLevel::Prefix => SearchMatchType::Prefix,
+            MatchLevel::Substring => SearchMatchType::Substring,
+            MatchLevel::PinyinExact => SearchMatchType::PinyinFull,
+            MatchLevel::PinyinInitial => SearchMatchType::PinyinInitial,
+            MatchLevel::Fuzzy => SearchMatchType::Fuzzy,
+        }
     }
 }
 
@@ -92,6 +119,12 @@ impl SearchIndex {
         let mut candidates: Vec<ScoredCandidate> = Vec::new();
 
         for item in &self.items {
+            if let Some(category_id) = ctx.category_id.as_deref() {
+                if item.category_id != category_id {
+                    continue;
+                }
+            }
+
             let (match_level, fuzzy_score) = self.evaluate_match(item, &keyword_lower);
             let is_pinyin_initial = match_level == MatchLevel::PinyinInitial
                 || self.check_pinyin_initial_match(&item.name, &keyword_lower);
@@ -256,6 +289,7 @@ impl SearchIndex {
                 name: c.item.name,
                 path: c.item.path,
                 category_id: c.item.category_id,
+                match_type: SearchMatchType::from(&c.match_level),
                 fuzzy_score: c.fuzzy_score,
                 matched_pinyin_initial: c.matched_pinyin_initial,
                 matched_pinyin_full: c.matched_pinyin_full,
@@ -326,10 +360,29 @@ mod tests {
         index
     }
 
+    fn make_ctx(keyword: &str, limit: usize) -> SearchContext {
+        SearchContext {
+            keyword: keyword.to_string(),
+            limit,
+            now: 1000000,
+            category_id: None,
+        }
+    }
+
+    fn make_ctx_for_category(keyword: &str, limit: usize, category_id: &str) -> SearchContext {
+        SearchContext {
+            keyword: keyword.to_string(),
+            limit,
+            now: 1000000,
+            category_id: Some(category_id.to_string()),
+        }
+    }
+
     #[test]
     fn test_parse_search_input_plain() {
         let ctx = parse_search_input("微信");
         assert_eq!(ctx.keyword, "微信");
+        assert_eq!(ctx.category_id, None);
     }
 
     #[test]
@@ -351,15 +404,12 @@ mod tests {
             make_item("2", "Firefox", "C:\\Firefox\\firefox.exe", "cat-work"),
         ];
         let index = build_index_with_items(items);
-        let ctx = SearchContext {
-            keyword: "Chrome".to_string(),
-            limit: 20,
-            now: 1000000,
-        };
+        let ctx = make_ctx("Chrome", 20);
         let results = index.search(&ctx);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "1");
         assert_eq!(results[0].fuzzy_score > 1000, true);
+        assert_eq!(results[0].match_type, SearchMatchType::Exact);
     }
 
     #[test]
@@ -371,13 +421,10 @@ mod tests {
             "cat-system",
         )];
         let index = build_index_with_items(items);
-        let ctx = SearchContext {
-            keyword: "Chro".to_string(),
-            limit: 20,
-            now: 1000000,
-        };
+        let ctx = make_ctx("Chro", 20);
         let results = index.search(&ctx);
         assert_eq!(results.len(), 1);
+        assert_eq!(results[0].match_type, SearchMatchType::Prefix);
     }
 
     #[test]
@@ -389,24 +436,17 @@ mod tests {
             "cat-system",
         )];
         let index = build_index_with_items(items);
-        let ctx = SearchContext {
-            keyword: "rome".to_string(),
-            limit: 20,
-            now: 1000000,
-        };
+        let ctx = make_ctx("rome", 20);
         let results = index.search(&ctx);
         assert_eq!(results.len(), 1);
+        assert_eq!(results[0].match_type, SearchMatchType::Substring);
     }
 
     #[test]
     fn test_search_empty_keyword_returns_nothing() {
         let items = vec![make_item("1", "Chrome", "C:\\chrome.exe", "cat-system")];
         let index = build_index_with_items(items);
-        let ctx = SearchContext {
-            keyword: "".to_string(),
-            limit: 20,
-            now: 1000000,
-        };
+        let ctx = make_ctx("", 20);
         let results = index.search(&ctx);
         assert!(results.is_empty());
     }
@@ -415,11 +455,7 @@ mod tests {
     fn test_search_no_match_returns_empty() {
         let items = vec![make_item("1", "Chrome", "C:\\chrome.exe", "cat-system")];
         let index = build_index_with_items(items);
-        let ctx = SearchContext {
-            keyword: "zzzzzzzzz".to_string(),
-            limit: 20,
-            now: 1000000,
-        };
+        let ctx = make_ctx("zzzzzzzzz", 20);
         let results = index.search(&ctx);
         assert!(results.is_empty());
     }
@@ -428,11 +464,7 @@ mod tests {
     fn test_search_case_insensitive() {
         let items = vec![make_item("1", "Chrome", "C:\\chrome.exe", "cat-system")];
         let index = build_index_with_items(items);
-        let ctx = SearchContext {
-            keyword: "chrome".to_string(),
-            limit: 20,
-            now: 1000000,
-        };
+        let ctx = make_ctx("chrome", 20);
         let results = index.search(&ctx);
         assert_eq!(results.len(), 1);
     }
@@ -446,14 +478,11 @@ mod tests {
             "cat-system",
         )];
         let index = build_index_with_items(items);
-        let ctx = SearchContext {
-            keyword: "weixin".to_string(),
-            limit: 20,
-            now: 1000000,
-        };
+        let ctx = make_ctx("weixin", 20);
         let results = index.search(&ctx);
         assert!(!results.is_empty());
         assert!(results[0].matched_pinyin_full);
+        assert_eq!(results[0].match_type, SearchMatchType::PinyinFull);
     }
 
     #[test]
@@ -465,14 +494,11 @@ mod tests {
             "cat-system",
         )];
         let index = build_index_with_items(items);
-        let ctx = SearchContext {
-            keyword: "wx".to_string(),
-            limit: 20,
-            now: 1000000,
-        };
+        let ctx = make_ctx("wx", 20);
         let results = index.search(&ctx);
         assert!(!results.is_empty());
         assert!(results[0].matched_pinyin_initial);
+        assert_eq!(results[0].match_type, SearchMatchType::PinyinInitial);
     }
 
     #[test]
@@ -484,13 +510,10 @@ mod tests {
             "cat-system",
         )];
         let index = build_index_with_items(items);
-        let ctx = SearchContext {
-            keyword: "program".to_string(),
-            limit: 20,
-            now: 1000000,
-        };
+        let ctx = make_ctx("program", 20);
         let results = index.search(&ctx);
         assert!(!results.is_empty());
+        assert_eq!(results[0].match_type, SearchMatchType::Fuzzy);
     }
 
     #[test]
@@ -506,11 +529,7 @@ mod tests {
             })
             .collect();
         let index = build_index_with_items(items);
-        let ctx = SearchContext {
-            keyword: "App".to_string(),
-            limit: 5,
-            now: 1000000,
-        };
+        let ctx = make_ctx("App", 5);
         let results = index.search(&ctx);
         assert!(results.len() <= 5);
     }
@@ -522,11 +541,7 @@ mod tests {
             make_item("2", "Apple Pie", "C:\\apple.exe", "cat-system"),
         ];
         let index = build_index_with_items(items);
-        let ctx = SearchContext {
-            keyword: "App".to_string(),
-            limit: 20,
-            now: 1000000,
-        };
+        let ctx = make_ctx("App", 20);
         let results = index.search(&ctx);
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].id, "1");
@@ -539,11 +554,7 @@ mod tests {
         let mut item2 = make_item("2", "TestApp2", "C:\\test2.exe", "cat-system");
         item2.is_pinned = false;
         let index = build_index_with_items(vec![item1, item2]);
-        let ctx = SearchContext {
-            keyword: "Test".to_string(),
-            limit: 20,
-            now: 1000000,
-        };
+        let ctx = make_ctx("Test", 20);
         let results = index.search(&ctx);
         assert_eq!(results[0].id, "1");
     }
@@ -555,13 +566,23 @@ mod tests {
         let mut item2 = make_item("2", "ToolB", "C:\\b.exe", "cat-system");
         item2.usage_count = 1;
         let index = build_index_with_items(vec![item1, item2]);
-        let ctx = SearchContext {
-            keyword: "Tool".to_string(),
-            limit: 20,
-            now: 1000000,
-        };
+        let ctx = make_ctx("Tool", 20);
         let results = index.search(&ctx);
         assert_eq!(results[0].id, "1");
+    }
+
+    #[test]
+    fn test_search_category_filter_returns_only_target_category() {
+        let items = vec![
+            make_item("1", "微信", "C:\\WeChat\\WeChat.exe", "cat-social"),
+            make_item("2", "微信", "D:\\Work\\WeChat.exe", "cat-work"),
+        ];
+        let index = build_index_with_items(items);
+        let ctx = make_ctx_for_category("微信", 20, "cat-work");
+        let results = index.search(&ctx);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].category_id, "cat-work");
     }
 
     fn generate_items(count: usize) -> Vec<SearchItem> {
@@ -700,6 +721,7 @@ mod tests {
             keyword: "Chrome".to_string(),
             limit: 20,
             now: chrono_now(),
+            category_id: None,
         };
 
         let start = std::time::Instant::now();
@@ -727,6 +749,7 @@ mod tests {
             keyword: "code".to_string(),
             limit: 20,
             now: chrono_now(),
+            category_id: None,
         };
 
         let start = std::time::Instant::now();
@@ -754,6 +777,7 @@ mod tests {
             keyword: "wx".to_string(),
             limit: 20,
             now: chrono_now(),
+            category_id: None,
         };
 
         let start = std::time::Instant::now();

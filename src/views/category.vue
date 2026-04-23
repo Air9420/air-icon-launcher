@@ -12,55 +12,141 @@
             </div>
         </header>
 
-        <draggable v-model="items" item-key="id" class="icon-container" :style="{ '--cols': launcherCols }"
-            ghost-class="icon-ghost" chosen-class="icon-chosen" drag-class="icon-drag" :delay="200"
-            :delay-on-touch-only="false" :animation="150" :force-fallback="true" fallback-class="icon-drag"
-            :fallback-tolerance="5" data-menu-type="Icon-View" :data-category-id="categoryId">
-            <template #item="{ element }">
-                <div v-show="!filteredSearchKeyword.trim() ||
-                    matchesSearch(element.name)
-                    " class="icon-item" :class="{ 'is-pinned': isItemPinned(element.id) }" data-menu-type="Icon-Item"
-                    :data-category-id="categoryId" :data-item-id="element.id"
-                    @pointerdown="onPointerDown(element.id, $event)" @pointerup="onPointerUp(element.id)"
-                    @pointerleave="onPointerLeave">
+        <template v-if="isSearchActive">
+            <div
+                v-if="categorySearchItems.length > 0"
+                class="icon-container search-results-container"
+                :style="{ '--cols': launcherCols }"
+                data-menu-type="Icon-View"
+                :data-category-id="categoryId"
+            >
+                <div
+                    v-for="entry in categorySearchItems"
+                    :key="entry.key"
+                    class="icon-item"
+                    :class="{ 'is-pinned': isItemPinned(entry.item.id) }"
+                    data-menu-type="Icon-Item"
+                    :data-category-id="categoryId"
+                    :data-item-id="entry.item.id"
+                    @pointerdown="onPointerDown(entry.item.id, $event)"
+                    @pointerup="onPointerUp(entry.item.id)"
+                    @pointerleave="onPointerLeave"
+                >
                     <div class="icon-img">
-                        <img v-if="element.iconBase64" class="icon-real" :src="getIconSrc(element.iconBase64)" alt=""
-                            draggable="false" />
+                        <img
+                            v-if="entry.item.iconBase64"
+                            class="icon-real"
+                            :src="getIconSrc(entry.item.iconBase64)"
+                            alt=""
+                            draggable="false"
+                        />
                         <div v-else class="icon-fallback">
-                            {{ getFallbackText(element.name) }}
+                            {{ getFallbackText(entry.item.name) }}
                         </div>
-
                     </div>
                     <div
-                        v-if="element.itemType === 'url' || hasLaunchDependencies(element)"
+                        v-if="entry.item.itemType === 'url' || hasLaunchDependencies(entry.item)"
                         class="url-badge"
                     >
-                        {{ element.itemType === 'url' ? 'URL' : '依赖' }}
+                        {{ entry.item.itemType === "url" ? "URL" : "依赖" }}
                     </div>
-                    <div v-if="isItemPinned(element.id)" class="pinned-badge">
+                    <div v-if="isItemPinned(entry.item.id)" class="pinned-badge">
                         📌
                     </div>
-                    <div v-if="!hideName" class="icon-name" :title="element.name">
-                        {{ element.name }}
+                    <div v-if="!hideName" class="icon-name" :title="entry.item.name">
+                        {{ entry.item.name }}
                     </div>
-                    <div v-if="launchStatusMap.get(element.id) === 'launching'" class="launch-status launching">
+                    <div v-if="launchStatusMap.get(entry.item.id) === 'launching'" class="launch-status launching">
                         <span class="spinner"></span>
                     </div>
-                    <div v-if="launchStatusMap.get(element.id) === 'success'" class="launch-status success">
+                    <div v-if="launchStatusMap.get(entry.item.id) === 'success'" class="launch-status success">
                         <span class="check-icon">✓</span>
                     </div>
                 </div>
-            </template>
-        </draggable>
+            </div>
 
-        <div v-if="items.length === 0" class="empty-tip" data-menu-type="Icon-View" :data-category-id="categoryId">
-            将文件/快捷方式拖进来即可添加到此类目
-        </div>
+            <div
+                v-else-if="!isCategorySearchPending"
+                class="empty-tip"
+                data-menu-type="Icon-View"
+                :data-category-id="categoryId"
+            >
+                未找到匹配的启动项
+            </div>
+        </template>
 
-        <div v-else-if="filteredSearchKeyword.trim() && filteredCount === 0" class="empty-tip" data-menu-type="Icon-View"
-            :data-category-id="categoryId">
-            未找到匹配的启动项
-        </div>
+        <template v-else>
+            <draggable
+                v-model="items"
+                item-key="id"
+                class="icon-container"
+                :style="{ '--cols': launcherCols }"
+                ghost-class="icon-ghost"
+                chosen-class="icon-chosen"
+                drag-class="icon-drag"
+                :delay="200"
+                :delay-on-touch-only="false"
+                :animation="150"
+                :force-fallback="true"
+                fallback-class="icon-drag"
+                :fallback-tolerance="5"
+                data-menu-type="Icon-View"
+                :data-category-id="categoryId"
+            >
+                <template #item="{ element }">
+                    <div
+                        class="icon-item"
+                        :class="{ 'is-pinned': isItemPinned(element.id) }"
+                        data-menu-type="Icon-Item"
+                        :data-category-id="categoryId"
+                        :data-item-id="element.id"
+                        @pointerdown="onPointerDown(element.id, $event)"
+                        @pointerup="onPointerUp(element.id)"
+                        @pointerleave="onPointerLeave"
+                    >
+                        <div class="icon-img">
+                            <img
+                                v-if="element.iconBase64"
+                                class="icon-real"
+                                :src="getIconSrc(element.iconBase64)"
+                                alt=""
+                                draggable="false"
+                            />
+                            <div v-else class="icon-fallback">
+                                {{ getFallbackText(element.name) }}
+                            </div>
+                        </div>
+                        <div
+                            v-if="element.itemType === 'url' || hasLaunchDependencies(element)"
+                            class="url-badge"
+                        >
+                            {{ element.itemType === "url" ? "URL" : "依赖" }}
+                        </div>
+                        <div v-if="isItemPinned(element.id)" class="pinned-badge">
+                            📌
+                        </div>
+                        <div v-if="!hideName" class="icon-name" :title="element.name">
+                            {{ element.name }}
+                        </div>
+                        <div v-if="launchStatusMap.get(element.id) === 'launching'" class="launch-status launching">
+                            <span class="spinner"></span>
+                        </div>
+                        <div v-if="launchStatusMap.get(element.id) === 'success'" class="launch-status success">
+                            <span class="check-icon">✓</span>
+                        </div>
+                    </div>
+                </template>
+            </draggable>
+
+            <div
+                v-if="items.length === 0"
+                class="empty-tip"
+                data-menu-type="Icon-View"
+                :data-category-id="categoryId"
+            >
+                将文件/快捷方式拖进来即可添加到此类目
+            </div>
+        </template>
     </div>
 </template>
 
@@ -85,7 +171,7 @@ import { useLaunchCooldown } from "../composables/useLaunchCooldown";
 import { Store } from "../stores";
 import { useUIStore } from "../stores/uiStore";
 import { useCategoryStore } from "../stores/categoryStore";
-import type { LauncherItem } from "../stores";
+import type { LauncherItem, RustSearchResult } from "../stores/launcherStore";
 import SearchBox from "../components/SearchBox.vue";
 import { launchStoredItem } from "../utils/launcher-service";
 import { SEARCH_THROTTLE_MS } from "../utils/search-config";
@@ -94,18 +180,25 @@ const props = defineProps<{
     categoryId: string;
 }>();
 
+type CategorySearchEntry = {
+    item: LauncherItem;
+    key: string;
+};
+
 const router = useRouter();
 const store = Store();
 const uiStore = useUIStore();
 const categoryStore = useCategoryStore();
 const { launcherCols } = storeToRefs(uiStore);
 const localSearchKeyword = ref<string>("");
-const filteredSearchKeyword = ref<string>("");
+const categorySearchResults = ref<RustSearchResult[]>([]);
+const isCategorySearchPending = ref(false);
 const searchBoxRef = ref<InstanceType<typeof SearchBox> | null>(null);
 
 type LaunchStatus = "launching" | "success";
 const launchStatusMap = ref<Map<string, LaunchStatus>>(new Map());
 const hideName = computed(() => (launcherCols.value ?? 5) >= 6);
+const isSearchActive = computed(() => localSearchKeyword.value.trim().length > 0);
 
 function setLaunchStatus(itemId: string, status: LaunchStatus) {
     launchStatusMap.value.set(itemId, status);
@@ -120,6 +213,8 @@ function setLaunchStatus(itemId: string, status: LaunchStatus) {
 
 let unlistenFocus: (() => void) | null = null;
 let unlistenShow: (() => void) | null = null;
+let ensureIndexPromise: Promise<void> | null = null;
+let categorySearchRequestId = 0;
 
 onMounted(async () => {
     const win = getCurrentWindow();
@@ -134,6 +229,8 @@ onMounted(async () => {
 
     unlistenShow = await listen("window-shown", () => {
         localSearchKeyword.value = "";
+        categorySearchResults.value = [];
+        isCategorySearchPending.value = false;
         nextTick(() => {
             searchBoxRef.value?.focus();
         });
@@ -171,6 +268,20 @@ const items = computed<LauncherItem[]>({
     },
 });
 
+const itemById = computed(() => new Map(items.value.map((item) => [item.id, item] as const)));
+const categorySearchItems = computed<CategorySearchEntry[]>(() => {
+    return categorySearchResults.value
+        .map((result) => {
+            const item = itemById.value.get(result.id);
+            if (!item) return null;
+            return {
+                item,
+                key: `${props.categoryId}:${result.id}`,
+            };
+        })
+        .filter((entry): entry is CategorySearchEntry => entry !== null);
+});
+
 watch(
     items,
     (list) => {
@@ -183,47 +294,69 @@ watch(
     { immediate: true }
 );
 
+watch(
+    categorySearchItems,
+    (results) => {
+        if (!isSearchActive.value || results.length === 0) return;
+        const targets = results.map((entry) => ({
+            categoryId: props.categoryId,
+            itemId: entry.item.id,
+        }));
+        void store.hydrateMissingIconsForItems(targets);
+    },
+    { immediate: true }
+);
+
 function isItemPinned(itemId: string): boolean {
     return store.isItemPinned(itemId);
 }
 
-const filteredCount = computed(() => {
-    const keyword = filteredSearchKeyword.value.trim();
-    if (!keyword) return items.value.length;
-    return items.value.filter((item) => matchesSearch(item.name)).length;
-});
-
-function matchesSearch(name: string): boolean {
-    const keyword = filteredSearchKeyword.value.trim();
-    if (!keyword) return true;
-    const lowerName = name.toLowerCase();
-    const lowerKeyword = keyword.toLowerCase();
-    if (lowerName.includes(lowerKeyword)) return true;
-    let keywordIndex = 0;
-    for (
-        let i = 0;
-        i < lowerName.length && keywordIndex < lowerKeyword.length;
-        i++
-    ) {
-        if (lowerName[i] === lowerKeyword[keywordIndex]) {
-            keywordIndex++;
-        }
+async function ensureRustSearchReady(): Promise<boolean> {
+    if (store.isRustSearchReady) return true;
+    if (!ensureIndexPromise) {
+        ensureIndexPromise = store.syncSearchIndex().finally(() => {
+            ensureIndexPromise = null;
+        });
     }
-    return keywordIndex === lowerKeyword.length;
+    await ensureIndexPromise;
+    return store.isRustSearchReady;
 }
 
-const applyFilteredSearchKeyword = useThrottleFn((keyword: string) => {
-    filteredSearchKeyword.value = keyword;
+const applyCategorySearch = useThrottleFn(async (keyword: string, requestId: number) => {
+    const results = await store.searchLauncherItems({
+        keyword,
+        categoryId: props.categoryId,
+    });
+    if (requestId !== categorySearchRequestId) return;
+    categorySearchResults.value = results;
+    isCategorySearchPending.value = false;
 }, SEARCH_THROTTLE_MS);
 
 watch(
     localSearchKeyword,
-    (keyword) => {
-        if (!keyword.trim()) {
-            filteredSearchKeyword.value = "";
+    async (keyword) => {
+        const trimmedKeyword = keyword.trim();
+        categorySearchRequestId += 1;
+        const requestId = categorySearchRequestId;
+
+        if (!trimmedKeyword) {
+            categorySearchResults.value = [];
+            isCategorySearchPending.value = false;
             return;
         }
-        applyFilteredSearchKeyword(keyword);
+
+        categorySearchResults.value = [];
+        isCategorySearchPending.value = true;
+
+        const ready = await ensureRustSearchReady();
+        if (!ready || requestId !== categorySearchRequestId) {
+            if (requestId === categorySearchRequestId) {
+                isCategorySearchPending.value = false;
+            }
+            return;
+        }
+
+        await applyCategorySearch(trimmedKeyword, requestId);
     },
     { immediate: true }
 );
@@ -279,7 +412,7 @@ function onPointerUp(itemId: string) {
     if (pressTimer && pressedItemId === itemId) {
         clearTimeout(pressTimer);
         pressTimer = null;
-        const item = items.value.find(i => i.id === itemId);
+        const item = itemById.value.get(itemId);
         if (item) {
             launchItemWithCd(item);
         }
@@ -376,6 +509,10 @@ function hasLaunchDependencies(item: LauncherItem): boolean {
     &::-webkit-scrollbar {
         display: none;
     }
+}
+
+.search-results-container {
+    cursor: default;
 }
 
 .icon-item {

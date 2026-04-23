@@ -6,8 +6,9 @@ import { createVersionedPersistConfig } from "../utils/versioned-persist";
 
 type TimeSlot = "morning" | "afternoon" | "evening" | "night";
 
-type SearchKeywordRecord = {
+export type SearchKeywordRecord = {
   keyword: string;
+  displayKeyword?: string;
   count: number;
   lastUsedAt: number;
 };
@@ -49,19 +50,22 @@ export const useStatsStore = defineStore(
     const searchHistory = ref<SearchKeywordRecord[]>([]);
 
     function recordSearch(keyword: string) {
-      const trimmed = keyword.trim().toLowerCase();
-      if (!trimmed || trimmed.length > 50) return;
+      const displayKeyword = keyword.trim();
+      const trimmed = displayKeyword.toLowerCase();
+      if (!trimmed || displayKeyword.length > 50) return;
 
       let newHistory = [...searchHistory.value];
       const existingIndex = newHistory.findIndex((r) => r.keyword === trimmed);
       if (existingIndex !== -1) {
         const existing = { ...newHistory[existingIndex] };
         existing.count++;
+        existing.displayKeyword = displayKeyword;
         existing.lastUsedAt = Date.now();
         newHistory[existingIndex] = existing;
       } else {
         newHistory.unshift({
           keyword: trimmed,
+          displayKeyword,
           count: 1,
           lastUsedAt: Date.now(),
         });
@@ -205,7 +209,7 @@ export const useStatsStore = defineStore(
     const topSearchKeywords = computed(() => {
       return searchHistory.value
         .slice(0, 15)
-        .map((r) => ({ keyword: r.keyword, count: r.count }));
+        .map((r) => ({ keyword: r.displayKeyword || r.keyword, count: r.count }));
     });
 
     const totalLaunchesThisWeek = computed(() => {

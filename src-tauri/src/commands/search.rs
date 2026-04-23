@@ -9,6 +9,8 @@ use tauri::State;
 pub struct SearchQuery {
     pub keyword: String,
     pub limit: Option<usize>,
+    #[serde(default)]
+    pub category_id: Option<String>,
 }
 
 pub struct SearchState {
@@ -149,6 +151,7 @@ pub fn search_apps(
         keyword: ctx.keyword,
         limit: query.limit.unwrap_or(20),
         now: ctx.now,
+        category_id: query.category_id,
     };
     Ok(index.search(&ctx))
 }

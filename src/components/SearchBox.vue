@@ -15,35 +15,44 @@
             @keydown.up="onNavUp"
             @keydown.down="onNavDown"
             @keydown.enter="onNavEnter"
+            @keydown.tab="onNavTab"
         />
-        <button
-            v-show="modelValue"
-            class="clear-btn"
-            type="button"
-            @click="onClear"
-        >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M18 6 6 18" />
-                <path d="m6 6 12 12" />
-            </svg>
-        </button>
+        <div v-if="hasActions || modelValue" class="search-actions">
+            <slot name="actions" />
+            <button
+                v-show="modelValue"
+                class="clear-btn"
+                type="button"
+                @click="onClear"
+            >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 6 6 18" />
+                    <path d="m6 6 12 12" />
+                </svg>
+            </button>
+        </div>
     </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref, useSlots } from "vue";
 
-defineProps<{
+const props = withDefaults(defineProps<{
     modelValue: string;
     placeholder?: string;
-}>();
+    interceptTab?: boolean;
+}>(), {
+    interceptTab: false,
+});
 
 const emit = defineEmits<{
     (e: "update:modelValue", value: string): void;
-    (e: "nav", direction: "up" | "down" | "enter"): void;
+    (e: "nav", direction: "up" | "down" | "enter" | "tab"): void;
 }>();
 
 const inputRef = ref<HTMLInputElement | null>(null);
+const slots = useSlots();
+const hasActions = computed(() => !!slots.actions);
 
 function onInput(event: Event) {
     const target = event.target as HTMLInputElement;
@@ -67,6 +76,13 @@ function onNavDown(e: Event) {
 function onNavEnter(e: Event) {
     e.stopPropagation();
     emit("nav", "enter");
+}
+
+function onNavTab(e: KeyboardEvent) {
+    if (!props.interceptTab) return;
+    e.preventDefault();
+    e.stopPropagation();
+    emit("nav", "tab");
 }
 
 function focus() {
@@ -115,6 +131,13 @@ defineExpose({
     &::placeholder {
         color: var(--text-hint);
     }
+}
+
+.search-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
 }
 
 .clear-btn {

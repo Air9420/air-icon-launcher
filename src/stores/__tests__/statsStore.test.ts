@@ -81,12 +81,29 @@ describe("statsStore - 智能排序 & 统计", () => {
       expect(stats.topSearchKeywords).toHaveLength(0);
     });
 
-    it("normalizes to lowercase", () => {
+    it("normalizes for dedupe but keeps the latest display keyword", () => {
       stats.recordSearch("Chrome");
-      stats.recordSearch("CHROME");
+      stats.recordSearch("VSCode");
+      stats.recordSearch("vscode");
+
+      expect(stats.searchHistory).toHaveLength(2);
+      expect(stats.searchHistory[0].keyword).toBe("vscode");
+      expect(stats.searchHistory[0].displayKeyword).toBe("vscode");
+      expect(stats.searchHistory[1].keyword).toBe("chrome");
+      expect(stats.searchHistory[1].displayKeyword).toBe("Chrome");
+      expect(stats.topSearchKeywords[0].keyword).toBe("vscode");
+      expect(stats.topSearchKeywords[1].keyword).toBe("Chrome");
+    });
+
+    it("merges case-insensitive duplicates and updates the display text", () => {
+      stats.recordSearch("VSCode");
+      stats.recordSearch("vscode");
 
       expect(stats.topSearchKeywords).toHaveLength(1);
       expect(stats.topSearchKeywords[0].count).toBe(2);
+      expect(stats.searchHistory[0].keyword).toBe("vscode");
+      expect(stats.searchHistory[0].displayKeyword).toBe("vscode");
+      expect(stats.topSearchKeywords[0].keyword).toBe("vscode");
     });
 
     it("caps at max 200 entries", () => {

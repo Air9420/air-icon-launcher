@@ -144,6 +144,7 @@ describe("mergeRustSearchResults", () => {
           name: "FoundApp",
           path: "C:\\found.exe",
           category_id: "cat-1",
+          match_type: "exact",
           fuzzy_score: 1000,
           matched_pinyin_initial: false,
           matched_pinyin_full: false,
@@ -156,6 +157,7 @@ describe("mergeRustSearchResults", () => {
     expect(results).toHaveLength(1);
     expect(results[0].item.name).toBe("FoundApp");
     expect(results[0].categories).toHaveLength(1);
+    expect(results[0].matchType).toBe("exact");
   });
 
   it("filters results with unknown category", () => {
@@ -166,6 +168,7 @@ describe("mergeRustSearchResults", () => {
           name: "X",
           path: "C:\\x.exe",
           category_id: "nonexistent",
+          match_type: "fuzzy",
           fuzzy_score: 100,
           matched_pinyin_initial: false,
           matched_pinyin_full: false,
@@ -186,6 +189,7 @@ describe("mergeRustSearchResults", () => {
           name: "MissingApp",
           path: "C:\\missing.exe",
           category_id: "cat-1",
+          match_type: "substring",
           fuzzy_score: 500,
           matched_pinyin_initial: false,
           matched_pinyin_full: false,
