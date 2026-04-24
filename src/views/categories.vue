@@ -29,19 +29,43 @@
                 </SearchBox>
 
                 <div v-if="showSearchHistoryPanel" class="search-history-panel">
-                    <div class="search-history-title">最近搜索</div>
-                    <template v-if="searchHistoryEntries.length > 0">
+                    <div class="search-history-head">
+                        <div class="search-history-title">最近搜索</div>
                         <button
-                            v-for="entry in searchHistoryEntries"
-                            :key="entry.keyword"
-                            class="search-history-item"
+                            v-if="searchHistoryEntries.length > 0"
+                            class="search-history-clear-btn"
                             type="button"
                             @mousedown.prevent
-                            @click="onSelectSearchHistory(getSearchHistoryLabel(entry))"
+                            @click="onClearSearchHistory"
                         >
-                            <span class="history-keyword">{{ getSearchHistoryLabel(entry) }}</span>
-                            <span class="history-meta">{{ entry.count }} 次</span>
+                            清空
                         </button>
+                    </div>
+                    <template v-if="searchHistoryEntries.length > 0">
+                        <div
+                            v-for="entry in searchHistoryEntries"
+                            :key="entry.keyword"
+                            class="search-history-row"
+                        >
+                            <button
+                                class="search-history-item"
+                                type="button"
+                                @mousedown.prevent
+                                @click="onSelectSearchHistory(getSearchHistoryLabel(entry))"
+                            >
+                                <span class="history-keyword">{{ getSearchHistoryLabel(entry) }}</span>
+                                <span class="history-meta">{{ entry.count }} 次</span>
+                            </button>
+                            <button
+                                class="search-history-remove-btn"
+                                type="button"
+                                :title="`删除 ${getSearchHistoryLabel(entry)}`"
+                                @mousedown.prevent
+                                @click.stop="onRemoveSearchHistory(entry.keyword)"
+                            >
+                                ×
+                            </button>
+                        </div>
                     </template>
                     <div v-else class="search-history-empty">暂无最近搜索</div>
                 </div>
@@ -213,6 +237,7 @@ onMounted(async () => {
     unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
         if (!focused) {
             showShortcutHints.value = false;
+            closeSearchHistoryPanel();
             return;
         }
 
@@ -278,6 +303,20 @@ function onSelectSearchHistory(keyword: string) {
 
 function getSearchHistoryLabel(entry: SearchKeywordRecord) {
     return getSearchHistoryDisplayKeyword(entry);
+}
+
+function onRemoveSearchHistory(keyword: string) {
+    statsStore.removeSearchHistory(keyword);
+    nextTick(() => {
+        searchBoxRef.value?.focus();
+    });
+}
+
+function onClearSearchHistory() {
+    statsStore.clearSearchHistory();
+    nextTick(() => {
+        searchBoxRef.value?.focus();
+    });
 }
 
 function onClickCategory(element: CategoryType) {
@@ -639,15 +678,41 @@ function onSearchNav(direction: "up" | "down" | "enter" | "tab") {
     backdrop-filter: var(--backdrop-blur);
 }
 
+.search-history-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
 .search-history-title {
     font-size: 12px;
     font-weight: 700;
     color: var(--text-hint);
-    margin-bottom: 8px;
+}
+
+.search-history-clear-btn {
+    border: 0;
+    background: transparent;
+    color: var(--text-hint);
+    font-size: 12px;
+    cursor: pointer;
+    transition: color 0.15s ease;
+}
+
+.search-history-clear-btn:hover {
+    color: var(--text-color);
+}
+
+.search-history-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .search-history-item {
-    width: 100%;
+    flex: 1;
     border: 0;
     display: flex;
     align-items: center;
@@ -663,6 +728,24 @@ function onSearchNav(direction: "up" | "down" | "enter" | "tab") {
 
 .search-history-item:hover {
     background: var(--hover-bg);
+}
+
+.search-history-remove-btn {
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-hint);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.search-history-remove-btn:hover {
+    background: var(--hover-bg);
+    color: var(--text-color);
 }
 
 .history-keyword {

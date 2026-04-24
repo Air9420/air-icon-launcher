@@ -82,6 +82,13 @@ export const useStatsStore = defineStore(
       searchHistory.value = [];
     }
 
+    function removeSearchHistory(keyword: string) {
+      const trimmed = keyword.trim().toLowerCase();
+      if (!trimmed) return;
+
+      searchHistory.value = searchHistory.value.filter((record) => record.keyword !== trimmed);
+    }
+
     const appUsageStats = computed<AppUsageStats[]>(() => {
       const launcher = useLauncherStore();
 
@@ -251,6 +258,7 @@ export const useStatsStore = defineStore(
     return {
       searchHistory,
       recordSearch,
+      removeSearchHistory,
       clearSearchHistory,
       appUsageStats,
       weeklyTopApps,

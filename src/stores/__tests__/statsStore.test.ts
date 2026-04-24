@@ -231,4 +231,24 @@ describe("statsStore - 智能排序 & 统计", () => {
       expect(stats.searchHistory.length).toBe(0);
     });
   });
+
+  describe("removeSearchHistory", () => {
+    it("removes one recorded keyword", () => {
+      stats.recordSearch("chrome");
+      stats.recordSearch("vscode");
+
+      stats.removeSearchHistory("chrome");
+
+      expect(stats.searchHistory).toHaveLength(1);
+      expect(stats.searchHistory[0].keyword).toBe("vscode");
+    });
+
+    it("removes keywords using normalized casing", () => {
+      stats.recordSearch("Chrome");
+
+      stats.removeSearchHistory("CHROME");
+
+      expect(stats.searchHistory).toHaveLength(0);
+    });
+  });
 });
