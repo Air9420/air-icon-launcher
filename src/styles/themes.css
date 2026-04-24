@@ -25,6 +25,13 @@
     --input-bg: rgba(255, 255, 255, 0.75);
     --menu-bg: rgba(255, 255, 255, 0.85);
     --menu-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+    --floating-panel-rgb: 255, 255, 255;
+    --floating-panel-opacity: 0.94;
+    --floating-panel-border: rgba(0, 0, 0, 0.12);
+    --floating-panel-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+    --floating-control-rgb: 0, 0, 0;
+    --floating-control-opacity: 0.05;
+    --floating-control-hover-opacity: 0.1;
     --backdrop-blur: blur(10px);
     --icon-fallback-bg: rgba(0, 0, 0, 0.08);
     --icon-fallback-text: #3b3b3b;
@@ -60,6 +67,13 @@
     --input-bg: rgba(45, 45, 45, 0.75);
     --menu-bg: rgba(35, 35, 35, 0.85);
     --menu-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    --floating-panel-rgb: 42, 42, 42;
+    --floating-panel-opacity: 0.94;
+    --floating-panel-border: rgba(255, 255, 255, 0.14);
+    --floating-panel-shadow: 0 12px 28px rgba(0, 0, 0, 0.42);
+    --floating-control-rgb: 255, 255, 255;
+    --floating-control-opacity: 0.08;
+    --floating-control-hover-opacity: 0.14;
     --icon-fallback-bg: rgba(255, 255, 255, 0.1);
     --icon-fallback-text: #e0e0e0;
     --icon-name-color: #d0d0d0;
@@ -94,6 +108,13 @@
     --input-bg: rgba(80, 80, 80, 0.35);
     --menu-bg: rgba(60, 60, 60, 0.85);
     --menu-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    --floating-panel-rgb: 80, 80, 80;
+    --floating-panel-opacity: 0.8;
+    --floating-panel-border: rgba(255, 255, 255, 0.2);
+    --floating-panel-shadow: 0 14px 32px rgba(0, 0, 0, 0.45);
+    --floating-control-rgb: 255, 255, 255;
+    --floating-control-opacity: 0.12;
+    --floating-control-hover-opacity: 0.18;
     --backdrop-blur: blur(10px);
     --icon-fallback-bg: rgba(255, 255, 255, 0.15);
     --icon-fallback-text: #ffffff;
@@ -130,6 +151,13 @@
         --input-bg: rgba(45, 45, 45, 0.75);
         --menu-bg: rgba(35, 35, 35, 0.85);
         --menu-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        --floating-panel-rgb: 42, 42, 42;
+        --floating-panel-opacity: 0.94;
+        --floating-panel-border: rgba(255, 255, 255, 0.14);
+        --floating-panel-shadow: 0 12px 28px rgba(0, 0, 0, 0.42);
+        --floating-control-rgb: 255, 255, 255;
+        --floating-control-opacity: 0.08;
+        --floating-control-hover-opacity: 0.14;
         --icon-fallback-bg: rgba(255, 255, 255, 0.1);
         --icon-fallback-text: #e0e0e0;
         --icon-name-color: #d0d0d0;
@@ -166,6 +194,13 @@
         --input-bg: rgba(255, 255, 255, 0.75);
         --menu-bg: rgba(255, 255, 255, 0.85);
         --menu-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+        --floating-panel-rgb: 255, 255, 255;
+        --floating-panel-opacity: 0.94;
+        --floating-panel-border: rgba(0, 0, 0, 0.12);
+        --floating-panel-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+        --floating-control-rgb: 0, 0, 0;
+        --floating-control-opacity: 0.05;
+        --floating-control-hover-opacity: 0.1;
         --icon-fallback-bg: rgba(0, 0, 0, 0.08);
         --icon-fallback-text: #3b3b3b;
         --icon-name-color: #3a3a3a;
@@ -185,6 +220,13 @@
     --search-history-bg: rgba(255, 255, 255, 1);
     --input-bg: rgba(255, 255, 255, 0.95);
     --menu-bg: rgba(255, 255, 255, 0.98);
+    --floating-panel-rgb: 255, 255, 255;
+    --floating-panel-opacity: 0.98;
+    --floating-panel-border: rgba(0, 0, 0, 0.12);
+    --floating-panel-shadow: 0 12px 28px rgba(0, 0, 0, 0.16);
+    --floating-control-rgb: 0, 0, 0;
+    --floating-control-opacity: 0.06;
+    --floating-control-hover-opacity: 0.11;
 }
 
 [data-effects-disabled="true"][data-theme="dark"] {
@@ -194,6 +236,13 @@
     --search-history-bg: rgba(50, 50, 50, 1);
     --input-bg: rgba(40, 40, 40, 0.95);
     --menu-bg: rgba(35, 35, 35, 0.98);
+    --floating-panel-rgb: 42, 42, 42;
+    --floating-panel-opacity: 0.98;
+    --floating-panel-border: rgba(255, 255, 255, 0.14);
+    --floating-panel-shadow: 0 12px 28px rgba(0, 0, 0, 0.4);
+    --floating-control-rgb: 255, 255, 255;
+    --floating-control-opacity: 0.1;
+    --floating-control-hover-opacity: 0.16;
 }
 
 [data-effects-disabled="true"][data-theme="transparent"] {
@@ -203,6 +252,13 @@
     --search-history-bg: rgba(70, 70, 70, 1);
     --input-bg: rgba(60, 60, 60, 0.9);
     --menu-bg: rgba(50, 50, 50, 0.98);
+    --floating-panel-rgb: 56, 56, 56;
+    --floating-panel-opacity: 0.96;
+    --floating-panel-border: rgba(255, 255, 255, 0.18);
+    --floating-panel-shadow: 0 14px 32px rgba(0, 0, 0, 0.42);
+    --floating-control-rgb: 255, 255, 255;
+    --floating-control-opacity: 0.14;
+    --floating-control-hover-opacity: 0.2;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -213,6 +269,13 @@
         --search-history-bg: rgba(50, 50, 50, 1);
         --input-bg: rgba(40, 40, 40, 0.95);
         --menu-bg: rgba(35, 35, 35, 0.98);
+        --floating-panel-rgb: 42, 42, 42;
+        --floating-panel-opacity: 0.98;
+        --floating-panel-border: rgba(255, 255, 255, 0.14);
+        --floating-panel-shadow: 0 12px 28px rgba(0, 0, 0, 0.4);
+        --floating-control-rgb: 255, 255, 255;
+        --floating-control-opacity: 0.1;
+        --floating-control-hover-opacity: 0.16;
     }
 }
 
@@ -224,6 +287,13 @@
         --search-history-bg: rgba(255, 255, 255, 1);
         --input-bg: rgba(255, 255, 255, 0.95);
         --menu-bg: rgba(255, 255, 255, 0.98);
+        --floating-panel-rgb: 255, 255, 255;
+        --floating-panel-opacity: 0.98;
+        --floating-panel-border: rgba(0, 0, 0, 0.12);
+        --floating-panel-shadow: 0 12px 28px rgba(0, 0, 0, 0.16);
+        --floating-control-rgb: 0, 0, 0;
+        --floating-control-opacity: 0.06;
+        --floating-control-hover-opacity: 0.11;
     }
 }
 

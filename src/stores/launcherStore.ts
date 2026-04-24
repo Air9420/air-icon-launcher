@@ -580,6 +580,60 @@ export const useLauncherStore = defineStore(
             launcherItemsByCategoryId.value = nextByCategoryId;
         }
 
+        function remapDependencyCategoryRefs(
+            mappings: Array<{
+                fromCategoryId: string;
+                toCategoryId: string;
+                itemId: string;
+            }>
+        ) {
+            if (mappings.length === 0) return;
+
+            const categoryIdByDependencyKey = new Map(
+                mappings.map((mapping) => [
+                    `${mapping.fromCategoryId}:${mapping.itemId}`,
+                    mapping.toCategoryId,
+                ])
+            );
+
+            let changed = false;
+            const nextByCategoryId: Record<string, LauncherItem[]> = {};
+
+            for (const [categoryId, items] of Object.entries(launcherItemsByCategoryId.value)) {
+                nextByCategoryId[categoryId] = items.map((item) => {
+                    let itemChanged = false;
+                    const nextDependencies = item.launchDependencies.map((dependency) => {
+                        const nextCategoryId = categoryIdByDependencyKey.get(
+                            `${dependency.categoryId}:${dependency.itemId}`
+                        );
+                        if (!nextCategoryId || nextCategoryId === dependency.categoryId) {
+                            return dependency;
+                        }
+
+                        itemChanged = true;
+                        return {
+                            ...dependency,
+                            categoryId: nextCategoryId,
+                        };
+                    });
+
+                    if (!itemChanged) {
+                        return item;
+                    }
+
+                    changed = true;
+                    return {
+                        ...item,
+                        launchDependencies: nextDependencies,
+                    };
+                });
+            }
+
+            if (changed) {
+                launcherItemsByCategoryId.value = nextByCategoryId;
+            }
+        }
+
         function deleteLauncherItem(categoryId: string, itemId: string) {
             const list = getLauncherItemsByCategoryId(categoryId);
             const index = list.findIndex((x) => x.id === itemId);
@@ -597,6 +651,128 @@ export const useLauncherStore = defineStore(
             );
             enqueueSearchChanges({
                 deleted: [{ category_id: categoryId, id: itemId }],
+            });
+        }
+
+        function deleteLauncherItems(categoryId: string, itemIds: string[]) {
+            const targetIds = new Set(itemIds);
+            if (targetIds.size === 0) return;
+
+            const list = getLauncherItemsByCategoryId(categoryId);
+            const removedItems = list.filter((item) => targetIds.has(item.id));
+            if (removedItems.length === 0) return;
+
+            setLauncherItemsByCategoryId(
+                categoryId,
+                list.filter((item) => !targetIds.has(item.id))
+            );
+
+            pinnedItemIds.value = pinnedItemIds.value.filter((id) => !targetIds.has(id));
+            recentUsedItems.value = recentUsedItems.value.filter(
+                (item) => !(item.categoryId === categoryId && targetIds.has(item.itemId))
+            );
+            removeDependenciesMatching(
+                (dependency) =>
+                    dependency.categoryId === categoryId && targetIds.has(dependency.itemId)
+            );
+            enqueueSearchChanges({
+                deleted: removedItems.map((item) => ({
+                    category_id: categoryId,
+                    id: item.id,
+                })),
+            });
+        }
+
+        function updateLauncherItems(
+            categoryId: string,
+            itemIds: string[],
+            patch: Partial<Pick<LauncherItem, "launchDelaySeconds">>
+        ) {
+            const targetIds = new Set(itemIds);
+            if (targetIds.size === 0) return;
+
+            const list = getLauncherItemsByCategoryId(categoryId);
+            const updatedItems: LauncherItem[] = [];
+            let changed = false;
+
+            const next = list.map((item) => {
+                if (!targetIds.has(item.id)) return item;
+
+                const updatedItem: LauncherItem = {
+                    ...item,
+                    launchDelaySeconds:
+                        patch.launchDelaySeconds !== undefined
+                            ? normalizeDelaySeconds(patch.launchDelaySeconds)
+                            : item.launchDelaySeconds,
+                };
+
+                updatedItems.push(updatedItem);
+                changed = true;
+                return updatedItem;
+            });
+
+            if (!changed) return;
+
+            setLauncherItemsByCategoryId(categoryId, next);
+            enqueueSearchChanges({
+                updated: updatedItems.map((item) => toSearchIndexItem(categoryId, item)),
+            });
+        }
+
+        function moveLauncherItems(
+            sourceCategoryId: string,
+            targetCategoryId: string,
+            itemIds: string[]
+        ) {
+            if (sourceCategoryId === targetCategoryId) return;
+
+            const requestedIds = new Set(itemIds);
+            if (requestedIds.size === 0) return;
+
+            const sourceItems = getLauncherItemsByCategoryId(sourceCategoryId);
+            const targetItems = getLauncherItemsByCategoryId(targetCategoryId);
+            const targetItemIds = new Set(targetItems.map((item) => item.id));
+            const movedItems = sourceItems.filter(
+                (item) => requestedIds.has(item.id) && !targetItemIds.has(item.id)
+            );
+
+            if (movedItems.length === 0) return;
+
+            const movedIds = new Set(movedItems.map((item) => item.id));
+            setLauncherItemsByCategoryId(
+                sourceCategoryId,
+                sourceItems.filter((item) => !movedIds.has(item.id))
+            );
+            setLauncherItemsByCategoryId(targetCategoryId, [...targetItems, ...movedItems]);
+
+            recentUsedItems.value = recentUsedItems.value.map((recentItem) => {
+                if (
+                    recentItem.categoryId !== sourceCategoryId ||
+                    !movedIds.has(recentItem.itemId)
+                ) {
+                    return recentItem;
+                }
+
+                return {
+                    ...recentItem,
+                    categoryId: targetCategoryId,
+                };
+            });
+
+            remapDependencyCategoryRefs(
+                movedItems.map((item) => ({
+                    fromCategoryId: sourceCategoryId,
+                    toCategoryId: targetCategoryId,
+                    itemId: item.id,
+                }))
+            );
+
+            enqueueSearchChanges({
+                deleted: movedItems.map((item) => ({
+                    category_id: sourceCategoryId,
+                    id: item.id,
+                })),
+                added: movedItems.map((item) => toSearchIndexItem(targetCategoryId, item)),
             });
         }
 
@@ -1415,7 +1591,10 @@ export const useLauncherStore = defineStore(
             setLauncherItemsByCategoryId,
             getLauncherItemById,
             updateLauncherItem,
+            updateLauncherItems,
             deleteLauncherItem,
+            deleteLauncherItems,
+            moveLauncherItems,
             addLauncherItemsToCategory,
             addLauncherItemsToCategoryBatched,
             applyDropIcons,

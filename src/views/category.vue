@@ -16,6 +16,7 @@
             <div
                 v-if="categorySearchItems.length > 0"
                 class="icon-container search-results-container"
+                :class="{ 'has-selection': hasSelection }"
                 :style="{ '--cols': launcherCols }"
                 data-menu-type="Icon-View"
                 :data-category-id="categoryId"
@@ -24,13 +25,18 @@
                     v-for="entry in categorySearchItems"
                     :key="entry.key"
                     class="icon-item"
-                    :class="{ 'is-pinned': isItemPinned(entry.item.id) }"
+                    :class="{
+                        'is-pinned': isItemPinned(entry.item.id),
+                        'is-selected': isItemSelected(entry.item.id),
+                    }"
                     data-menu-type="Icon-Item"
                     :data-category-id="categoryId"
                     :data-item-id="entry.item.id"
+                    @mousedown="onMouseDown(entry.item.id, $event)"
                     @pointerdown="onPointerDown(entry.item.id, $event)"
-                    @pointerup="onPointerUp(entry.item.id)"
+                    @pointerup="onPointerUp(entry.item.id, $event)"
                     @pointerleave="onPointerLeave"
+                    @pointercancel="onPointerLeave"
                 >
                     <div class="icon-img">
                         <img
@@ -80,6 +86,7 @@
                 v-model="items"
                 item-key="id"
                 class="icon-container"
+                :class="{ 'has-selection': hasSelection }"
                 :style="{ '--cols': launcherCols }"
                 ghost-class="icon-ghost"
                 chosen-class="icon-chosen"
@@ -90,19 +97,25 @@
                 :force-fallback="true"
                 fallback-class="icon-drag"
                 :fallback-tolerance="5"
+                :disabled="hasSelection"
                 data-menu-type="Icon-View"
                 :data-category-id="categoryId"
             >
                 <template #item="{ element }">
                     <div
                         class="icon-item"
-                        :class="{ 'is-pinned': isItemPinned(element.id) }"
+                        :class="{
+                            'is-pinned': isItemPinned(element.id),
+                            'is-selected': isItemSelected(element.id),
+                        }"
                         data-menu-type="Icon-Item"
                         :data-category-id="categoryId"
                         :data-item-id="element.id"
+                        @mousedown="onMouseDown(element.id, $event)"
                         @pointerdown="onPointerDown(element.id, $event)"
-                        @pointerup="onPointerUp(element.id)"
+                        @pointerup="onPointerUp(element.id, $event)"
                         @pointerleave="onPointerLeave"
+                        @pointercancel="onPointerLeave"
                     >
                         <div class="icon-img">
                             <img
@@ -147,6 +160,101 @@
                 将文件/快捷方式拖进来即可添加到此类目
             </div>
         </template>
+
+        <div v-if="hasSelection" class="bulk-action-bar">
+            <div class="bulk-action-main">
+                <div class="bulk-selection-summary">
+                    已选 {{ selectedCount }} 项
+                </div>
+                <div class="bulk-action-buttons">
+                    <button
+                        class="bulk-action-btn"
+                        type="button"
+                        :disabled="availableMoveCategories.length === 0"
+                        @click="toggleMovePanel"
+                    >
+                        移动到
+                    </button>
+                    <button
+                        class="bulk-action-btn"
+                        type="button"
+                        @click="toggleEditPanel"
+                    >
+                        批量编辑
+                    </button>
+                    <button
+                        class="bulk-action-btn danger"
+                        type="button"
+                        @click="onDeleteSelected"
+                    >
+                        删除
+                    </button>
+                    <button
+                        class="bulk-action-btn ghost"
+                        type="button"
+                        @click="clearSelection"
+                    >
+                        取消选择
+                    </button>
+                </div>
+            </div>
+
+            <div v-if="activeBulkPanel === 'move'" class="bulk-action-panel">
+                <select v-model="bulkMoveTargetCategoryId" class="bulk-select">
+                    <option value="" disabled>选择目标分类</option>
+                    <option
+                        v-for="category in availableMoveCategories"
+                        :key="category.id"
+                        :value="category.id"
+                    >
+                        {{ category.name }}
+                    </option>
+                </select>
+                <button
+                    class="bulk-action-btn primary"
+                    type="button"
+                    :disabled="!bulkMoveTargetCategoryId"
+                    @click="onMoveSelected"
+                >
+                    确认移动
+                </button>
+                <button
+                    class="bulk-action-btn ghost"
+                    type="button"
+                    @click="closeBulkPanel"
+                >
+                    取消
+                </button>
+            </div>
+
+            <div v-else-if="activeBulkPanel === 'edit'" class="bulk-action-panel">
+                <label class="bulk-input-label">
+                    <span>启动延迟（秒）</span>
+                    <input
+                        :value="bulkLaunchDelayInput"
+                        class="bulk-input"
+                        type="number"
+                        min="0"
+                        step="1"
+                        @input="onBulkDelayInput"
+                    />
+                </label>
+                <button
+                    class="bulk-action-btn primary"
+                    type="button"
+                    @click="onApplyBulkEdit"
+                >
+                    应用
+                </button>
+                <button
+                    class="bulk-action-btn ghost"
+                    type="button"
+                    @click="closeBulkPanel"
+                >
+                    取消
+                </button>
+            </div>
+        </div>
     </div>
 </template>
 
@@ -167,6 +275,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { useThrottleFn } from "@vueuse/core";
 
+import { useConfirmDialog } from "../composables/useConfirmDialog";
+import { useGlobalToast } from "../composables/useGlobalToast";
 import { useLaunchCooldown } from "../composables/useLaunchCooldown";
 import { Store } from "../stores";
 import { useUIStore } from "../stores/uiStore";
@@ -194,6 +304,13 @@ const localSearchKeyword = ref<string>("");
 const categorySearchResults = ref<RustSearchResult[]>([]);
 const isCategorySearchPending = ref(false);
 const searchBoxRef = ref<InstanceType<typeof SearchBox> | null>(null);
+const selectedItemIds = ref<string[]>([]);
+const activeBulkPanel = ref<"move" | "edit" | null>(null);
+const bulkMoveTargetCategoryId = ref("");
+const bulkLaunchDelayInput = ref("0");
+const isWindowFocused = ref(true);
+const { confirm } = useConfirmDialog();
+const { showToast } = useGlobalToast();
 
 type LaunchStatus = "launching" | "success";
 const launchStatusMap = ref<Map<string, LaunchStatus>>(new Map());
@@ -219,8 +336,14 @@ let categorySearchContextId = 0;
 
 onMounted(async () => {
     const win = getCurrentWindow();
+    try {
+        isWindowFocused.value = await win.isFocused();
+    } catch {
+        isWindowFocused.value = true;
+    }
 
     unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
+        isWindowFocused.value = focused;
         if (focused) {
             nextTick(() => {
                 searchBoxRef.value?.focus();
@@ -270,6 +393,17 @@ const items = computed<LauncherItem[]>({
 });
 
 const itemById = computed(() => new Map(items.value.map((item) => [item.id, item] as const)));
+const selectedItemIdSet = computed(() => new Set(selectedItemIds.value));
+const selectedItems = computed(() => {
+    return selectedItemIds.value
+        .map((itemId) => itemById.value.get(itemId))
+        .filter((item): item is LauncherItem => item !== undefined);
+});
+const hasSelection = computed(() => selectedItemIds.value.length > 0);
+const selectedCount = computed(() => selectedItemIds.value.length);
+const availableMoveCategories = computed(() => {
+    return categoryStore.categories.filter((category) => category.id !== props.categoryId);
+});
 const categorySearchItems = computed<CategorySearchEntry[]>(() => {
     return categorySearchResults.value
         .map((result) => {
@@ -291,6 +425,36 @@ watch(
             itemId: item.id,
         }));
         void store.hydrateMissingIconsForItems(targets);
+    },
+    { immediate: true }
+);
+
+watch(
+    itemById,
+    (nextMap) => {
+        const nextSelected = selectedItemIds.value.filter((itemId) => nextMap.has(itemId));
+        if (nextSelected.length !== selectedItemIds.value.length) {
+            selectedItemIds.value = nextSelected;
+        }
+    },
+    { immediate: true }
+);
+
+watch(hasSelection, (value) => {
+    if (!value) {
+        activeBulkPanel.value = null;
+    }
+});
+
+watch(
+    availableMoveCategories,
+    (categories) => {
+        const hasCurrentTarget = categories.some(
+            (category) => category.id === bulkMoveTargetCategoryId.value
+        );
+        if (!hasCurrentTarget) {
+            bulkMoveTargetCategoryId.value = categories[0]?.id ?? "";
+        }
     },
     { immediate: true }
 );
@@ -379,6 +543,7 @@ watch(
 watch(
     () => props.categoryId,
     async () => {
+        clearSelection();
         categorySearchContextId += 1;
         categorySearchRequestId += 1;
         categorySearchResults.value = [];
@@ -418,6 +583,113 @@ function onBack() {
     router.push("/categories");
 }
 
+function isItemSelected(itemId: string): boolean {
+    return selectedItemIdSet.value.has(itemId);
+}
+
+function clearSelection() {
+    selectedItemIds.value = [];
+    activeBulkPanel.value = null;
+}
+
+function toggleItemSelection(itemId: string) {
+    if (selectedItemIdSet.value.has(itemId)) {
+        selectedItemIds.value = selectedItemIds.value.filter((id) => id !== itemId);
+        return;
+    }
+
+    selectedItemIds.value = [...selectedItemIds.value, itemId];
+}
+
+function toggleMovePanel() {
+    if (availableMoveCategories.value.length === 0) return;
+
+    if (activeBulkPanel.value === "move") {
+        activeBulkPanel.value = null;
+        return;
+    }
+
+    bulkMoveTargetCategoryId.value =
+        bulkMoveTargetCategoryId.value || availableMoveCategories.value[0]?.id || "";
+    activeBulkPanel.value = "move";
+}
+
+function toggleEditPanel() {
+    if (activeBulkPanel.value === "edit") {
+        activeBulkPanel.value = null;
+        return;
+    }
+
+    const firstDelay = selectedItems.value[0]?.launchDelaySeconds ?? 0;
+    const isSameDelay = selectedItems.value.every(
+        (item) => item.launchDelaySeconds === firstDelay
+    );
+    bulkLaunchDelayInput.value = isSameDelay ? String(firstDelay) : "0";
+    activeBulkPanel.value = "edit";
+}
+
+function closeBulkPanel() {
+    activeBulkPanel.value = null;
+}
+
+async function onDeleteSelected() {
+    if (!hasSelection.value) return;
+
+    const count = selectedCount.value;
+    const confirmed = await confirm({
+        title: "批量删除启动项",
+        message: `确定要删除已选中的 ${count} 个启动项吗？`,
+        confirmText: "删除",
+        cancelText: "取消",
+    });
+
+    if (!confirmed) return;
+
+    store.deleteLauncherItems(props.categoryId, selectedItemIds.value);
+    clearSelection();
+    showToast(`已删除 ${count} 个启动项`);
+}
+
+function onMoveSelected() {
+    if (!hasSelection.value || !bulkMoveTargetCategoryId.value) return;
+
+    const count = selectedCount.value;
+    const targetCategory = categoryStore.getCategoryById(bulkMoveTargetCategoryId.value);
+    store.moveLauncherItems(
+        props.categoryId,
+        bulkMoveTargetCategoryId.value,
+        selectedItemIds.value
+    );
+    clearSelection();
+    showToast(
+        targetCategory
+            ? `已移动 ${count} 个启动项到“${targetCategory.name}”`
+            : `已移动 ${count} 个启动项`
+    );
+}
+
+function onBulkDelayInput(event: Event) {
+    const target = event.target as HTMLInputElement;
+    bulkLaunchDelayInput.value = target.value;
+}
+
+function onApplyBulkEdit() {
+    if (!hasSelection.value) return;
+
+    const count = selectedCount.value;
+    const parsedDelay = Number(bulkLaunchDelayInput.value);
+    const normalizedDelay = Number.isFinite(parsedDelay)
+        ? Math.max(0, Math.floor(parsedDelay))
+        : 0;
+
+    store.updateLauncherItems(props.categoryId, selectedItemIds.value, {
+        launchDelaySeconds: normalizedDelay,
+    });
+    clearSelection();
+    bulkLaunchDelayInput.value = String(normalizedDelay);
+    showToast(`已批量设置 ${count} 个启动项`);
+}
+
 async function onOpenItem(item: LauncherItem) {
     if (!item) return;
 
@@ -446,35 +718,108 @@ const launchItemWithCd = createCooldown(onOpenItem);
 
 let pressTimer: ReturnType<typeof setTimeout> | null = null;
 let pressedItemId: string | null = null;
+let pointerMode: "launch" | "select" | null = null;
+let selectionHandledOnMouseDownItemId: string | null = null;
+let suppressDragForCurrentPress = false;
 const PRESS_THRESHOLD = 200;
+
+function clearPointerState() {
+    if (pressTimer) {
+        clearTimeout(pressTimer);
+    }
+    pressTimer = null;
+    pressedItemId = null;
+    pointerMode = null;
+    suppressDragForCurrentPress = false;
+}
+
+function hasSelectionModifier(event: PointerEvent): boolean {
+    return event.ctrlKey || event.metaKey;
+}
+
+function hasMouseSelectionModifier(event: MouseEvent): boolean {
+    return event.ctrlKey || event.metaKey;
+}
+
+function onMouseDown(itemId: string, event: MouseEvent) {
+    if (event.button !== 0) return;
+    suppressDragForCurrentPress = !isWindowFocused.value;
+
+    if (!hasSelection.value && !hasMouseSelectionModifier(event)) return;
+
+    event.stopPropagation();
+    clearPointerState();
+    suppressDragForCurrentPress = !isWindowFocused.value;
+    selectionHandledOnMouseDownItemId = itemId;
+    toggleItemSelection(itemId);
+}
 
 function onPointerDown(itemId: string, e: PointerEvent) {
     if (e.button !== 0) return;
+    const selectionHandledOnMouseDown = selectionHandledOnMouseDownItemId === itemId;
+    if (
+        selectionHandledOnMouseDown ||
+        suppressDragForCurrentPress ||
+        hasSelection.value ||
+        hasSelectionModifier(e)
+    ) {
+        e.stopPropagation();
+    }
+
+    if (selectionHandledOnMouseDown) {
+        clearPointerState();
+        return;
+    }
+
+    clearPointerState();
+    suppressDragForCurrentPress = !isWindowFocused.value;
     pressedItemId = itemId;
+
+    if (hasSelection.value || hasSelectionModifier(e)) {
+        pointerMode = "select";
+        return;
+    }
+
+    pointerMode = "launch";
     pressTimer = setTimeout(() => {
-        pressedItemId = null;
-        pressTimer = null;
+        clearPointerState();
     }, PRESS_THRESHOLD);
 }
 
-function onPointerUp(itemId: string) {
-    if (pressTimer && pressedItemId === itemId) {
+function onPointerUp(itemId: string, e: PointerEvent) {
+    if (e.button !== 0) return;
+    if (selectionHandledOnMouseDownItemId === itemId) {
+        selectionHandledOnMouseDownItemId = null;
+        clearPointerState();
+        return;
+    }
+
+    if (pressedItemId !== itemId) {
+        clearPointerState();
+        return;
+    }
+
+    if (pointerMode === "select") {
+        toggleItemSelection(itemId);
+        clearPointerState();
+        return;
+    }
+
+    if (pressTimer && pointerMode === "launch") {
         clearTimeout(pressTimer);
         pressTimer = null;
         const item = itemById.value.get(itemId);
         if (item) {
             launchItemWithCd(item);
         }
-        pressedItemId = null;
     }
+
+    clearPointerState();
 }
 
 function onPointerLeave() {
-    if (pressTimer) {
-        clearTimeout(pressTimer);
-        pressTimer = null;
-        pressedItemId = null;
-    }
+    selectionHandledOnMouseDownItemId = null;
+    clearPointerState();
 }
 
 function getIconSrc(iconBase64: string) {
@@ -560,6 +905,10 @@ function hasLaunchDependencies(item: LauncherItem): boolean {
     }
 }
 
+.icon-container.has-selection {
+    padding-bottom: 128px;
+}
+
 .search-results-container {
     cursor: default;
 }
@@ -567,6 +916,7 @@ function hasLaunchDependencies(item: LauncherItem): boolean {
 .icon-item {
     padding: min(8px, 5%);
     border-radius: 18px;
+    border: 2px solid transparent;
     background: var(--card-bg);
     box-shadow: var(--card-shadow);
     user-select: none;
@@ -582,6 +932,12 @@ function hasLaunchDependencies(item: LauncherItem): boolean {
 .icon-item.is-pinned {
     border: 2px solid var(--primary-color);
     opacity: 1;
+}
+
+.icon-item.is-selected {
+    opacity: 1;
+    border-color: var(--primary-color);
+    background: var(--hover-bg);
 }
 
 .icon-img {
@@ -708,5 +1064,116 @@ function hasLaunchDependencies(item: LauncherItem): boolean {
     color: var(--text-secondary);
     font-size: 13px;
     pointer-events: none;
+}
+
+.bulk-action-bar {
+    position: absolute;
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: 18px;
+    background: rgba(var(--floating-panel-rgb), var(--floating-panel-opacity));
+    border: 1px solid var(--floating-panel-border);
+    box-shadow: var(--floating-panel-shadow);
+    backdrop-filter: var(--backdrop-blur);
+    z-index: 10;
+}
+
+.bulk-action-main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.bulk-selection-summary {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-color);
+}
+
+.bulk-action-buttons,
+.bulk-action-panel {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.bulk-action-panel {
+    padding-top: 12px;
+    border-top: 1px solid var(--floating-panel-border);
+}
+
+.bulk-action-btn {
+    border: 0;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: rgba(var(--floating-control-rgb), var(--floating-control-opacity));
+    color: var(--text-color);
+    cursor: pointer;
+}
+
+.bulk-action-btn:hover:not(:disabled) {
+    background: rgba(var(--floating-control-rgb), var(--floating-control-hover-opacity));
+}
+
+.bulk-action-btn.primary {
+    background: var(--primary-color);
+    color: #fff;
+}
+
+.bulk-action-btn.danger {
+    background: var(--danger-color, #ef4444);
+    color: #fff;
+}
+
+.bulk-action-btn.ghost {
+    background: transparent;
+    border: 1px solid var(--floating-panel-border);
+}
+
+.bulk-action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.bulk-select,
+.bulk-input {
+    min-width: 160px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--floating-panel-border);
+    color: var(--text-color);
+}
+
+.bulk-select {
+    background: var(--menu-bg);
+}
+
+.bulk-select option,
+.bulk-select optgroup {
+    background: var(--menu-bg);
+    color: var(--text-color);
+}
+
+.bulk-select option:disabled {
+    color: var(--text-secondary);
+}
+
+.bulk-input {
+    background: rgba(var(--floating-control-rgb), var(--floating-control-opacity));
+}
+
+.bulk-input-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-secondary);
 }
 </style>

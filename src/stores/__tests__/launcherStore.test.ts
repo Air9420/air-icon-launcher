@@ -176,6 +176,40 @@ describe("launcherStore - pure functions", () => {
       ).toEqual([]);
     });
 
+    it("deleteLauncherItems removes multiple items and their references", () => {
+      store.addLauncherItemsToCategory("cat-1", {
+        paths: ["C:\\a.exe", "C:\\b.exe", "C:\\c.exe"],
+        directories: [],
+        icon_base64s: [null, null, null],
+      });
+      const items = store.getLauncherItemsByCategoryId("cat-1");
+      store.togglePinned("cat-1", items[0].id);
+      store.recordItemUsage("cat-1", items[1].id);
+      store.updateLauncherItem("cat-1", items[2].id, {
+        launchDependencies: [
+          {
+            categoryId: "cat-1",
+            itemId: items[0].id,
+            delayAfterSeconds: 1,
+          },
+          {
+            categoryId: "cat-1",
+            itemId: items[1].id,
+            delayAfterSeconds: 2,
+          },
+        ],
+      });
+
+      store.deleteLauncherItems("cat-1", [items[0].id, items[1].id]);
+
+      expect(store.getLauncherItemsByCategoryId("cat-1")).toHaveLength(1);
+      expect(store.isItemPinned(items[0].id)).toBe(false);
+      expect(store.recentUsedItems).toHaveLength(0);
+      expect(
+        store.getLauncherItemById("cat-1", items[2].id)?.launchDependencies
+      ).toEqual([]);
+    });
+
     it("updateLauncherItem patches name", () => {
       store.addLauncherItemsToCategory("cat-1", {
         paths: ["C:\\a.exe"],
@@ -197,6 +231,77 @@ describe("launcherStore - pure functions", () => {
       store.updateLauncherItem("cat-1", "nonexistent", { name: "X" });
       const items = store.getLauncherItemsByCategoryId("cat-1");
       expect(items[0].name).toBe("a");
+    });
+
+    it("updateLauncherItems batch updates launch delay", () => {
+      store.addLauncherItemsToCategory("cat-1", {
+        paths: ["C:\\a.exe", "C:\\b.exe"],
+        directories: [],
+        icon_base64s: [null, null],
+      });
+      const items = store.getLauncherItemsByCategoryId("cat-1");
+
+      store.updateLauncherItems("cat-1", items.map((item) => item.id), {
+        launchDelaySeconds: 3.8,
+      });
+
+      expect(
+        store
+          .getLauncherItemsByCategoryId("cat-1")
+          .every((item) => item.launchDelaySeconds === 3)
+      ).toBe(true);
+    });
+
+    it("moveLauncherItems moves items and remaps dependency category", () => {
+      store.addLauncherItemsToCategory("cat-1", {
+        paths: ["C:\\a.exe", "C:\\b.exe", "C:\\c.exe"],
+        directories: [],
+        icon_base64s: [null, null, null],
+      });
+      const items = store.getLauncherItemsByCategoryId("cat-1");
+      store.updateLauncherItem("cat-1", items[1].id, {
+        launchDependencies: [
+          {
+            categoryId: "cat-1",
+            itemId: items[0].id,
+            delayAfterSeconds: 1,
+          },
+        ],
+      });
+      store.updateLauncherItem("cat-1", items[2].id, {
+        launchDependencies: [
+          {
+            categoryId: "cat-1",
+            itemId: items[0].id,
+            delayAfterSeconds: 2,
+          },
+        ],
+      });
+      store.recordItemUsage("cat-1", items[0].id);
+
+      store.moveLauncherItems("cat-1", "cat-2", [items[0].id, items[1].id]);
+
+      expect(store.getLauncherItemsByCategoryId("cat-1")).toHaveLength(1);
+      expect(store.getLauncherItemsByCategoryId("cat-2")).toHaveLength(2);
+      expect(store.recentUsedItems[0].categoryId).toBe("cat-2");
+      expect(
+        store.getLauncherItemById("cat-2", items[1].id)?.launchDependencies
+      ).toEqual([
+        {
+          categoryId: "cat-2",
+          itemId: items[0].id,
+          delayAfterSeconds: 1,
+        },
+      ]);
+      expect(
+        store.getLauncherItemById("cat-1", items[2].id)?.launchDependencies
+      ).toEqual([
+        {
+          categoryId: "cat-2",
+          itemId: items[0].id,
+          delayAfterSeconds: 2,
+        },
+      ]);
     });
   });
 
