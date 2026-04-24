@@ -196,7 +196,7 @@ const filterOptions: Array<{ key: ClipboardFilter; label: string }> = [
 const TEXT_PREVIEW_LENGTH = 180;
 const SCROLL_EDGE_PADDING = 12;
 const SCROLL_ANIMATION_MS = 460;
-const ANCHOR_FLASH_MS = 2000;
+const ANCHOR_FLASH_MS = 1000;
 let scrollAnimationFrame: number | null = null;
 let anchorFlashTimer: number | null = null;
 
@@ -549,7 +549,8 @@ function animateScrollTo(container: HTMLElement, targetScrollTop: number) {
 }
 </script>
 
-<style scoped>
+<style lang="scss" scoped>
+$scrollbar-width: 6px;
 .clipboard-history {
     width: 100vw;
     height: 100vh;
@@ -699,13 +700,14 @@ function animateScrollTo(container: HTMLElement, targetScrollTop: number) {
     flex: 1;
     overflow-y: auto;
     padding: 12px;
+    padding-right: 12px - $scrollbar-width;
     display: flex;
     flex-direction: column;
     gap: 8px;
 }
 
 .content::-webkit-scrollbar {
-    width: 6px;
+    width: $scrollbar-width;
 }
 
 .content::-webkit-scrollbar-track {
@@ -714,7 +716,7 @@ function animateScrollTo(container: HTMLElement, targetScrollTop: number) {
 
 .content::-webkit-scrollbar-thumb {
     background: var(--border-color-strong);
-    border-radius: 3px;
+    border-radius: calc($scrollbar-width / 2);
 }
 
 .group-section {
