@@ -1,15 +1,30 @@
 <template>
-    <div v-if="items.length > 0" class="home-section" data-menu-type="Home-Recent-Used-View" data-home-section="recent">
+    <div
+        v-if="items.length > 0"
+        class="home-section"
+        data-menu-type="Home-Recent-Used-View"
+        :data-home-section="homeSection"
+    >
         <div class="home-section-header">
-            <span class="home-section-title">最近使用</span>
+            <span class="home-section-title">{{ title }}</span>
         </div>
         <div class="home-grid" :style="{ '--cols': layout.cols }">
-            <HomeCard v-for="item in items" :key="item.key" :item-id="item.recent.itemId"
-                :category-id="item.recent.categoryId" :name="item.item.name" :icon-base64="item.item.iconBase64"
+            <HomeCard
+                v-for="item in items"
+                :key="item.key"
+                :item-id="item.recent.itemId"
+                :category-id="item.recent.categoryId"
+                :name="item.item.name"
+                :icon-base64="item.item.iconBase64"
                 :item-type="item.item.itemType"
                 :has-dependencies="item.item.launchDependencies.length > 0"
-                :launch-status="getLaunchStatus(item.recent.itemId)" :cols="layout.cols" menu-type="Icon-Item" home-section="recent"
-                @click="$emit('select', item)" />
+                :feature-badge-text="item.featureBadgeText"
+                :launch-status="getLaunchStatus(item.recent.itemId)"
+                :cols="layout.cols"
+                menu-type="Icon-Item"
+                :home-section="homeSection"
+                @click="$emit('select', item)"
+            />
         </div>
     </div>
 </template>
@@ -18,14 +33,23 @@
 import HomeCard from "./HomeCard.vue";
 import type { RecentUsedMergedItem } from "../../stores";
 
-defineProps<{
-    items: RecentUsedMergedItem[];
+type RecentDisplayItem = RecentUsedMergedItem & {
+    featureBadgeText?: string;
+};
+
+withDefaults(defineProps<{
+    items: RecentDisplayItem[];
     layout: { cols: number; rows: number };
     getLaunchStatus: (itemId: string) => "launching" | "success" | undefined;
-}>();
+    title?: string;
+    homeSection?: string;
+}>(), {
+    title: "最近使用",
+    homeSection: "recent",
+});
 
 defineEmits<{
-    (e: "select", item: RecentUsedMergedItem): void;
+    (e: "select", item: RecentDisplayItem): void;
 }>();
 </script>
 

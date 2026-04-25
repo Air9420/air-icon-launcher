@@ -7,6 +7,17 @@
             <div class="category-title" data-tauri-drag-region>
                 {{ title }}
             </div>
+            <div class="sort-mode-switch" @mousedown.stop>
+                <label class="sort-mode-label" for="category-sort-mode">排序</label>
+                <select
+                    id="category-sort-mode"
+                    v-model="sortMode"
+                    class="sort-mode-select"
+                >
+                    <option value="manual">手动排序</option>
+                    <option value="smart">智能排序</option>
+                </select>
+            </div>
             <div class="header-search">
                 <SearchBox ref="searchBoxRef" v-model="localSearchKeyword" placeholder="搜索启动项..." />
             </div>
@@ -97,7 +108,7 @@
                 :force-fallback="true"
                 fallback-class="icon-drag"
                 :fallback-tolerance="5"
-                :disabled="hasSelection"
+                :disabled="hasSelection || !isManualSort"
                 data-menu-type="Icon-View"
                 :data-category-id="categoryId"
             >
@@ -304,6 +315,7 @@ const localSearchKeyword = ref<string>("");
 const categorySearchResults = ref<RustSearchResult[]>([]);
 const isCategorySearchPending = ref(false);
 const searchBoxRef = ref<InstanceType<typeof SearchBox> | null>(null);
+const sortMode = ref<"manual" | "smart">("manual");
 const selectedItemIds = ref<string[]>([]);
 const activeBulkPanel = ref<"move" | "edit" | null>(null);
 const bulkMoveTargetCategoryId = ref("");
@@ -374,9 +386,14 @@ const title = computed(() => {
     const category = categoryStore.getCategoryById(props.categoryId);
     return category?.name || "未命名类目";
 });
+const isManualSort = computed(() => sortMode.value === "manual");
 
 const items = computed<LauncherItem[]>({
     get() {
+        if (!isManualSort.value) {
+            return store.getSmartSortedItems(props.categoryId);
+        }
+
         const rawItems = store.getLauncherItemsByCategoryId(props.categoryId);
         const favoriteIds = new Set(store.pinnedItemIds);
         return [...rawItems].sort((a, b) => {
@@ -880,8 +897,36 @@ function hasLaunchDependencies(item: LauncherItem): boolean {
     color: var(--text-color);
 }
 
-.header-search {
+.sort-mode-switch {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     margin-left: auto;
+    -webkit-app-region: no-drag;
+}
+
+.sort-mode-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.sort-mode-select {
+    height: 32px;
+    min-width: 108px;
+    padding: 0 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border-color-strong);
+    background: var(--input-bg);
+    color: var(--text-color);
+    outline: none;
+}
+
+.sort-mode-select:focus {
+    border-color: var(--primary-color);
+}
+
+.header-search {
     width: 200px;
     -webkit-app-region: no-drag;
 }

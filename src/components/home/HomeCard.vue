@@ -5,7 +5,13 @@
     }" :data-menu-type="menuType" :data-home-section="homeSection" :data-category-id="categoryId"
         :data-item-id="itemId" v-on="longpressHandlers" @pointerdown="onPointerDown" @pointerup="onPointerUp"
         @pointerleave="onPointerLeave" data-no-drag>
-        <div v-if="badgeText" class="url-badge">{{ badgeText }}</div>
+        <div
+            v-if="cornerBadgeText"
+            class="corner-badge"
+            :class="{ 'is-feature-badge': !!featureBadgeText }"
+        >
+            {{ cornerBadgeText }}
+        </div>
         <div class="home-card-main">
             <div class="home-card-icon">
                 <img v-if="iconBase64" class="icon-real" :src="getIconSrc(iconBase64)" alt="" draggable="false" />
@@ -33,6 +39,7 @@ const props = defineProps<{
     iconBase64?: string | null;
     itemType?: 'file' | 'url';
     hasDependencies?: boolean;
+    featureBadgeText?: string;
     menuType?: string;
     homeSection?: string;
     launchStatus?: "launching" | "success" | undefined;
@@ -78,10 +85,20 @@ function onPointerLeave() {
 const isLaunching = computed(() => props.launchStatus === "launching");
 const isSuccess = computed(() => props.launchStatus === "success");
 const hideName = computed(() => (props.cols ?? 5) >= 7);
+const featureBadgeText = computed(() => props.featureBadgeText?.trim() || "");
 const badgeText = computed(() => {
     if (props.itemType === "url") return "URL";
     if (props.hasDependencies) return "依赖";
     return "";
+});
+const cornerBadgeText = computed(() => {
+    if (featureBadgeText.value) {
+        return badgeText.value
+            ? `${featureBadgeText.value}:${badgeText.value}`
+            : featureBadgeText.value;
+    }
+
+    return badgeText.value;
 });
 
 const fallbackText = computed(() => {
@@ -129,17 +146,21 @@ function getIconSrc(iconBase64: string) {
     }
 }
 
-.url-badge {
+.corner-badge {
     position: absolute;
     top: 4px;
     left: 4px;
+    z-index: 1;
     padding: 1px 4px;
     font-size: 8px;
     font-weight: 600;
     color: #fff;
-    background: #3b82f6;
     border-radius: 4px;
-    z-index: 1;
+    background: #3b82f6;
+}
+
+.corner-badge.is-feature-badge {
+    background: linear-gradient(135deg, #f59e0b, #f97316);
 }
 
 .home-card-main {

@@ -23,6 +23,13 @@ function getSeedTimestamp(daysAgo: number, hour: number = 9): number {
   return date.getTime();
 }
 
+function getDifferentSlotHour(hour: number): number {
+  if (hour >= 6 && hour < 12) return 14;
+  if (hour >= 12 && hour < 18) return 20;
+  if (hour >= 18 && hour < 23) return 2;
+  return 9;
+}
+
 describe("statsStore - 智能排序 & 统计", () => {
   let stats: ReturnType<typeof useStatsStore>;
   let launcher: ReturnType<typeof useLauncherStore>;
@@ -72,18 +79,27 @@ describe("statsStore - 智能排序 & 统计", () => {
     hour: number = 9
   ) {
     const target = ensureItem(catId, path);
+    recordUsage(catId, target.id, count, daysAgo, hour);
+    return target;
+  }
+
+  function recordUsage(
+    catId: string,
+    itemId: string,
+    count: number,
+    daysAgo: number,
+    hour: number = 9
+  ) {
     const firstUsedAt = getSeedTimestamp(daysAgo, hour);
     stats.ensureLaunchTrackingStarted([], firstUsedAt - DAY_MS);
 
     for (let i = 0; i < count; i++) {
       stats.recordLaunchEvent({
         categoryId: catId,
-        itemId: target.id,
+        itemId,
         usedAt: firstUsedAt + i * 60_000,
       });
     }
-
-    return target;
   }
 
   describe("recordSearch / topSearchKeywords", () => {
@@ -208,6 +224,54 @@ describe("statsStore - 智能排序 & 统计", () => {
       const recs = stats.timeBasedRecommendations;
       expect(Array.isArray(recs)).toBe(true);
       expect(recs.some((item) => item.name === "ide")).toBe(true);
+    });
+
+    it("requires enough slot density and overall sample size", () => {
+      const currentHour = new Date().getHours();
+      const differentSlotHour = getDifferentSlotHour(currentHour);
+
+      const qualified = ensureItem("cat-work", "C:\\qualified.exe");
+      recordUsage("cat-work", qualified.id, 3, 0, currentHour);
+      recordUsage("cat-work", qualified.id, 2, 1, differentSlotHour);
+
+      const lowSlotCount = ensureItem("cat-work", "C:\\low-slot.exe");
+      recordUsage("cat-work", lowSlotCount.id, 2, 0, currentHour);
+      recordUsage("cat-work", lowSlotCount.id, 3, 1, differentSlotHour);
+
+      const lowTotal = ensureItem("cat-work", "C:\\low-total.exe");
+      recordUsage("cat-work", lowTotal.id, 4, 0, currentHour);
+
+      const lowShare = ensureItem("cat-work", "C:\\low-share.exe");
+      recordUsage("cat-work", lowShare.id, 3, 0, currentHour);
+      recordUsage("cat-work", lowShare.id, 8, 1, differentSlotHour);
+
+      const recs = stats.timeBasedRecommendations;
+
+      expect(recs.some((item) => item.name === "qualified")).toBe(true);
+      expect(recs.some((item) => item.name === "low-slot")).toBe(false);
+      expect(recs.some((item) => item.name === "low-total")).toBe(false);
+      expect(recs.some((item) => item.name === "low-share")).toBe(false);
+    });
+
+    it("ranks candidates by weighted slot usage and recency", () => {
+      const currentHour = new Date().getHours();
+      const differentSlotHour = getDifferentSlotHour(currentHour);
+
+      const recent = ensureItem("cat-work", "C:\\recent.exe");
+      recordUsage("cat-work", recent.id, 3, 0, currentHour);
+      recordUsage("cat-work", recent.id, 2, 1, differentSlotHour);
+
+      const stale = ensureItem("cat-work", "C:\\stale.exe");
+      recordUsage("cat-work", stale.id, 4, 6, currentHour);
+      recordUsage("cat-work", stale.id, 2, 6, differentSlotHour);
+
+      const recs = stats.timeBasedRecommendations;
+      const recentIndex = recs.findIndex((item) => item.name === "recent");
+      const staleIndex = recs.findIndex((item) => item.name === "stale");
+
+      expect(recentIndex).toBeGreaterThanOrEqual(0);
+      expect(staleIndex).toBeGreaterThanOrEqual(0);
+      expect(recentIndex).toBeLessThan(staleIndex);
     });
   });
 

@@ -6,8 +6,18 @@ import { createVersionedPersistConfig } from "../utils/versioned-persist";
 
 type TimeSlot = "morning" | "afternoon" | "evening" | "night";
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WEEK_MS = 7 * DAY_MS;
 const MAX_LAUNCH_EVENTS = 5000;
-const MAX_LAUNCH_EVENT_AGE_MS = 180 * 24 * 60 * 60 * 1000;
+const MAX_LAUNCH_EVENT_AGE_MS = 180 * DAY_MS;
+const MIN_TIME_SLOT_RECOMMENDATION_LAUNCHES = 3;
+const MIN_TIME_SLOT_RECOMMENDATION_TOTAL_LAUNCHES = 5;
+const MIN_TIME_SLOT_RECOMMENDATION_SLOT_SHARE = 0.3;
+const TIME_BASED_RECOMMENDATION_SLOT_WEIGHT = 5;
+const TIME_BASED_RECOMMENDATION_WEEK_WEIGHT = 2;
+const TIME_BASED_RECOMMENDATION_RECENT_DAY_SCORE = 50;
+const TIME_BASED_RECOMMENDATION_RECENT_THREE_DAYS_SCORE = 30;
+const TIME_BASED_RECOMMENDATION_RECENT_WEEK_SCORE = 10;
 
 export type SearchKeywordRecord = {
   keyword: string;
@@ -68,8 +78,39 @@ function getHour(timestamp: number): number {
 function isWithinWeek(timestamp: number): boolean {
   if (!timestamp || isNaN(timestamp)) return false;
   const now = Date.now();
-  const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+  const weekAgo = now - WEEK_MS;
   return timestamp >= weekAgo;
+}
+
+function getTimeBasedRecommendationRecencyScore(lastUsedAt: number, now: number): number {
+  if (!Number.isFinite(lastUsedAt) || lastUsedAt <= 0) return 0;
+
+  if (lastUsedAt >= now - DAY_MS) {
+    return TIME_BASED_RECOMMENDATION_RECENT_DAY_SCORE;
+  }
+  if (lastUsedAt >= now - 3 * DAY_MS) {
+    return TIME_BASED_RECOMMENDATION_RECENT_THREE_DAYS_SCORE;
+  }
+  if (lastUsedAt >= now - WEEK_MS) {
+    return TIME_BASED_RECOMMENDATION_RECENT_WEEK_SCORE;
+  }
+
+  return 0;
+}
+
+function getTimeBasedRecommendationScore(
+  stats: AppUsageStats,
+  currentSlot: TimeSlot,
+  now: number
+): number {
+  const currentSlotLaunches = stats.timeSlotCounts[currentSlot];
+  const recencyScore = getTimeBasedRecommendationRecencyScore(stats.lastUsedAt, now);
+
+  return (
+    currentSlotLaunches * TIME_BASED_RECOMMENDATION_SLOT_WEIGHT +
+    stats.weekLaunches * TIME_BASED_RECOMMENDATION_WEEK_WEIGHT +
+    recencyScore
+  );
 }
 
 function normalizeTimestamp(value: number, fallback: number = Date.now()): number {
@@ -385,16 +426,43 @@ export const useStatsStore = defineStore(
 
     const timeBasedRecommendations = computed(() => {
       const currentSlot = getCurrentTimeSlot();
+      const now = Date.now();
 
-      return [...appUsageStats.value]
-        .filter((s) => s.timeSlotCounts[currentSlot] > 0)
-        .sort((a, b) => b.timeSlotCounts[currentSlot] - a.timeSlotCounts[currentSlot])
+      return appUsageStats.value
+        .map((stats) => {
+          const currentSlotLaunches = stats.timeSlotCounts[currentSlot];
+          const slotShare =
+            stats.totalLaunches > 0 ? currentSlotLaunches / stats.totalLaunches : 0;
+
+          return {
+            stats,
+            score: getTimeBasedRecommendationScore(stats, currentSlot, now),
+            currentSlotLaunches,
+            slotShare,
+          };
+        })
+        .filter(
+          ({ stats, currentSlotLaunches, slotShare }) =>
+            currentSlotLaunches >= MIN_TIME_SLOT_RECOMMENDATION_LAUNCHES &&
+            stats.totalLaunches >= MIN_TIME_SLOT_RECOMMENDATION_TOTAL_LAUNCHES &&
+            slotShare >= MIN_TIME_SLOT_RECOMMENDATION_SLOT_SHARE
+        )
+        .sort((a, b) => {
+          const scoreDiff = b.score - a.score;
+          if (scoreDiff !== 0) return scoreDiff;
+
+          const currentSlotDiff = b.currentSlotLaunches - a.currentSlotLaunches;
+          if (currentSlotDiff !== 0) return currentSlotDiff;
+
+          return b.stats.lastUsedAt - a.stats.lastUsedAt;
+        })
+        .map(({ stats }) => stats)
         .slice(0, 8);
     });
 
     const frequentlyUsedApps = computed(() => {
       const now = Date.now();
-      const threeDaysAgo = now - 3 * 24 * 60 * 60 * 1000;
+      const threeDaysAgo = now - 3 * DAY_MS;
 
       return [...appUsageStats.value]
         .filter((s) => s.lastUsedAt >= threeDaysAgo && s.totalLaunches >= 3)
