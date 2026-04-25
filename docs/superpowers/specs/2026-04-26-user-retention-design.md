@@ -451,51 +451,82 @@ const TEST_CASES: ClassificationTestCase[] = [
 输入 → Override 层 → Phase A Pipeline → 输出
 ```
 
-**数据结构**：
+**数据结构（v2 — 三层 key 体系）**：
 
 ```typescript
 type CategoryOverride = {
-    id: string;
-    matchKey: string;          // 标识一个 app 的唯一键
+    key: string;               // 三层 key 之一
     categoryKey: CategoryKey;  // 用户指定的分类
+    confidence: number;        // 0~1, 用户修正=1.0, AI建议=0.7
+    source: "user" | "ai";     // 来源
     createdAt: number;
-    source: "user" | "ai";     // 来源：手动修正 or AI 建议
+    hitCount: number;          // 被命中次数（用于演化）
 };
 ```
 
-**matchKey 生成规则**：
+**三层 key 体系**：
+
+| key 类型 | 格式 | 特性 | 用途 |
+|----------|------|------|------|
+| exe+publisher | `exe+publisher:${exe}:${publisher}` | 高精度，适合传播 | 首选 |
+| exe | `exe:${exe}` | 泛化，但可控 | 次选 |
+| fingerprint | `fingerprint:${hash}` | 仅本机精确匹配 | 兜底 |
 
 ```typescript
-function buildOverrideMatchKey(app: NormalizedApp): string {
-    if (app.exeName && app.exeName !== "") {
-        return `exe:${app.exeName.toLowerCase()}`;
+function buildOverrideKeys(app: NormalizedApp): string[] {
+    const keys: string[] = [];
+
+    if (app.exeName) {
+        keys.push(`exe:${app.exeName.toLowerCase()}`);
+
+        if (app.publisherToken) {
+            keys.push(`exe+publisher:${app.exeName.toLowerCase()}:${app.publisherToken}`);
+        }
     }
-    const pathSignature = app.pathTokens.slice(0, 3).join("/");
-    return `name:${app.nameTokens.join(" ")}@${pathSignature}`;
+
+    const fingerprint = simpleHash(
+        app.nameTokens.join(" ") + "|" +
+        app.pathTokens.slice(0, 3).join("/")
+    );
+    keys.push(`fingerprint:${fingerprint}`);
+
+    return keys;
 }
 ```
 
-为什么用 matchKey 而不是 appId：
-- appId 是运行时生成的，不同机器不同
-- matchKey 基于软件本身特征，可跨设备、可导出
-- 同一软件重新扫描后，override 仍然有效
-
-**Override 查找**：
+**查找顺序（关键）**：
 
 ```typescript
-const EXE_OVERRIDE_MAP = new Map<string, CategoryOverride>();
-const NAME_OVERRIDE_MAP = new Map<string, CategoryOverride>();
-
-function lookupOverride(app: NormalizedApp): CategoryKey | null {
-    const exeKey = `exe:${app.exeName.toLowerCase()}`;
-    const exeOverride = EXE_OVERRIDE_MAP.get(exeKey);
-    if (exeOverride) return exeOverride.categoryKey;
-
-    const nameKey = buildOverrideMatchKey(app);
-    const nameOverride = NAME_OVERRIDE_MAP.get(nameKey);
-    if (nameOverride) return nameOverride.categoryKey;
-
+// exe+publisher → exe → fingerprint
+function lookupOverride(app: NormalizedApp): CategoryOverride | null {
+    const keys = buildOverrideKeys(app);
+    for (const key of keys) {
+        const override = OVERRIDE_MAP.get(key);
+        if (override) return override;
+    }
     return null;
+}
+```
+
+**Override 保护机制（AI override 不得覆盖 Layer1）**：
+
+```typescript
+// 在 Pipeline 中
+const override = lookupOverride(app);
+if (override) {
+    // AI 低置信度 override 不得覆盖硬匹配
+    if (override.source === "ai" && override.confidence < 0.8) {
+        const hardMatch = layer1_HardMatch(app);
+        if (hardMatch) {
+            // Layer1 优先，AI override 不生效
+            return { rule: CATEGORY_BY_KEY.get(hardMatch)!, reason: "硬匹配", confidence: 1.0 };
+        }
+    }
+    return {
+        rule: CATEGORY_BY_KEY.get(override.categoryKey) || FALLBACK_CATEGORY,
+        reason: override.source === "user" ? "用户手动修正" : "AI 建议修正",
+        confidence: override.confidence,
+    };
 }
 ```
 
@@ -507,7 +538,8 @@ const categoryOverrides = ref<CategoryOverride[]>([]);
 ```
 
 **演化路径**（长期，非 Phase B 范围）：
-- 同一 matchKey 的 override 被多次确认 → 可提升为规则
+- 同一 key 的 override.hitCount 达到阈值 → 可提升为规则
+- AI override 被用户确认 → confidence 提升
 
 ### 模块 B2: 行为建模
 
@@ -523,31 +555,13 @@ const categoryOverrides = ref<CategoryOverride[]>([]);
 
 **需新增的信号**：
 
-| 信号 | 可靠性 | 说明 |
-|------|--------|------|
-| launchDurations | 高 | 启动后停留时长（区分"打开"和"使用"） |
-| categoryCorrelations | 中 | 同一时段经常一起使用的分类 |
-| searchToLaunch | 高 | 搜索后是否启动（搜索质量信号） |
+| 信号 | 可靠性 | 说明 | 优先级 |
+|------|--------|------|--------|
+| searchToLaunch | 高 | 搜索后是否启动（搜索质量信号） | **P1** |
+| launchDurations | 高 | 启动后停留时长（区分"打开"和"使用"） | P4 |
+| ~~categoryCorrelations~~ | ~~中~~ | ~~同一时段经常一起使用的分类~~ | **暂不做** |
 
-**B2.1: launchDurations**
-
-```typescript
-type LaunchSession = {
-    categoryId: string;
-    itemId: string;
-    startedAt: number;
-    durationMs: number | null;
-};
-
-const launchSessions = ref<LaunchSession[]>([]);
-```
-
-简化版实现：
-- 记录启动时间
-- 下次启动任何 app 时，计算上一个 app 的"至少使用了 X 秒"
-- 不需要精确，只需区分"点开就关"和"真正使用"
-
-**B2.2: searchToLaunch**
+**B2.1: searchToLaunch（隐藏王牌，提前做）**
 
 ```typescript
 type SearchSession = {
@@ -558,10 +572,59 @@ type SearchSession = {
 };
 ```
 
-价值：
-- 搜索了但没启动 → 搜索结果不满足需求
-- 搜索后立即启动 → 搜索精准
-- 可优化搜索排序
+**核心指标：转化率**
+
+```typescript
+conversionRate = launches / searches
+```
+
+**搜索排序自动进化**：
+
+```typescript
+score = baseScore * (1 + conversionRate)
+```
+
+不需要 AI，搜索会根据用户行为自动变准。
+
+**B2.2: launchDurations（简化版）**
+
+```typescript
+// 不需要 Rust 监听窗口焦点
+// 简化版：记录启动时间，下次启动时计算上一个 app 的时长
+
+let lastLaunchStart: number | null = null;
+let lastLaunchRef: { categoryId: string; itemId: string } | null = null;
+
+function onLaunch(categoryId: string, itemId: string) {
+    const now = Date.now();
+
+    if (lastLaunchStart && lastLaunchRef) {
+        const durationMs = now - lastLaunchStart;
+        recordLaunchDuration(lastLaunchRef.categoryId, lastLaunchRef.itemId, durationMs);
+    }
+
+    lastLaunchStart = now;
+    lastLaunchRef = { categoryId, itemId };
+}
+```
+
+**时长分类**：
+
+```typescript
+if (durationMs < 3000) → "accidental"  // 误触
+if (durationMs >= 3000 && durationMs < 30000) → "brief"  // 短暂使用
+if (durationMs >= 30000) → "meaningful"  // 真正使用
+```
+
+只需要区分"点开"vs"真正用"，不需要精确时长。
+
+**B2.3: categoryCorrelations — 暂不做**
+
+原因：
+- 噪声极大
+- 解释困难
+- 用户感知弱
+- 必须在数据量足够大时再做
 
 ### 模块 B3: 智能首页
 
@@ -577,27 +640,32 @@ function getTimeBasedThreshold(totalLaunches: number) {
 }
 ```
 
-**B3.2: 工作流推荐（A → B 模式）**
+**B3.2: Context Trigger（上下文触发，比 workflow 更直接）**
 
 ```typescript
-type WorkflowPattern = {
+type ContextTrigger = {
     triggerItemId: string;
     triggerCategoryId: string;
-    nextItemId: string;
-    nextCategoryId: string;
+    recommendedItemIds: string[];
     frequency: number;
-    avgDelayMs: number;
 };
 
-function discoverWorkflowPatterns(
-    events: LaunchEventRecord[],
-    maxDelayMs: number = 300000
-): WorkflowPattern[] {
-    // 按 usedAt 排序
-    // 相邻两次启动在 5 分钟内 → 候选 workflow
-    // 统计频率，过滤低频模式
+// 从 launchEvents 中挖掘
+// 用户刚打开 VSCode → 推荐 Terminal, Chrome, Git GUI
+function discoverContextTriggers(events: LaunchEventRecord[]): ContextTrigger[] {
+    // 统计"启动 A 后 5 分钟内启动 B"的频率
+    // 过滤低频模式
 }
 ```
+
+**Context Trigger vs Workflow**：
+
+| 方案 | 特点 | 用户感知 |
+|------|------|----------|
+| workflow | 离线统计，批量推荐 | 弱 |
+| context trigger | 实时响应，即时推荐 | **强** |
+
+**先做 context trigger，再做 workflow。**
 
 **B3.3: 分类偏好权重**
 
@@ -608,6 +676,19 @@ type CategoryPreference = {
 };
 // 基于使用频率 + 时段 + 最近性
 // 高频分类的 app 在首页更靠前
+```
+
+**B3.4: 工作流推荐（A → B 模式，最后做）**
+
+```typescript
+type WorkflowPattern = {
+    triggerItemId: string;
+    triggerCategoryId: string;
+    nextItemId: string;
+    nextCategoryId: string;
+    frequency: number;
+    avgDelayMs: number;
+};
 ```
 
 ### 数据结构设计（避免迁移地狱）
@@ -623,7 +704,6 @@ const STATS_SCHEMA_VERSION = 2;
 function migrateStatsV1toV2(v1: any): any {
     return {
         ...v1,
-        launchSessions: [],
         searchSessions: [],
         categoryOverrides: [],
         _schemaVersion: 2,
@@ -631,16 +711,17 @@ function migrateStatsV1toV2(v1: any): any {
 }
 ```
 
-### Phase B 实施优先级
+### Phase B 实施优先级（修订版）
 
 | 优先级 | 模块 | 理由 |
 |--------|------|------|
-| **P0** | B1: Override 系统 | 与 Phase A 融合点，必须先做 |
-| **P1** | B3.1: 降低时段推荐门槛 | 最小改动，最大体验提升 |
-| **P2** | B3.3: 分类偏好权重 | 利用现有数据，无需新信号 |
-| **P3** | B2.1: launchDurations | 需要新信号，但价值高 |
-| **P4** | B3.2: 工作流推荐 | 复杂度高，但差异化明显 |
-| **P5** | B2.2: searchToLaunch | 优化搜索质量，长期价值 |
+| **P0** | B1: Override 系统（三层 key + confidence + 保护机制） | 与 Phase A 融合点，必须先做 |
+| **P1** | B2.1: searchToLaunch | 性价比极高，搜索自动进化 |
+| **P2** | B3.1: 降低时段推荐门槛 | 最小改动，最大体验提升 |
+| **P3** | B3.3: 分类偏好权重 | 利用现有数据，无需新信号 |
+| **P4** | B2.2: launchDurations（简化版） | 区分"点开"vs"真正用" |
+| **P5** | B3.2: Context Trigger | 实时响应，强感知 |
+| **P6** | B3.4: 工作流推荐 | 复杂度高，最后做 |
 
 ---
 
@@ -675,7 +756,21 @@ fn build_candidate_from_registry(key: &RegKey) -> Option<CandidateApp> {
 | Publisher 匹配 | token-based > substring | 避免误伤 |
 | exe 匹配 | 独立 EXE_MAP > 规则内 | O(1)、更干净 |
 | path 匹配 | 预编译 token > glob | 更快、更稳定 |
-| Override | matchKey > appId | 可跨设备、可导出 |
+| Override key | 三层 key 体系 > 单一 matchKey | 防止过度泛化误伤 |
+| Override 保护 | AI 低置信度不得覆盖 Layer1 | 防止 AI 灾难性误判 |
 | Heuristics 位置 | Layer 2.5 > Layer 3 之后 | 比关键词更可靠 |
 | 去重计分 | Set<signal> > 重复计数 | 更接近信息量 |
 | Δ阈值 | 0.15 > 简单比较 | 避免弱信号干扰强信号 |
+| searchToLaunch | P1 提前做 | 性价比极高，搜索自动进化 |
+| categoryCorrelations | 暂不做 | 噪声大、解释难、感知弱 |
+| Context Trigger | 先于 Workflow | 实时响应，用户感知更强 |
+| launchDurations | 简化版（不监听焦点） | ROI 不对，区分"点开"vs"用"即可 |
+
+---
+
+## Phase C: AI 介入点设计（待讨论）
+
+> 这一步如果设计错，比前两阶段更容易崩。
+> 核心问题：什么时候用 AI，怎么避免滥用。
+
+待确认方向。
