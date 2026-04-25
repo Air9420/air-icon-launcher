@@ -765,12 +765,512 @@ fn build_candidate_from_registry(key: &RegKey) -> Option<CandidateApp> {
 | categoryCorrelations | 暂不做 | 噪声大、解释难、感知弱 |
 | Context Trigger | 先于 Workflow | 实时响应，用户感知更强 |
 | launchDurations | 简化版（不监听焦点） | ROI 不对，区分"点开"vs"用"即可 |
+| AI 输入过滤 | confidence < 0.7 OR suspicious | 不只低置信，还处理高置信但矛盾 |
+| AI Override | 衰减机制 decayFactor=0.98/天 | AI 错误不永久污染 |
+| AI 新分类 | 4层收敛（上限+去重+冷却+回收） | 防止分类爆炸 |
+| AI 角色 | 规则生成器 > 分类工具 | 用 AI 训练规则引擎，成本趋近零 |
+| Suspicion Signals | 3种（Publisher冲突/exe冲突/other+强token） | 高置信纠错 |
 
 ---
 
-## Phase C: AI 介入点设计（待讨论）
+## Phase C: AI 介入点设计
 
-> 这一步如果设计错，比前两阶段更容易崩。
-> 核心问题：什么时候用 AI，怎么避免滥用。
+> 核心原则：AI 只补位，不主导。
 
-待确认方向。
+### C1: AI 输入过滤 — 不只是"低置信"，还要处理"高置信但矛盾"
+
+**基础过滤**：
+
+```typescript
+function shouldSendToAI(result: ClassificationResult): boolean {
+    if (result.confidence < 0.7) return true;
+
+    // 新增：高置信但可疑
+    if (isSuspicious(result)) return true;
+
+    return false;
+}
+```
+
+**Suspicion Signals（可疑信号，非常关键）**：
+
+| 信号 | 检测逻辑 | 示例 |
+|------|----------|------|
+| Publisher 与分类冲突 | publisherToken 已知属于某分类，但判定结果不同 | publisher="jetbrains" → 判为 media |
+| exeName 强语义不匹配 | EXE_MAP 中有该 exe 但分类不同 | code.exe → 判为 system |
+| "other" 但有明显 token | nameTokens 含 studio/editor/manager 等 | "Android Studio" → other |
+
+```typescript
+function isSuspicious(result: ClassificationResult): boolean {
+    // 1. Publisher 与分类冲突
+    if (result.app.publisherToken) {
+        for (const rule of CATEGORY_RULES) {
+            if (rule.publisherKeywords?.some(kw =>
+                matchPublisher(result.app.publisherToken!, normalizePublisher(kw))
+            ) && rule.key !== result.rule.key) {
+                return true;
+            }
+        }
+    }
+
+    // 2. exeName 强语义不匹配
+    const exeCategory = EXE_MAP[result.app.exeName.toLowerCase()];
+    if (exeCategory && exeCategory !== result.rule.key) {
+        return true;
+    }
+
+    // 3. "other" 但有明显 token
+    if (result.rule.key === "other") {
+        const strongTokens = ["studio", "editor", "manager", "browser", "player"];
+        if (result.app.nameTokens.some(t => strongTokens.includes(t))) {
+            return true;
+        }
+    }
+
+    return false;
+}
+```
+
+**本质**：AI 不只处理"低置信"，还处理"高置信但矛盾"。
+
+### C2: AI Prompt 优化 — 给 AI 更好的上下文
+
+```typescript
+type AIRefineInput = {
+    id: string;
+    name: string;
+    path: string;
+    publisher: string | null;
+    exeName: string;
+    currentCategoryKey: string;
+    currentReason: string;
+    currentConfidence: number;
+    ruleMatchedLayers: string[];
+};
+```
+
+Prompt 中加入：
+```
+这个软件的规则分类置信度为 {confidence}，命中了 {layers}。
+请重点判断：规则分类是否正确？如果不正确，应该归入哪个分类？
+```
+
+### C3: AI 结果校验层
+
+```typescript
+type AIAssignmentWithValidation = {
+    id: string;
+    categoryKey: string;
+    reason: string;
+    isValid: boolean;
+    validationError?: string;
+};
+
+function validateAIAssignment(
+    assignment: AIOrganizerAssignment,
+    existingCategories: Map<string, CategoryRule>,
+    inputItems: Map<string, NormalizedApp>
+): AIAssignmentWithValidation {
+    // 1. id 必须在输入中存在
+    if (!inputItems.has(assignment.id)) {
+        return { ...assignment, isValid: false, validationError: "AI 返回了不存在的 id" };
+    }
+
+    // 2. categoryKey 必须是已有分类或合法新分类
+    if (existingCategories.has(assignment.category_key)) {
+        return { ...assignment, isValid: true };
+    }
+
+    // 3. 新分类必须有 name 和 description
+    if (!assignment.category_name || !assignment.category_description) {
+        return { ...assignment, isValid: false, validationError: "新分类缺少名称或描述" };
+    }
+
+    // 4. 新分类不能和已有分类过于相似
+    const similarKey = findSimilarCategoryKey(assignment.category_key, existingCategories);
+    if (similarKey) {
+        return { ...assignment, isValid: false, validationError: `新分类与已有分类 ${similarKey} 过于相似` };
+    }
+
+    return { ...assignment, isValid: true };
+}
+```
+
+### C4: AI 结果写入 Override（含衰减机制）
+
+**Override 衰减（关键新增）**：
+
+```typescript
+type CategoryOverride = {
+    key: string;
+    categoryKey: CategoryKey;
+    confidence: number;
+    source: "user" | "ai";
+    createdAt: number;
+    lastUsedAt: number;      // 新增：最后使用时间
+    hitCount: number;
+    decayFactor: number;     // 新增：衰减因子
+};
+
+function getEffectiveConfidence(override: CategoryOverride): number {
+    const now = Date.now();
+    const days = (now - override.lastUsedAt) / (24 * 60 * 60 * 1000);
+    return override.confidence * Math.pow(override.decayFactor, days);
+}
+```
+
+**推荐参数**：
+
+| source | 初始 confidence | decayFactor | 30天后 |
+|--------|----------------|-------------|--------|
+| user | 1.0 | 1.0（永不衰减） | 1.0 |
+| ai | 0.7 | 0.98/天 | ~0.55 |
+
+**衰减的好处**：
+- AI 错误不会永久污染
+- 用户长期不用的软件自动"降权"
+- 衰减后 effective confidence < 0.5 → Override 失效，回归规则引擎判定
+
+**AI 结果写入 Override**：
+
+```typescript
+function applyAIResults(
+    assignments: AIAssignmentWithValidation[],
+    items: Map<string, NormalizedApp>
+): void {
+    for (const assignment of assignments) {
+        if (!assignment.isValid) continue;
+        const app = items.get(assignment.id);
+        if (!app) continue;
+
+        addOverride({
+            key: buildOverrideKeys(app)[0],
+            categoryKey: assignment.categoryKey,
+            confidence: 0.7,
+            source: "ai",
+            createdAt: Date.now(),
+            lastUsedAt: Date.now(),
+            hitCount: 0,
+            decayFactor: 0.98,
+        });
+    }
+}
+```
+
+### C5: AI 新分类审批 + 收敛机制
+
+**分类收敛策略（4 层防护）**：
+
+**1. 分类数量上限（硬限制）**：
+
+```typescript
+const MAX_CUSTOM_CATEGORIES = 12;
+```
+
+超过后不允许新建，或强制合并。
+
+**2. 相似度去重**：
+
+```typescript
+function isTooSimilar(a: string, b: string): boolean {
+    return levenshtein(a, b) < 3 || a.includes(b) || b.includes(a);
+}
+```
+
+防止 game_tool / game_tools / gaming_tool / game-assistant 灾难。
+
+**3. 冷却期**：
+
+```typescript
+// 新分类创建后 7 天内：不允许再创建相似分类
+```
+
+**4. 弱分类自动回收**：
+
+```typescript
+if (category.itemCount < 3 && age > 14 days) {
+    // 自动标记为 deprecated
+    // 项归入 "other"
+}
+```
+
+**审批流程**：
+
+```typescript
+type PendingCategory = {
+    key: string;
+    name: string;
+    description: string;
+    proposedBy: "ai";
+    itemCount: number;
+    sampleItems: string[];
+};
+
+// UI: "AI 建议创建新分类「游戏辅助」(3项)，是否采纳？"
+// 用户确认 → 添加到 CATEGORY_RULES（受收敛策略约束）
+// 用户拒绝 → 这些项归入 "other"
+```
+
+### C6: AI 反馈回路
+
+```typescript
+type AIFeedback = {
+    overrideKey: string;
+    originalCategoryKey: string;
+    userAction: "accepted" | "rejected" | "modified";
+    finalCategoryKey: string;
+    timestamp: number;
+};
+```
+
+### C7: AI 缓存层
+
+```typescript
+// key: hash(nameTokens + publisherToken)
+// value: categoryKey
+const AI_CACHE = new Map<string, string>();
+
+function getCachedAICategory(app: NormalizedApp): string | null {
+    const cacheKey = simpleHash(app.nameTokens.join(" ") + "|" + (app.publisherToken || ""));
+    return AI_CACHE.get(cacheKey) || null;
+}
+```
+
+好处：
+- 同一软件不重复请求 AI
+- 跨用户可共享（未来）
+
+### AI 介入的完整流程
+
+```
+扫描完成
+  ↓
+Phase A 规则引擎分类（3层 Pipeline + Override）
+  ↓
+过滤：confidence < 0.7 OR isSuspicious
+  ↓
+AI 缓存命中？→ 直接使用缓存
+  ↓ 未命中
+发送给 AI（只送不确定/可疑的项）
+  ↓
+AI 返回结果
+  ↓
+校验层（id/分类/新分类合法性/相似度）
+  ↓
+用户确认界面
+  ├── 已有分类的改判 → 写入 Override (source="ai", confidence=0.7, decayFactor=0.98)
+  ├── 新分类 → 用户审批（受收敛策略约束）→ 添加到 CATEGORY_RULES
+  └── 拒绝 → 保持规则引擎结果
+  ↓
+记录反馈（AIFeedback）
+  ↓
+写入 AI 缓存
+```
+
+### AI 介入的"红线"
+
+| 红线 | 说明 |
+|------|------|
+| ❌ AI 不能覆盖 Layer1 硬匹配 | chrome.exe 永远是 browser |
+| ❌ AI 不能覆盖用户修正 | 用户说是什么就是什么 |
+| ❌ AI 不能自动创建分类 | 必须用户确认 + 收敛策略 |
+| ❌ AI 不能修改已有分类定义 | 只能建议新分类 |
+| ❌ AI 不能绕过 Override 保护 | effective confidence < 0.8 的 AI override 不覆盖硬匹配 |
+| ❌ AI override 会衰减 | decayFactor=0.98/天，30天后~0.55 |
+| ✅ AI 处理不确定 + 可疑部分 | confidence < 0.7 OR isSuspicious |
+| ✅ AI 结果必须经过校验 | id/分类/新分类合法性/相似度 |
+| ✅ AI 结果必须用户确认 | 不自动生效 |
+
+### 成本优化
+
+| 优化 | 效果 |
+|------|------|
+| 只送 confidence < 0.7 或 suspicious 的项 | token 减少 ~70% |
+| AI 缓存层 | 同一软件不重复请求 |
+| 给 AI 更好的上下文（publisher/exeName） | 准确率提升 |
+| 分批发送（每批 20 项） | 降低超时风险 |
+
+---
+
+## Phase D: 规则自进化（AI → Rule Engine 的闭环）
+
+> 真正的分水岭：AI = 规则生成器，而非分类工具。
+> 系统会越来越稳定，成本越来越低。
+
+### 核心思路
+
+```
+AI 分类 → 统计 pattern → 发现重复模式 → 提出规则 → 用户确认 → 写入规则引擎
+```
+
+从"依赖 AI" → "用 AI 训练规则引擎"。
+
+### D1: 模式发现
+
+从 AI 的分类结果中，统计重复出现的模式：
+
+```typescript
+type ProposedRule = {
+    type: "publisher" | "exe" | "keyword";
+    value: string;
+    categoryKey: CategoryKey;
+    confidence: number;
+    evidence: string[];     // 支持此规则的软件名称列表
+};
+
+function discoverPatterns(
+    aiResults: AIFeedback[],
+    overrides: CategoryOverride[]
+): ProposedRule[] {
+    const patterns: Map<string, ProposedRule> = new Map();
+
+    for (const override of overrides.filter(o => o.source === "ai")) {
+        const app = getAppByOverrideKey(override.key);
+        if (!app) continue;
+
+        // Publisher 模式
+        if (app.publisherToken) {
+            const patternKey = `publisher:${app.publisherToken}:${override.categoryKey}`;
+            const existing = patterns.get(patternKey);
+            if (existing) {
+                existing.confidence += 0.1;
+                existing.evidence.push(app.name);
+            } else {
+                patterns.set(patternKey, {
+                    type: "publisher",
+                    value: app.publisherToken,
+                    categoryKey: override.categoryKey,
+                    confidence: 0.3,
+                    evidence: [app.name],
+                });
+            }
+        }
+
+        // exeName 模式
+        if (app.exeName) {
+            const patternKey = `exe:${app.exeName}:${override.categoryKey}`;
+            // ... 类似逻辑
+        }
+    }
+
+    // 过滤：只保留 confidence >= 0.7 且 evidence >= 3 的模式
+    return [...patterns.values()].filter(
+        p => p.confidence >= 0.7 && p.evidence.length >= 3
+    );
+}
+```
+
+### D2: 规则提案
+
+```typescript
+type RuleProposal = {
+    id: string;
+    rule: ProposedRule;
+    status: "pending" | "approved" | "rejected";
+    createdAt: number;
+    reviewedAt: number | null;
+};
+
+// UI: "发现模式：发行商 'JetBrains' 的软件通常属于「开发」分类（5项），是否添加为规则？"
+// 用户确认 → 写入 CATEGORY_RULES 的 publisherKeywords
+// 用户拒绝 → 丢弃
+```
+
+### D3: 规则写入
+
+```typescript
+function applyApprovedRule(proposal: RuleProposal): void {
+    const rule = CATEGORY_RULES.find(r => r.key === proposal.rule.categoryKey);
+    if (!rule) return;
+
+    switch (proposal.rule.type) {
+        case "publisher":
+            if (!rule.publisherKeywords) rule.publisherKeywords = [];
+            if (!rule.publisherKeywords.includes(proposal.rule.value)) {
+                rule.publisherKeywords.push(proposal.rule.value);
+            }
+            break;
+        case "exe":
+            EXE_MAP[proposal.rule.value] = proposal.rule.categoryKey;
+            break;
+        case "keyword":
+            if (!rule.keywords) rule.keywords = [];
+            if (!rule.keywords.includes(proposal.rule.value)) {
+                rule.keywords.push(proposal.rule.value);
+            }
+            break;
+    }
+
+    // 规则生效后，相关 AI override 可以降权或移除
+    // 因为规则引擎已经能处理这些项
+}
+```
+
+### D4: 自进化闭环
+
+```
+AI 分类 → Override 写入 → 模式发现 → 规则提案 → 用户确认 → 规则写入
+    ↑                                                        |
+    └────────── 规则引擎能力提升 → AI 请求减少 ←───────────────┘
+```
+
+**效果**：
+- 初期：AI 处理 30% 的项
+- 中期：规则引擎覆盖 85%，AI 只处理 15%
+- 长期：规则引擎覆盖 92%+，AI 几乎不需要
+
+**成本趋势**：token 消耗随时间递减，最终趋近于零。
+
+### D5: 规则持久化
+
+```typescript
+// 用户确认的规则需要持久化，否则重启后丢失
+type CustomRules = {
+    publisherKeywords: Record<CategoryKey, string[]>;
+    exeMappings: Record<string, CategoryKey>;
+    keywords: Record<CategoryKey, string[]>;
+};
+
+const customRules = ref<CustomRules>({
+    publisherKeywords: {},
+    exeMappings: {},
+    keywords: {},
+});
+// persist: createVersionedPersistConfig("customRules", ["customRules"])
+```
+
+### Phase D 实施优先级
+
+| 优先级 | 模块 | 理由 |
+|--------|------|------|
+| **P0** | D1: 模式发现 | 核心闭环的起点 |
+| **P1** | D2: 规则提案 + UI | 用户确认机制 |
+| **P2** | D3: 规则写入 | 闭环完成 |
+| **P3** | D5: 规则持久化 | 否则重启丢失 |
+
+---
+
+## 四阶段系统总览
+
+```
+Phase A: 规则引擎（确定性）
+  → 把"确定性知识"榨干
+  → confidence 分层：1.0 / 0.9 / 0.7 / 0.5 / 0.3 / 0
+
+Phase B: 行为反馈（适应性）
+  → 把"用户行为"变成反馈回路
+  → Override + searchToLaunch + context trigger
+
+Phase C: AI 补位（泛化能力）
+  → AI 只处理不确定 + 可疑部分
+  → Override 衰减 + 分类收敛 + AI 缓存
+
+Phase D: 规则自进化（自我改进）
+  → AI = 规则生成器，而非分类工具
+  → 模式发现 → 规则提案 → 用户确认 → 规则写入
+```
+
+**系统演化路径**：
+- 初期：规则引擎 70% + AI 30%
+- 中期：规则引擎 85% + AI 15%
+- 长期：规则引擎 92%+ + AI ~0%（成本趋近零）
