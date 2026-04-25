@@ -1,19 +1,26 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { invoke } from "../utils/invoke-wrapper";
 import { useCategoryStore, type Category } from "./categoryStore";
-import { useUIStore } from "./uiStore";
 import { useStatsStore } from "./statsStore";
 import { createVersionedPersistConfig } from "../utils/versioned-persist";
-import { SEARCH_REQUEST_TIMEOUT_MS } from "../utils/search-config";
+import { mergeRustSearchResults } from "./launcher-search";
 import {
-    getCachedLauncherIcon,
-    setCachedLauncherIcon,
-} from "../utils/launcher-icon-cache";
-import {
-    mergeRustSearchResults,
-    normalizeLauncherItemKey,
-} from "./launcher-search";
+    normalizeIconBase64,
+    normalizeHasCustomIcon,
+    normalizeDelaySeconds,
+    normalizeLaunchDependencies,
+    getNameFromPath,
+    cacheOriginalIconForFileItem,
+    getCachedOriginalIconForPath,
+    applyCachedOriginalIcon,
+    shouldRefreshDerivedIcon,
+    normalizeImportedLauncherItem,
+    useItemsHelper,
+    type LauncherItemRef,
+} from "../composables/useItemsHelper";
+import { useSearchSync } from "../composables/useSearchSync";
+import { usePinningHelper } from "../composables/usePinningHelper";
+import { setCachedLauncherIcon } from "../utils/launcher-icon-cache";
 
 export type LauncherItem = {
     id: string;
@@ -72,11 +79,6 @@ export type PinnedMergedItem = {
     categories: Category[];
 };
 
-export type LauncherItemRef = {
-    categoryId: string;
-    itemId: string;
-};
-
 export type RustSearchMatchType =
     | "exact"
     | "prefix"
@@ -95,40 +97,6 @@ export type RustSearchResult = {
     matched_pinyin_initial: boolean;
     matched_pinyin_full: boolean;
     rank_score: number;
-};
-
-type SearchLauncherItemsQuery = {
-    keyword: string;
-    limit?: number;
-    categoryId?: string;
-};
-
-type SearchIndexItemPayload = {
-    id: string;
-    name: string;
-    path: string;
-    category_id: string;
-    usage_count: number;
-    last_used_at: number;
-    is_pinned: boolean;
-    search_tokens: string[];
-    rank_score: number;
-};
-
-type SearchIndexDeletedPayload = {
-    id: string;
-    category_id: string;
-};
-
-type SearchIndexChangesPayload = {
-    added: SearchIndexItemPayload[];
-    updated: SearchIndexItemPayload[];
-    deleted: SearchIndexDeletedPayload[];
-};
-
-type IconHydrationOptions = {
-    forceReplace?: boolean;
-    skipCache?: boolean;
 };
 
 type ImportLauncherItemsOptions = {
@@ -151,64 +119,9 @@ export const useLauncherStore = defineStore(
 
         const rustSearchResults = ref<RustSearchResult[]>([]);
         const isRustSearchReady = ref(false);
-        const iconHydrationInFlight = new Set<string>();
-        const pendingSearchAdded = new Map<string, SearchIndexItemPayload>();
-        const pendingSearchUpdated = new Map<string, SearchIndexItemPayload>();
-        const pendingSearchDeleted = new Map<string, SearchIndexDeletedPayload>();
-        let searchIndexFlushTimer: ReturnType<typeof setTimeout> | null = null;
-        let searchIndexSyncInFlight: Promise<void> | null = null;
-        let isFullSearchIndexSyncInFlight = false;
 
         function createLauncherItemId() {
             return `item-${crypto.randomUUID()}`;
-        }
-
-        function normalizeDelaySeconds(value: number | undefined): number {
-            if (!Number.isFinite(value)) return 0;
-            return Math.max(0, Math.floor(value ?? 0));
-        }
-
-        function normalizeLaunchDependencies(
-            dependencies: LaunchDependency[] | undefined,
-            currentRef?: { categoryId: string; itemId: string }
-        ): LaunchDependency[] {
-            if (!Array.isArray(dependencies)) return [];
-
-            const seen = new Set<string>();
-            const normalized: LaunchDependency[] = [];
-
-            for (const dependency of dependencies) {
-                if (!dependency?.categoryId || !dependency?.itemId) continue;
-                if (
-                    currentRef &&
-                    dependency.categoryId === currentRef.categoryId &&
-                    dependency.itemId === currentRef.itemId
-                ) {
-                    continue;
-                }
-
-                const key = `${dependency.categoryId}:${dependency.itemId}`;
-                if (seen.has(key)) continue;
-                seen.add(key);
-
-                normalized.push({
-                    categoryId: dependency.categoryId,
-                    itemId: dependency.itemId,
-                    delayAfterSeconds: normalizeDelaySeconds(dependency.delayAfterSeconds),
-                });
-            }
-
-            return normalized;
-        }
-
-        function getNameFromPath(path: string) {
-            const normalized = path.replace(/\\/g, "/");
-            const segments = normalized.split("/").filter(Boolean);
-            const base = segments[segments.length - 1] || path;
-            const lower = base.toLowerCase();
-            if (lower.endsWith(".lnk")) return base.slice(0, -4);
-            if (lower.endsWith(".exe")) return base.slice(0, -4);
-            return base;
         }
 
         function getLauncherItemsByCategoryId(categoryId: string) {
@@ -226,380 +139,55 @@ export const useLauncherStore = defineStore(
             return getLauncherItemsByCategoryId(categoryId).find((x) => x.id === itemId) || null;
         }
 
-        function normalizeIconBase64(value: string | null | undefined): string | null {
-            if (typeof value !== "string") return null;
-            const trimmed = value.trim();
-            return trimmed.length > 0 ? trimmed : null;
-        }
+        const {
+            hydrateMissingIconsForItems,
+            refreshLauncherItemUrlFavicon,
+        } = useItemsHelper(
+            getLauncherItemsByCategoryId,
+            getLauncherItemById,
+            setLauncherItemsByCategoryId
+        );
 
-        function normalizeHasCustomIcon(value: unknown): boolean {
-            return value === true;
-        }
+        const {
+            enqueueSearchChanges,
+            enqueueSearchUpdateByRef,
+            enqueueSearchUpdateByItemId,
+            enqueueSearchRefreshForAllItems,
+            syncSearchIndexInternal,
+            syncSearchIndex,
+            searchLauncherItems,
+            toSearchIndexItem,
+        } = useSearchSync(
+            getLauncherItemsByCategoryId,
+            getLauncherItemById,
+            pinnedItemIds,
+            recentUsedItems,
+            isRustSearchReady
+        );
 
-        function resolveLegacyHasCustomIcon(
-            item: Pick<LauncherItem, "iconBase64" | "hasCustomIcon"> & {
-                originalIconBase64?: string | null;
-            }
-        ): boolean {
-            if (typeof item.hasCustomIcon === "boolean") {
-                return item.hasCustomIcon;
-            }
-
-            const originalIcon = normalizeIconBase64(item.originalIconBase64);
-            if (originalIcon === null) {
-                return false;
-            }
-
-            return normalizeIconBase64(item.iconBase64) !== originalIcon;
-        }
-
-        function normalizeImportedLauncherItem(
-            item: LauncherItem & { originalIconBase64?: string | null }
-        ): LauncherItem {
-            const { originalIconBase64: _legacyOriginalIcon, ...rest } = item;
-            const normalizedIcon = normalizeIconBase64(item.iconBase64);
-            const hasCustomIcon = resolveLegacyHasCustomIcon(item);
-
-            if (rest.itemType === "file" && !hasCustomIcon) {
-                cacheOriginalIconForFileItem(rest.itemType, rest.path, normalizedIcon);
-            }
-
-            return {
-                ...rest,
-                iconBase64: normalizedIcon,
-                hasCustomIcon,
-            };
-        }
-
-        function cacheOriginalIconForFileItem(
-            itemType: LauncherItem["itemType"],
-            path: string,
-            iconBase64: string | null | undefined
-        ): void {
-            if (itemType !== "file") return;
-            const normalizedPath = typeof path === "string" ? path.trim() : "";
-            const normalizedIcon = normalizeIconBase64(iconBase64);
-            if (!normalizedPath || !normalizedIcon) return;
-            setCachedLauncherIcon(normalizedPath, normalizedIcon);
-        }
-
-        function getCachedOriginalIconForPath(path: string): string | null {
-            const normalizedPath = typeof path === "string" ? path.trim() : "";
-            if (!normalizedPath) return null;
-            return normalizeIconBase64(getCachedLauncherIcon(normalizedPath));
-        }
-
-        function applyCachedOriginalIcon(item: LauncherItem): LauncherItem {
-            if (item.itemType !== "file") return item;
-
-            const currentIcon = normalizeIconBase64(item.iconBase64);
-            if (currentIcon || normalizeHasCustomIcon(item.hasCustomIcon)) return item;
-
-            const cachedIcon = getCachedOriginalIconForPath(item.path);
-            if (!cachedIcon) return item;
-
-            return {
-                ...item,
-                iconBase64: cachedIcon,
-                hasCustomIcon: false,
-            };
-        }
-
-        function shouldRefreshDerivedIcon(item: LauncherItem): boolean {
-            if (item.itemType !== "file") return false;
-
-            const normalizedPath = typeof item.path === "string" ? item.path.trim() : "";
-            if (!normalizedPath) return false;
-
-            const currentIcon = normalizeIconBase64(item.iconBase64);
-            return !!currentIcon && !normalizeHasCustomIcon(item.hasCustomIcon);
-        }
-
-        function isHttpUrl(url: string): boolean {
-            return url.startsWith("http://") || url.startsWith("https://");
-        }
-
-        async function refreshLauncherItemUrlFavicon(
-            categoryId: string,
-            itemId: string,
-            currentUrl: string
-        ): Promise<void> {
-            const normalizedUrl = currentUrl.trim();
-            if (!isHttpUrl(normalizedUrl)) return;
-
-            try {
-                const result = await invoke<string | null>("fetch_favicon_from_url", {
-                    url: normalizedUrl,
-                });
-                if (!result.ok) return;
-
-                const iconBase64 = result.value;
-                if (!iconBase64) return;
-
-                const item = getLauncherItemById(categoryId, itemId);
-                if (!item || normalizeHasCustomIcon(item.hasCustomIcon)) return;
-
-                updateLauncherItemIcon(categoryId, itemId, iconBase64);
-            } catch (error) {
-                console.warn("Failed to refresh launcher favicon:", error);
-            }
-        }
-
-        function getSearchEntryKey(categoryId: string, itemId: string): string {
-            return `${categoryId}:${itemId}`;
-        }
-
-        function collectSearchRankingSignals() {
-            const usageMap = new Map<string, number>();
-            const lastUsedMap = new Map<string, number>();
-
-            for (const recent of recentUsedItems.value) {
-                const key = getSearchEntryKey(recent.categoryId, recent.itemId);
-                usageMap.set(key, (usageMap.get(key) ?? 0) + recent.usageCount);
-                if (!lastUsedMap.has(key) || (lastUsedMap.get(key) ?? 0) < recent.usedAt) {
-                    lastUsedMap.set(key, recent.usedAt);
-                }
-            }
-
-            return {
-                usageMap,
-                lastUsedMap,
-                pinnedSet: new Set(pinnedItemIds.value),
-            };
-        }
-
-        function toSearchIndexItem(
-            categoryId: string,
-            item: LauncherItem,
-            rankingSignals?: ReturnType<typeof collectSearchRankingSignals>
-        ): SearchIndexItemPayload {
-            const signals = rankingSignals ?? collectSearchRankingSignals();
-            const key = getSearchEntryKey(categoryId, item.id);
-
-            return {
-                id: item.id,
-                name: item.name,
-                path: item.path,
-                category_id: categoryId,
-                usage_count: signals.usageMap.get(key) ?? 0,
-                last_used_at: signals.lastUsedMap.get(key) ?? 0,
-                is_pinned: signals.pinnedSet.has(item.id),
-                search_tokens: [],
-                rank_score: 0,
-            };
-        }
-
-        function hasPendingSearchChanges(): boolean {
-            return (
-                pendingSearchAdded.size > 0 ||
-                pendingSearchUpdated.size > 0 ||
-                pendingSearchDeleted.size > 0
-            );
-        }
-
-        function clearPendingSearchChanges(): void {
-            pendingSearchAdded.clear();
-            pendingSearchUpdated.clear();
-            pendingSearchDeleted.clear();
-        }
-
-        function cancelPendingSearchFlush(): void {
-            if (!searchIndexFlushTimer) return;
-            clearTimeout(searchIndexFlushTimer);
-            searchIndexFlushTimer = null;
-        }
-
-        function takePendingSearchChanges(): SearchIndexChangesPayload {
-            const changes: SearchIndexChangesPayload = {
-                added: [...pendingSearchAdded.values()],
-                updated: [...pendingSearchUpdated.values()],
-                deleted: [...pendingSearchDeleted.values()],
-            };
-            clearPendingSearchChanges();
-            return changes;
-        }
-
-        function scheduleSearchIncrementalFlush(delayMs: number = 250): void {
-            if (!isRustSearchReady.value) return;
-            if (searchIndexFlushTimer) return;
-            searchIndexFlushTimer = setTimeout(() => {
-                searchIndexFlushTimer = null;
-                void flushPendingSearchChanges();
-            }, delayMs);
-        }
-
-        function enqueueSearchChanges(changes: Partial<SearchIndexChangesPayload>): void {
-            if (!isRustSearchReady.value) return;
-
-            for (const deleted of changes.deleted ?? []) {
-                const key = getSearchEntryKey(deleted.category_id, deleted.id);
-                pendingSearchAdded.delete(key);
-                pendingSearchUpdated.delete(key);
-                pendingSearchDeleted.set(key, deleted);
-            }
-
-            for (const added of changes.added ?? []) {
-                const key = getSearchEntryKey(added.category_id, added.id);
-                pendingSearchDeleted.delete(key);
-                pendingSearchUpdated.delete(key);
-                pendingSearchAdded.set(key, added);
-            }
-
-            for (const updated of changes.updated ?? []) {
-                const key = getSearchEntryKey(updated.category_id, updated.id);
-                pendingSearchDeleted.delete(key);
-                if (pendingSearchAdded.has(key)) {
-                    pendingSearchAdded.set(key, updated);
-                } else {
-                    pendingSearchUpdated.set(key, updated);
-                }
-            }
-
-            scheduleSearchIncrementalFlush();
-        }
-
-        function enqueueSearchUpdateByRef(categoryId: string, itemId: string): void {
-            if (!isRustSearchReady.value) return;
-            const item = getLauncherItemById(categoryId, itemId);
-            if (!item) return;
-            enqueueSearchChanges({
-                updated: [toSearchIndexItem(categoryId, item)],
-            });
-        }
-
-        function enqueueSearchUpdateByItemId(itemId: string): void {
-            if (!isRustSearchReady.value) return;
-            const categoryStore = useCategoryStore();
-            const rankingSignals = collectSearchRankingSignals();
-            const updated: SearchIndexItemPayload[] = [];
-            for (const category of categoryStore.categories) {
-                const matched = getLauncherItemsByCategoryId(category.id).filter(
-                    (item) => item.id === itemId
-                );
-                for (const item of matched) {
-                    updated.push(toSearchIndexItem(category.id, item, rankingSignals));
-                }
-            }
-
-            if (updated.length === 0) return;
-            enqueueSearchChanges({ updated });
-        }
-
-        function enqueueSearchRefreshForAllItems(): void {
-            if (!isRustSearchReady.value) return;
-            const categoryStore = useCategoryStore();
-            const rankingSignals = collectSearchRankingSignals();
-            const updated: SearchIndexItemPayload[] = [];
-
-            for (const category of categoryStore.categories) {
-                const items = getLauncherItemsByCategoryId(category.id);
-                for (const item of items) {
-                    updated.push(toSearchIndexItem(category.id, item, rankingSignals));
-                }
-            }
-
-            if (updated.length === 0) return;
-            enqueueSearchChanges({ updated });
-        }
-
-        async function syncSearchIndexInternal(waitIncrementalInFlight: boolean): Promise<void> {
-            if (isFullSearchIndexSyncInFlight) return;
-            if (waitIncrementalInFlight && searchIndexSyncInFlight) {
-                await searchIndexSyncInFlight;
-            }
-
-            cancelPendingSearchFlush();
-            clearPendingSearchChanges();
-            isFullSearchIndexSyncInFlight = true;
-
-            try {
-                const categoryStore = useCategoryStore();
-                const rankingSignals = collectSearchRankingSignals();
-                const items: SearchIndexItemPayload[] = [];
-
-                for (const category of categoryStore.categories) {
-                    const catItems = getLauncherItemsByCategoryId(category.id);
-                    for (const item of catItems) {
-                        items.push(toSearchIndexItem(category.id, item, rankingSignals));
-                    }
-                }
-
-                const result = await invoke("update_search_items", { items });
-                if (!result.ok) {
-                    console.error("Failed to sync search index:", result.error);
-                    isRustSearchReady.value = false;
-                    return;
-                }
-
-                isRustSearchReady.value = true;
-            } catch (e) {
-                console.error("Failed to sync search index:", e);
-                isRustSearchReady.value = false;
-            } finally {
-                isFullSearchIndexSyncInFlight = false;
-                if (isRustSearchReady.value && hasPendingSearchChanges()) {
-                    scheduleSearchIncrementalFlush(0);
-                }
-            }
-        }
-
-        async function flushPendingSearchChanges(): Promise<void> {
-            if (!isRustSearchReady.value) {
-                clearPendingSearchChanges();
-                return;
-            }
-            if (isFullSearchIndexSyncInFlight || searchIndexSyncInFlight) {
-                return;
-            }
-
-            const changes = takePendingSearchChanges();
-            if (
-                changes.added.length === 0 &&
-                changes.updated.length === 0 &&
-                changes.deleted.length === 0
-            ) {
-                return;
-            }
-
-            searchIndexSyncInFlight = (async () => {
-                const result = await invoke("update_search_items_incremental", { changes });
-                if (!result.ok) {
-                    console.error("Failed to incrementally sync search index:", result.error);
-                    await syncSearchIndexInternal(false);
-                }
-            })()
-                .catch((e) => {
-                    console.error("Failed to incrementally sync search index:", e);
-                })
-                .finally(() => {
-                    searchIndexSyncInFlight = null;
-                    if (hasPendingSearchChanges()) {
-                        scheduleSearchIncrementalFlush(0);
-                    }
-                });
-
-            await searchIndexSyncInFlight;
-        }
-
-        function buildLauncherItemIndexes(categories: Category[]) {
-            const itemById = new Map<string, { item: LauncherItem; categoryId: string }>();
-            const itemByCompositeKey = new Map<string, LauncherItem>();
-
-            for (const category of categories) {
-                const items = getLauncherItemsByCategoryId(category.id);
-                for (const item of items) {
-                    if (!itemById.has(item.id)) {
-                        itemById.set(item.id, { item, categoryId: category.id });
-                    }
-                    itemByCompositeKey.set(`${category.id}:${item.id}`, item);
-                }
-            }
-
-            return {
-                itemById,
-                itemByCompositeKey,
-            };
-        }
+        const {
+            togglePinned,
+            isItemPinned,
+            recordItemUsage,
+            clearRecentUsed,
+            importPinnedItemIds,
+            reorderPinnedItemIds,
+            importRecentUsedItems,
+            getRecentUsedItems,
+            getRecentUsedItemInfo,
+            getRecentUsedMergedItems,
+            getPinnedMergedItems,
+            getSmartSortedItems,
+            getLauncherItemMergeKey,
+        } = usePinningHelper(
+            getLauncherItemsByCategoryId,
+            getLauncherItemById,
+            pinnedItemIds,
+            recentUsedItems,
+            enqueueSearchUpdateByItemId,
+            enqueueSearchUpdateByRef,
+            enqueueSearchRefreshForAllItems
+        );
 
         function updateLauncherItem(
             categoryId: string,
@@ -896,9 +484,8 @@ export const useLauncherStore = defineStore(
             });
 
             setLauncherItemsByCategoryId(categoryId, [...existing, ...nextItems]);
-            const rankingSignals = collectSearchRankingSignals();
             enqueueSearchChanges({
-                added: nextItems.map((item) => toSearchIndexItem(categoryId, item, rankingSignals)),
+                added: nextItems.map((item) => toSearchIndexItem(categoryId, item)),
             });
         }
 
@@ -945,9 +532,8 @@ export const useLauncherStore = defineStore(
                 }
 
                 setLauncherItemsByCategoryId(categoryId, [...existing, ...batchItems]);
-                const rankingSignals = collectSearchRankingSignals();
                 enqueueSearchChanges({
-                    added: batchItems.map((item) => toSearchIndexItem(categoryId, item, rankingSignals)),
+                    added: batchItems.map((item) => toSearchIndexItem(categoryId, item)),
                 });
 
                 if (batch < totalBatches - 1) {
@@ -1150,7 +736,7 @@ export const useLauncherStore = defineStore(
             }
 
             if (currentItem.itemType === "url" && currentItem.url) {
-                void refreshLauncherItemUrlFavicon(categoryId, itemId, currentItem.url);
+                void refreshLauncherItemUrlFavicon(categoryId, itemId, currentItem.url, updateLauncherItemIcon);
             }
         }
 
@@ -1158,208 +744,6 @@ export const useLauncherStore = defineStore(
             const item = getLauncherItemById(categoryId, itemId);
             if (!item) return false;
             return normalizeHasCustomIcon(item.hasCustomIcon);
-        }
-
-        async function hydrateMissingIconsForItems(
-            targets: LauncherItemRef[],
-            options: IconHydrationOptions = {}
-        ): Promise<void> {
-            if (!Array.isArray(targets) || targets.length === 0) return;
-            const forceReplace = options.forceReplace === true;
-            const skipCache = options.skipCache === true;
-
-            const uniqueTargets: Array<{
-                key: string;
-                categoryId: string;
-                itemId: string;
-                path: string;
-            }> = [];
-            const seenTargetKeys = new Set<string>();
-
-            for (const target of targets) {
-                if (!target?.categoryId || !target?.itemId) continue;
-
-                const targetKey = `${target.categoryId}:${target.itemId}`;
-                if (seenTargetKeys.has(targetKey)) continue;
-                seenTargetKeys.add(targetKey);
-
-                if (iconHydrationInFlight.has(targetKey)) continue;
-
-                const item = getLauncherItemById(target.categoryId, target.itemId);
-                if (!item || item.itemType !== "file") continue;
-
-                const currentIcon = normalizeIconBase64(item.iconBase64);
-                const hasCustomIcon = normalizeHasCustomIcon(item.hasCustomIcon);
-                if (!forceReplace) {
-                    if (currentIcon) continue;
-                    if (hasCustomIcon) continue;
-                } else if (hasCustomIcon) {
-                    continue;
-                }
-
-                const path = typeof item.path === "string" ? item.path.trim() : "";
-                if (!path) continue;
-
-                if (!skipCache) {
-                    const cachedIcon = getCachedOriginalIconForPath(path);
-                    if (cachedIcon) {
-                        const list = getLauncherItemsByCategoryId(target.categoryId);
-                        const index = list.findIndex((x) => x.id === target.itemId);
-                        if (index !== -1) {
-                            const next = [...list];
-                            next[index] = {
-                                ...next[index],
-                                iconBase64: cachedIcon,
-                                hasCustomIcon: false,
-                            };
-                            setLauncherItemsByCategoryId(target.categoryId, next);
-                        }
-                        continue;
-                    }
-                }
-
-                uniqueTargets.push({
-                    key: targetKey,
-                    categoryId: target.categoryId,
-                    itemId: target.itemId,
-                    path,
-                });
-            }
-
-            if (uniqueTargets.length === 0) return;
-
-            const uniquePaths: string[] = [];
-            const seenPaths = new Set<string>();
-            for (const target of uniqueTargets) {
-                if (seenPaths.has(target.path)) continue;
-                seenPaths.add(target.path);
-                uniquePaths.push(target.path);
-            }
-
-            if (uniquePaths.length === 0) return;
-
-            for (const target of uniqueTargets) {
-                iconHydrationInFlight.add(target.key);
-            }
-
-            try {
-                const result = await invoke<Array<string | null>>("extract_icons_from_paths", {
-                    paths: uniquePaths,
-                });
-
-                if (!result.ok) {
-                    console.error("Failed to hydrate launcher icons:", result.error);
-                    return;
-                }
-
-                const iconByPath = new Map<string, string>();
-                for (let i = 0; i < uniquePaths.length; i++) {
-                    const normalizedIcon = normalizeIconBase64(result.value[i]);
-                    if (!normalizedIcon) continue;
-                    iconByPath.set(uniquePaths[i], normalizedIcon);
-                    setCachedLauncherIcon(uniquePaths[i], normalizedIcon);
-                }
-
-                if (iconByPath.size === 0) return;
-
-                const updatesByCategory = new Map<string, Map<string, string>>();
-                for (const target of uniqueTargets) {
-                    const icon = iconByPath.get(target.path);
-                    if (!icon) continue;
-                    if (!updatesByCategory.has(target.categoryId)) {
-                        updatesByCategory.set(target.categoryId, new Map<string, string>());
-                    }
-                    updatesByCategory.get(target.categoryId)!.set(target.itemId, icon);
-                }
-
-                for (const [categoryId, categoryUpdates] of updatesByCategory) {
-                    const list = getLauncherItemsByCategoryId(categoryId);
-                    let changed = false;
-                    const next = list.map((item) => {
-                        const hydratedIcon = categoryUpdates.get(item.id);
-                        if (!hydratedIcon) return item;
-                        const currentIcon = normalizeIconBase64(item.iconBase64);
-                        const hasCustomIcon = normalizeHasCustomIcon(item.hasCustomIcon);
-                        if (!forceReplace && currentIcon) return item;
-                        if (forceReplace && hasCustomIcon) {
-                            return item;
-                        }
-                        changed = true;
-                        return {
-                            ...item,
-                            iconBase64: hydratedIcon,
-                            hasCustomIcon: false,
-                        };
-                    });
-                    if (changed) {
-                        setLauncherItemsByCategoryId(categoryId, next);
-                    }
-                }
-            } catch (e) {
-                console.error("Failed to hydrate launcher icons:", e);
-            } finally {
-                for (const target of uniqueTargets) {
-                    iconHydrationInFlight.delete(target.key);
-                }
-            }
-        }
-
-        async function syncSearchIndex() {
-            await syncSearchIndexInternal(true);
-        }
-
-        async function withTimeout<T>(
-            promise: Promise<T>,
-            timeoutMs: number
-        ): Promise<T | null> {
-            let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-            try {
-                return await Promise.race([
-                    promise,
-                    new Promise<null>((resolve) => {
-                        timeoutHandle = setTimeout(() => resolve(null), timeoutMs);
-                    }),
-                ]);
-            } finally {
-                if (timeoutHandle) {
-                    clearTimeout(timeoutHandle);
-                }
-            }
-        }
-
-        async function searchLauncherItems(
-            query: SearchLauncherItemsQuery
-        ): Promise<RustSearchResult[]> {
-            if (!query.keyword.trim()) {
-                return [];
-            }
-            try {
-                const result = await withTimeout(
-                    invoke<RustSearchResult[]>("search_apps", {
-                        query: {
-                            keyword: query.keyword,
-                            limit: query.limit ?? 20,
-                            category_id: query.categoryId ?? null,
-                        },
-                    }),
-                    SEARCH_REQUEST_TIMEOUT_MS
-                );
-                if (result === null) {
-                    console.warn(
-                        `Rust search timed out after ${SEARCH_REQUEST_TIMEOUT_MS}ms`,
-                        query.keyword
-                    );
-                    return [];
-                }
-                if (!result.ok) {
-                    console.error("Rust search failed:", result.error);
-                    return [];
-                }
-                return result.value;
-            } catch (e) {
-                console.error("Rust search failed:", e);
-                return [];
-            }
         }
 
         async function rustSearch(keyword: string, limit: number = 20): Promise<void> {
@@ -1382,70 +766,6 @@ export const useLauncherStore = defineStore(
         function clearSearch() {
             searchKeyword.value = "";
             rustSearchResults.value = [];
-        }
-
-        function getLauncherItemMergeKey(item: LauncherItem): string | null {
-            return normalizeLauncherItemKey(item);
-        }
-
-        function togglePinned(categoryId: string, itemId: string) {
-            const item = getLauncherItemById(categoryId, itemId);
-            if (!item) return;
-            const isPinned = pinnedItemIds.value.includes(itemId);
-            if (isPinned) {
-                pinnedItemIds.value = pinnedItemIds.value.filter((id) => id !== itemId);
-            } else {
-                pinnedItemIds.value = [...pinnedItemIds.value, itemId];
-            }
-            enqueueSearchUpdateByItemId(itemId);
-        }
-
-        function isItemPinned(itemId: string): boolean {
-            return pinnedItemIds.value.includes(itemId);
-        }
-
-        function recordItemUsage(categoryId: string, itemId: string) {
-            const now = Date.now();
-            const stats = useStatsStore();
-            stats.ensureLaunchTrackingStarted(recentUsedItems.value, now);
-            const existingIndex = recentUsedItems.value.findIndex(
-                r => r.categoryId === categoryId && r.itemId === itemId
-            );
-            
-            if (existingIndex !== -1) {
-                const existing = recentUsedItems.value[existingIndex];
-                const newList = recentUsedItems.value.filter((_, i) => i !== existingIndex);
-                newList.unshift({
-                    categoryId,
-                    itemId,
-                    usedAt: now,
-                    usageCount: existing.usageCount + 1,
-                });
-                recentUsedItems.value = newList;
-            } else {
-                recentUsedItems.value = [
-                    { categoryId, itemId, usedAt: now, usageCount: 1 },
-                    ...recentUsedItems.value,
-                ];
-            }
-            
-            if (recentUsedItems.value.length > 50) {
-                recentUsedItems.value = recentUsedItems.value.slice(0, 50);
-            }
-
-            stats.recordLaunchEvent({
-                categoryId,
-                itemId,
-                usedAt: now,
-            });
-            enqueueSearchUpdateByRef(categoryId, itemId);
-        }
-
-        function clearRecentUsed() {
-            recentUsedItems.value = [];
-            const stats = useStatsStore();
-            stats.clearLaunchHistory();
-            enqueueSearchRefreshForAllItems();
         }
 
         function importLauncherItems(
@@ -1492,221 +812,6 @@ export const useLauncherStore = defineStore(
             const stats = useStatsStore();
             stats.clearLaunchHistory();
             enqueueSearchRefreshForAllItems();
-        }
-
-        function importPinnedItemIds(newIds: string[]) {
-            pinnedItemIds.value = [...new Set(newIds)];
-            enqueueSearchRefreshForAllItems();
-        }
-
-        function reorderPinnedItemIds(newOrder: string[]) {
-            const pinnedSet = new Set(pinnedItemIds.value);
-            const newOrderSet = new Set(newOrder);
-            const validIds = newOrder.filter(id => pinnedSet.has(id));
-            const otherIds = pinnedItemIds.value.filter(id => !newOrderSet.has(id));
-            pinnedItemIds.value = [...validIds, ...otherIds];
-        }
-
-        function importRecentUsedItems(newItems: RecentUsedItem[]) {
-            recentUsedItems.value = newItems;
-            const stats = useStatsStore();
-            stats.clearLaunchHistory();
-            enqueueSearchRefreshForAllItems();
-        }
-
-        function getRecentUsedItems(limit: number = 5): RecentUsedItem[] {
-            return recentUsedItems.value.slice(0, limit);
-        }
-
-        function getRecentUsedItemInfo(recentItem: RecentUsedItem): { item: LauncherItem | null; category: Category | null } {
-            const categoryStore = useCategoryStore();
-            const category = categoryStore.getCategoryById(recentItem.categoryId);
-            const item = getLauncherItemById(recentItem.categoryId, recentItem.itemId);
-            return { item, category };
-        }
-
-        const pinnedMergedItemsBase = computed<PinnedMergedItem[]>(() => {
-            const categoryStore = useCategoryStore();
-            const categories = categoryStore.categories;
-            const categoryById = new Map(categories.map((category) => [category.id, category] as const));
-            const { itemById } = buildLauncherItemIndexes(categories);
-            const pinnedSet = new Set(pinnedItemIds.value);
-
-            const mergedByKey = new Map<
-                string,
-                {
-                    key: string;
-                    item: LauncherItem;
-                    primaryCategoryId: string;
-                    categoryIds: Set<string>;
-                }
-            >();
-
-            for (const category of categories) {
-                const items = getLauncherItemsByCategoryId(category.id);
-                for (const item of items) {
-                    if (!pinnedSet.has(item.id)) continue;
-                    const key = getLauncherItemMergeKey(item);
-                    if (!key) continue;
-
-                    const existing = mergedByKey.get(key);
-                    if (!existing) {
-                        mergedByKey.set(key, {
-                            key,
-                            item,
-                            primaryCategoryId: category.id,
-                            categoryIds: new Set([category.id]),
-                        });
-                    } else {
-                        existing.categoryIds.add(category.id);
-                    }
-                }
-            }
-
-            const validPinnedIds: string[] = [];
-            const emittedKeys = new Set<string>();
-            const mergedItems: PinnedMergedItem[] = [];
-
-            for (const itemId of pinnedItemIds.value) {
-                const entry = itemById.get(itemId);
-                if (!entry) {
-                    continue;
-                }
-
-                validPinnedIds.push(itemId);
-                const key = getLauncherItemMergeKey(entry.item);
-                if (!key || emittedKeys.has(key)) {
-                    continue;
-                }
-
-                const merged = mergedByKey.get(key);
-                if (!merged) {
-                    continue;
-                }
-
-                const mergedCategories: Category[] = [];
-                for (const categoryId of merged.categoryIds) {
-                    const category = categoryById.get(categoryId);
-                    if (category) {
-                        mergedCategories.push(category);
-                    }
-                }
-
-                mergedItems.push({
-                    key: merged.key,
-                    item: merged.item,
-                    primaryCategoryId: merged.primaryCategoryId,
-                    categories: mergedCategories,
-                });
-                emittedKeys.add(key);
-            }
-
-            if (validPinnedIds.length !== pinnedItemIds.value.length) {
-                pinnedItemIds.value = validPinnedIds;
-            }
-
-            return mergedItems;
-        });
-
-        const recentUsedMergedItemsBase = computed<RecentUsedMergedItem[]>(() => {
-            const categoryStore = useCategoryStore();
-            const categories = categoryStore.categories;
-            const categoryById = new Map(categories.map((category) => [category.id, category] as const));
-            const { itemByCompositeKey } = buildLauncherItemIndexes(categories);
-
-            const mergedByKey = new Map<
-                string,
-                {
-                    key: string;
-                    usedAt: number;
-                    recent: RecentUsedItem;
-                    item: LauncherItem;
-                    categoryIds: Set<string>;
-                }
-            >();
-
-            for (const recent of recentUsedItems.value) {
-                const item = itemByCompositeKey.get(`${recent.categoryId}:${recent.itemId}`);
-                if (!item) continue;
-
-                const key = getLauncherItemMergeKey(item);
-                if (!key) continue;
-
-                const existing = mergedByKey.get(key);
-                if (!existing) {
-                    mergedByKey.set(key, {
-                        key,
-                        usedAt: recent.usedAt,
-                        recent,
-                        item,
-                        categoryIds: new Set([recent.categoryId]),
-                    });
-                } else {
-                    existing.categoryIds.add(recent.categoryId);
-                }
-            }
-
-            const mergedItems: RecentUsedMergedItem[] = [];
-            for (const entry of mergedByKey.values()) {
-                const mergedCategories: Category[] = [];
-                for (const categoryId of entry.categoryIds) {
-                    const category = categoryById.get(categoryId);
-                    if (category) {
-                        mergedCategories.push(category);
-                    }
-                }
-
-                mergedItems.push({
-                    key: entry.key,
-                    usedAt: entry.usedAt,
-                    recent: entry.recent,
-                    item: entry.item,
-                    categories: mergedCategories,
-                });
-            }
-
-            return mergedItems;
-        });
-
-        function getRecentUsedMergedItems(limit: number = 5, excludePinned?: { visible: boolean }): RecentUsedMergedItem[] {
-            const uiStore = useUIStore();
-            let mergedItems = recentUsedMergedItemsBase.value;
-
-            if (excludePinned?.visible) {
-                const visibleLimit = uiStore.getHomeSectionLimit("pinned");
-                const pinnedKeys = new Set(
-                    pinnedMergedItemsBase.value
-                        .slice(0, visibleLimit)
-                        .map((item) => item.key)
-                );
-                mergedItems = mergedItems.filter((item) => !pinnedKeys.has(item.key));
-            }
-
-            return mergedItems.slice(0, limit);
-        }
-
-        function getPinnedMergedItems(limit: number = 10): PinnedMergedItem[] {
-            return pinnedMergedItemsBase.value.slice(0, limit);
-        }
-
-        function getSmartSortedItems(categoryId: string): LauncherItem[] {
-            const raw = launcherItemsByCategoryId.value[categoryId];
-            if (!raw || raw.length === 0) return [];
-
-            const stats = useStatsStore();
-            const pinnedSet = new Set(pinnedItemIds.value);
-            const orderMap = new Map(stats.getSmartSortOrder(categoryId, raw.map(i => i.id)).map((id, idx) => [id, idx]));
-
-            return [...raw].sort((a, b) => {
-                const aPinned = pinnedSet.has(a.id);
-                const bPinned = pinnedSet.has(b.id);
-                if (aPinned && !bPinned) return -1;
-                if (!aPinned && bPinned) return 1;
-
-                const aOrder = orderMap.get(a.id) ?? 9999;
-                const bOrder = orderMap.get(b.id) ?? 9999;
-                return aOrder - bOrder;
-            });
         }
 
         function recordConfirmedSearch() {
@@ -1765,7 +870,7 @@ export const useLauncherStore = defineStore(
             searchLauncherItems,
             rustSearch,
             setRustSearchResults,
-            getSmartSortedItems,
+            getSmartSortedItems: (categoryId: string) => getSmartSortedItems(categoryId, launcherItemsByCategoryId.value),
             recordConfirmedSearch,
         };
     },
