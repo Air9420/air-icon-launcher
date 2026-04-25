@@ -29,6 +29,7 @@ pub struct InstalledAppEntry {
     pub path: String,
     pub icon_base64: Option<String>,
     pub source: String,
+    pub publisher: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,6 +46,7 @@ struct CandidateApp {
     icon_path: PathBuf,
     source: &'static str,
     source_rank: u8,
+    publisher: Option<String>,
 }
 
 #[tauri::command]
@@ -141,6 +143,7 @@ fn scan_installed_apps_windows(app: AppHandle) -> AppResult<Vec<InstalledAppEntr
             path: candidate.launch_path.to_string_lossy().to_string(),
             icon_base64: None,
             source: candidate.source.to_string(),
+            publisher: candidate.publisher,
         })
         .collect();
 
@@ -359,12 +362,15 @@ fn build_candidate_from_registry(key: &RegKey) -> Option<CandidateApp> {
 
     let icon_path = display_icon_path.unwrap_or_else(|| launch_path.clone());
 
+    let publisher = key.get_value::<String, _>("Publisher").ok();
+
     Some(CandidateApp {
         display_name,
         launch_path,
         icon_path,
         source: "注册表",
         source_rank: 0,
+        publisher,
     })
 }
 
@@ -659,6 +665,7 @@ fn build_candidate_from_path(
         icon_path,
         source,
         source_rank,
+        publisher: None,
     })
 }
 
