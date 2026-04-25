@@ -102,6 +102,24 @@ export function setCachedLauncherIcon(path: string, iconBase64: string): void {
     persistCacheEntries();
 }
 
+export function removeCachedLauncherIcons(paths: string[]): number {
+    if (!Array.isArray(paths) || paths.length === 0) return 0;
+    ensureCacheLoaded();
+
+    let removed = 0;
+    for (const path of paths) {
+        const key = normalizePathKey(path);
+        if (cacheEntries.delete(key)) {
+            removed++;
+        }
+    }
+
+    if (removed > 0) {
+        persistCacheEntries();
+    }
+    return removed;
+}
+
 export function clearLauncherIconCacheForTests(): void {
     cacheLoaded = false;
     cacheEntries = new Map();

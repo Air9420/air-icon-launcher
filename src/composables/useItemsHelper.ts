@@ -2,6 +2,7 @@ import { invoke } from "../utils/invoke-wrapper";
 import {
     getCachedLauncherIcon,
     setCachedLauncherIcon,
+    removeCachedLauncherIcons,
 } from "../utils/launcher-icon-cache";
 import type { LauncherItem, LaunchDependency } from "../stores/launcherStore";
 
@@ -330,8 +331,27 @@ export function useItemsHelper(getLauncherItemsByCategoryId: (categoryId: string
         }
     }
 
+    function removeCachedIcons(paths: string[]): number {
+        return removeCachedLauncherIcons(paths);
+    }
+
+    function removeCachedIconsForCategory(categoryId: string): number {
+        const items = getLauncherItemsByCategoryId(categoryId);
+        const paths = items
+            .filter(item => item.itemType === 'file' && item.path.trim())
+            .map(item => item.path);
+        return removeCachedIcons(paths);
+    }
+
+    function cacheIcon(path: string, iconBase64: string): void {
+        setCachedLauncherIcon(path, iconBase64);
+    }
+
     return {
         hydrateMissingIconsForItems,
         refreshLauncherItemUrlFavicon,
+        removeCachedIcons,
+        removeCachedIconsForCategory,
+        cacheIcon,
     };
 }

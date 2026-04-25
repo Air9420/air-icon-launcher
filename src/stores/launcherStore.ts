@@ -20,7 +20,6 @@ import {
 } from "../composables/useItemsHelper";
 import { useSearchSync } from "../composables/useSearchSync";
 import { usePinningHelper } from "../composables/usePinningHelper";
-import { setCachedLauncherIcon } from "../utils/launcher-icon-cache";
 
 export type LauncherItem = {
     id: string;
@@ -142,6 +141,8 @@ export const useLauncherStore = defineStore(
         const {
             hydrateMissingIconsForItems,
             refreshLauncherItemUrlFavicon,
+            removeCachedIconsForCategory,
+            cacheIcon,
         } = useItemsHelper(
             getLauncherItemsByCategoryId,
             getLauncherItemById,
@@ -551,7 +552,7 @@ export const useLauncherStore = defineStore(
                 const icon = normalizeIconBase64(iconBase64s[i]);
                 if (!icon) continue;
                 pathToIcon.set(paths[i], icon);
-                setCachedLauncherIcon(paths[i], icon);
+                cacheIcon(paths[i], icon);
             }
 
             if (pathToIcon.size === 0) return;
@@ -674,6 +675,7 @@ export const useLauncherStore = defineStore(
             const stats = useStatsStore();
             delete next[categoryId];
             launcherItemsByCategoryId.value = next;
+            removeCachedIconsForCategory(categoryId);
             if (removedItemIds.length) {
                 const removedSet = new Set(removedItemIds);
                 pinnedItemIds.value = pinnedItemIds.value.filter(
