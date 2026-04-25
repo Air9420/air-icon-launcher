@@ -611,9 +611,11 @@ async function applySuggestions() {
         }
 
         categoryStore.importCategories(nextCategories);
-        launcherStore.importLauncherItems(nextItemsByCategoryId);
-        launcherStore.importPinnedItemIds([]);
-        launcherStore.importRecentUsedItems([]);
+        launcherStore.importLauncherSnapshot({
+            items: nextItemsByCategoryId,
+            pinnedItemIds: [],
+            recentUsedItems: [],
+        });
         await launcherStore.syncSearchIndex();
 
         guideStore.completeOnboarding();

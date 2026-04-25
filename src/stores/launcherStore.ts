@@ -135,6 +135,12 @@ type ImportLauncherItemsOptions = {
     refreshDerivedIcons?: boolean;
 };
 
+type ImportLauncherSnapshotPayload = {
+    items: Record<string, LauncherItem[]>;
+    pinnedItemIds?: string[];
+    recentUsedItems?: RecentUsedItem[];
+};
+
 export const useLauncherStore = defineStore(
     "launcher",
     () => {
@@ -638,6 +644,7 @@ export const useLauncherStore = defineStore(
             const list = getLauncherItemsByCategoryId(categoryId);
             const index = list.findIndex((x) => x.id === itemId);
             if (index === -1) return;
+            const stats = useStatsStore();
             const next = [...list];
             next.splice(index, 1);
             setLauncherItemsByCategoryId(categoryId, next);
@@ -645,6 +652,7 @@ export const useLauncherStore = defineStore(
             recentUsedItems.value = recentUsedItems.value.filter(
                 (x) => !(x.categoryId === categoryId && x.itemId === itemId)
             );
+            stats.removeLaunchEventsForItems(categoryId, [itemId]);
             removeDependenciesMatching(
                 (dependency) =>
                     dependency.categoryId === categoryId && dependency.itemId === itemId
@@ -661,6 +669,7 @@ export const useLauncherStore = defineStore(
             const list = getLauncherItemsByCategoryId(categoryId);
             const removedItems = list.filter((item) => targetIds.has(item.id));
             if (removedItems.length === 0) return;
+            const stats = useStatsStore();
 
             setLauncherItemsByCategoryId(
                 categoryId,
@@ -671,6 +680,7 @@ export const useLauncherStore = defineStore(
             recentUsedItems.value = recentUsedItems.value.filter(
                 (item) => !(item.categoryId === categoryId && targetIds.has(item.itemId))
             );
+            stats.removeLaunchEventsForItems(categoryId, [...targetIds]);
             removeDependenciesMatching(
                 (dependency) =>
                     dependency.categoryId === categoryId && targetIds.has(dependency.itemId)
@@ -738,6 +748,7 @@ export const useLauncherStore = defineStore(
 
             if (movedItems.length === 0) return;
 
+            const stats = useStatsStore();
             const movedIds = new Set(movedItems.map((item) => item.id));
             setLauncherItemsByCategoryId(
                 sourceCategoryId,
@@ -760,6 +771,13 @@ export const useLauncherStore = defineStore(
             });
 
             remapDependencyCategoryRefs(
+                movedItems.map((item) => ({
+                    fromCategoryId: sourceCategoryId,
+                    toCategoryId: targetCategoryId,
+                    itemId: item.id,
+                }))
+            );
+            stats.remapLaunchEventCategoryRefs(
                 movedItems.map((item) => ({
                     fromCategoryId: sourceCategoryId,
                     toCategoryId: targetCategoryId,
@@ -996,6 +1014,7 @@ export const useLauncherStore = defineStore(
             const next = { ...launcherItemsByCategoryId.value };
             const removedItems = next[categoryId] || [];
             const removedItemIds = removedItems.map((x) => x.id);
+            const stats = useStatsStore();
             delete next[categoryId];
             launcherItemsByCategoryId.value = next;
             if (removedItemIds.length) {
@@ -1007,6 +1026,7 @@ export const useLauncherStore = defineStore(
             recentUsedItems.value = recentUsedItems.value.filter(
                 (x) => x.categoryId !== categoryId
             );
+            stats.removeLaunchEventsForCategory(categoryId);
             removeDependenciesMatching(
                 (dependency) => dependency.categoryId === categoryId
             );
@@ -1294,6 +1314,8 @@ export const useLauncherStore = defineStore(
 
         function recordItemUsage(categoryId: string, itemId: string) {
             const now = Date.now();
+            const stats = useStatsStore();
+            stats.ensureLaunchTrackingStarted(recentUsedItems.value, now);
             const existingIndex = recentUsedItems.value.findIndex(
                 r => r.categoryId === categoryId && r.itemId === itemId
             );
@@ -1319,11 +1341,18 @@ export const useLauncherStore = defineStore(
                 recentUsedItems.value = recentUsedItems.value.slice(0, 50);
             }
 
+            stats.recordLaunchEvent({
+                categoryId,
+                itemId,
+                usedAt: now,
+            });
             enqueueSearchUpdateByRef(categoryId, itemId);
         }
 
         function clearRecentUsed() {
             recentUsedItems.value = [];
+            const stats = useStatsStore();
+            stats.clearLaunchHistory();
             enqueueSearchRefreshForAllItems();
         }
 
@@ -1357,6 +1386,18 @@ export const useLauncherStore = defineStore(
             }
         }
 
+        function importLauncherSnapshot(
+            snapshot: ImportLauncherSnapshotPayload,
+            options: ImportLauncherItemsOptions = {}
+        ) {
+            importLauncherItems(snapshot.items, options);
+            pinnedItemIds.value = [...new Set(snapshot.pinnedItemIds ?? [])];
+            recentUsedItems.value = [...(snapshot.recentUsedItems ?? [])];
+            const stats = useStatsStore();
+            stats.clearLaunchHistory();
+            enqueueSearchRefreshForAllItems();
+        }
+
         function importPinnedItemIds(newIds: string[]) {
             pinnedItemIds.value = [...new Set(newIds)];
             enqueueSearchRefreshForAllItems();
@@ -1372,6 +1413,8 @@ export const useLauncherStore = defineStore(
 
         function importRecentUsedItems(newItems: RecentUsedItem[]) {
             recentUsedItems.value = newItems;
+            const stats = useStatsStore();
+            stats.clearLaunchHistory();
             enqueueSearchRefreshForAllItems();
         }
 
@@ -1614,6 +1657,7 @@ export const useLauncherStore = defineStore(
             recordItemUsage,
             clearRecentUsed,
             importLauncherItems,
+            importLauncherSnapshot,
             importPinnedItemIds,
             reorderPinnedItemIds,
             importRecentUsedItems,

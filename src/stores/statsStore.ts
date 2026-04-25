@@ -1,16 +1,32 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { useLauncherStore } from "./launcherStore";
+import { useLauncherStore, type RecentUsedItem } from "./launcherStore";
 import { useCategoryStore } from "./categoryStore";
 import { createVersionedPersistConfig } from "../utils/versioned-persist";
 
 type TimeSlot = "morning" | "afternoon" | "evening" | "night";
+
+const MAX_LAUNCH_EVENTS = 5000;
+const MAX_LAUNCH_EVENT_AGE_MS = 180 * 24 * 60 * 60 * 1000;
 
 export type SearchKeywordRecord = {
   keyword: string;
   displayKeyword?: string;
   count: number;
   lastUsedAt: number;
+};
+
+export type LaunchEventRecord = {
+  categoryId: string;
+  itemId: string;
+  usedAt: number;
+};
+
+export type LegacyUsageSnapshotRecord = {
+  categoryId: string;
+  itemId: string;
+  usedAt: number;
+  usageCount: number;
 };
 
 type AppUsageStats = {
@@ -23,6 +39,18 @@ type AppUsageStats = {
   lastUsedAt: number;
   timeSlotCounts: Record<TimeSlot, number>;
 };
+
+type UsageAccumulator = AppUsageStats;
+
+type LaunchEventCategoryRef = {
+  fromCategoryId: string;
+  toCategoryId: string;
+  itemId: string;
+};
+
+function createEmptyTimeSlotCounts(): Record<TimeSlot, number> {
+  return { morning: 0, afternoon: 0, evening: 0, night: 0 };
+}
 
 function getTimeSlot(hour: number): TimeSlot {
   if (isNaN(hour)) return "morning";
@@ -44,10 +72,140 @@ function isWithinWeek(timestamp: number): boolean {
   return timestamp >= weekAgo;
 }
 
+function normalizeTimestamp(value: number, fallback: number = Date.now()): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return Math.floor(fallback);
+  }
+  return Math.floor(value);
+}
+
+function normalizeUsageCount(value: number | undefined): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(1, Math.floor(value ?? 1));
+}
+
+function normalizeLaunchEventRecord(record: Partial<LaunchEventRecord> | null | undefined): LaunchEventRecord | null {
+  const categoryId = typeof record?.categoryId === "string" ? record.categoryId.trim() : "";
+  const itemId = typeof record?.itemId === "string" ? record.itemId.trim() : "";
+  if (!categoryId || !itemId) return null;
+
+  return {
+    categoryId,
+    itemId,
+    usedAt: normalizeTimestamp(record?.usedAt ?? Date.now()),
+  };
+}
+
+function normalizeLegacyUsageRecord(
+  record: Partial<LegacyUsageSnapshotRecord> | RecentUsedItem | null | undefined
+): LegacyUsageSnapshotRecord | null {
+  const normalizedEvent = normalizeLaunchEventRecord(record);
+  if (!normalizedEvent) return null;
+
+  return {
+    ...normalizedEvent,
+    usageCount: normalizeUsageCount((record as LegacyUsageSnapshotRecord | undefined)?.usageCount),
+  };
+}
+
+function normalizeLegacyUsageSnapshot(
+  records: Array<Partial<LegacyUsageSnapshotRecord> | RecentUsedItem>
+): LegacyUsageSnapshotRecord[] {
+  const snapshotMap = new Map<string, LegacyUsageSnapshotRecord>();
+
+  for (const record of records) {
+    const normalized = normalizeLegacyUsageRecord(record);
+    if (!normalized) continue;
+
+    const key = `${normalized.categoryId}:${normalized.itemId}`;
+    const existing = snapshotMap.get(key);
+    if (!existing) {
+      snapshotMap.set(key, normalized);
+      continue;
+    }
+
+    snapshotMap.set(key, {
+      ...existing,
+      usedAt: Math.max(existing.usedAt, normalized.usedAt),
+      usageCount: existing.usageCount + normalized.usageCount,
+    });
+  }
+
+  return [...snapshotMap.values()].sort((a, b) => b.usedAt - a.usedAt);
+}
+
+function pruneLaunchEvents(records: LaunchEventRecord[]): LaunchEventRecord[] {
+  const cutoff = Date.now() - MAX_LAUNCH_EVENT_AGE_MS;
+  const normalized = records
+    .map((record) => normalizeLaunchEventRecord(record))
+    .filter((record): record is LaunchEventRecord => !!record && record.usedAt >= cutoff)
+    .sort((a, b) => a.usedAt - b.usedAt);
+
+  if (normalized.length <= MAX_LAUNCH_EVENTS) {
+    return normalized;
+  }
+
+  return normalized.slice(-MAX_LAUNCH_EVENTS);
+}
+
+function getUsageAccumulator(
+  usageMap: Map<string, UsageAccumulator>,
+  launcher: ReturnType<typeof useLauncherStore>,
+  categoryId: string,
+  itemId: string
+): UsageAccumulator | null {
+  const key = `${categoryId}-${itemId}`;
+  let entry = usageMap.get(key);
+
+  if (!entry) {
+    const item = launcher.getLauncherItemById(categoryId, itemId);
+    if (!item) return null;
+
+    entry = {
+      itemId,
+      name: item.name,
+      path: item.path,
+      categoryId,
+      totalLaunches: 0,
+      weekLaunches: 0,
+      lastUsedAt: 0,
+      timeSlotCounts: createEmptyTimeSlotCounts(),
+    };
+    usageMap.set(key, entry);
+  }
+
+  return entry;
+}
+
+function applyUsageCount(
+  usageMap: Map<string, UsageAccumulator>,
+  launcher: ReturnType<typeof useLauncherStore>,
+  record: { categoryId: string; itemId: string; usedAt: number },
+  count: number
+): void {
+  if (count <= 0) return;
+
+  const entry = getUsageAccumulator(usageMap, launcher, record.categoryId, record.itemId);
+  if (!entry) return;
+  const slot = getTimeSlot(getHour(record.usedAt));
+
+  entry.totalLaunches += count;
+  if (isWithinWeek(record.usedAt)) {
+    entry.weekLaunches += count;
+  }
+  if (record.usedAt > entry.lastUsedAt) {
+    entry.lastUsedAt = record.usedAt;
+  }
+  entry.timeSlotCounts[slot] += count;
+}
+
 export const useStatsStore = defineStore(
   "stats",
   () => {
     const searchHistory = ref<SearchKeywordRecord[]>([]);
+    const launchEvents = ref<LaunchEventRecord[]>([]);
+    const launchTrackingStartedAt = ref<number | null>(null);
+    const legacyUsageSnapshot = ref<LegacyUsageSnapshotRecord[]>([]);
 
     function recordSearch(keyword: string) {
       const displayKeyword = keyword.trim();
@@ -89,58 +247,123 @@ export const useStatsStore = defineStore(
       searchHistory.value = searchHistory.value.filter((record) => record.keyword !== trimmed);
     }
 
-    const appUsageStats = computed<AppUsageStats[]>(() => {
-      const launcher = useLauncherStore();
+    function ensureLaunchTrackingStarted(
+      recentItems: RecentUsedItem[],
+      startedAt: number = Date.now()
+    ): void {
+      if (launchTrackingStartedAt.value !== null) return;
 
-      const usageMap = new Map<
-        string,
-        {
-          name: string;
-          path: string;
-          categoryId: string;
-          totalLaunches: number;
-          weekLaunches: number;
-          lastUsedAt: number;
-          timeSlotCounts: Record<TimeSlot, number>;
-        }
-      >();
+      const normalizedSnapshot = normalizeLegacyUsageSnapshot(recentItems);
+      const latestLegacyUsedAt = normalizedSnapshot.reduce(
+        (max, record) => Math.max(max, record.usedAt),
+        0
+      );
+      const normalizedStartedAt = normalizeTimestamp(startedAt);
 
-      for (const recent of launcher.recentUsedItems) {
-        const item = launcher.getLauncherItemById(recent.categoryId, recent.itemId);
-        if (!item) continue;
+      legacyUsageSnapshot.value = normalizedSnapshot;
+      launchTrackingStartedAt.value =
+        latestLegacyUsedAt > 0
+          ? Math.max(normalizedStartedAt, latestLegacyUsedAt + 1)
+          : normalizedStartedAt;
+    }
 
-        const key = `${recent.categoryId}-${recent.itemId}`;
-        const hour = getHour(recent.usedAt);
-        const slot = getTimeSlot(hour);
+    function recordLaunchEvent(record: LaunchEventRecord): void {
+      const normalized = normalizeLaunchEventRecord(record);
+      if (!normalized) return;
 
-        let entry = usageMap.get(key);
-        if (!entry) {
-          entry = {
-            name: item.name,
-            path: item.path,
-            categoryId: recent.categoryId,
-            totalLaunches: 0,
-            weekLaunches: 0,
-            lastUsedAt: 0,
-            timeSlotCounts: { morning: 0, afternoon: 0, evening: 0, night: 0 },
-          };
-          usageMap.set(key, entry);
-        }
-
-        entry.totalLaunches += recent.usageCount || 0;
-        if (isWithinWeek(recent.usedAt)) {
-          entry.weekLaunches += recent.usageCount || 0;
-        }
-        if (recent.usedAt > entry.lastUsedAt) {
-          entry.lastUsedAt = recent.usedAt;
-        }
-        entry.timeSlotCounts[slot] += recent.usageCount || 0;
+      if (launchTrackingStartedAt.value === null) {
+        launchTrackingStartedAt.value = normalized.usedAt;
+        legacyUsageSnapshot.value = [];
       }
 
-      return Array.from(usageMap.entries()).map(([key, stats]) => ({
-        itemId: key.split("-").slice(1).join("-"),
-        ...stats,
-      }));
+      launchEvents.value = pruneLaunchEvents([...launchEvents.value, normalized]);
+    }
+
+    function clearLaunchHistory(): void {
+      launchEvents.value = [];
+      launchTrackingStartedAt.value = null;
+      legacyUsageSnapshot.value = [];
+    }
+
+    function removeLaunchEventsForItems(categoryId: string, itemIds: string[]): void {
+      const targetIds = new Set(itemIds);
+      if (targetIds.size === 0) return;
+
+      launchEvents.value = launchEvents.value.filter(
+        (record) => !(record.categoryId === categoryId && targetIds.has(record.itemId))
+      );
+      legacyUsageSnapshot.value = legacyUsageSnapshot.value.filter(
+        (record) => !(record.categoryId === categoryId && targetIds.has(record.itemId))
+      );
+    }
+
+    function removeLaunchEventsForCategory(categoryId: string): void {
+      launchEvents.value = launchEvents.value.filter((record) => record.categoryId !== categoryId);
+      legacyUsageSnapshot.value = legacyUsageSnapshot.value.filter(
+        (record) => record.categoryId !== categoryId
+      );
+    }
+
+    function remapLaunchEventCategoryRefs(refs: LaunchEventCategoryRef[]): void {
+      if (refs.length === 0) return;
+
+      const nextCategoryIdByKey = new Map<string, string>();
+      for (const ref of refs) {
+        if (!ref.fromCategoryId || !ref.toCategoryId || !ref.itemId) continue;
+        nextCategoryIdByKey.set(`${ref.fromCategoryId}:${ref.itemId}`, ref.toCategoryId);
+      }
+      if (nextCategoryIdByKey.size === 0) return;
+
+      launchEvents.value = pruneLaunchEvents(
+        launchEvents.value.map((record) => {
+          const nextCategoryId = nextCategoryIdByKey.get(`${record.categoryId}:${record.itemId}`);
+          if (!nextCategoryId || nextCategoryId === record.categoryId) {
+            return record;
+          }
+
+          return {
+            ...record,
+            categoryId: nextCategoryId,
+          };
+        })
+      );
+
+      legacyUsageSnapshot.value = normalizeLegacyUsageSnapshot(
+        legacyUsageSnapshot.value.map((record) => {
+          const nextCategoryId = nextCategoryIdByKey.get(`${record.categoryId}:${record.itemId}`);
+          if (!nextCategoryId || nextCategoryId === record.categoryId) {
+            return record;
+          }
+
+          return {
+            ...record,
+            categoryId: nextCategoryId,
+          };
+        })
+      );
+    }
+
+    const appUsageStats = computed<AppUsageStats[]>(() => {
+      const launcher = useLauncherStore();
+      const usageMap = new Map<string, UsageAccumulator>();
+
+      if (launchTrackingStartedAt.value === null) {
+        for (const recent of launcher.recentUsedItems) {
+          const normalized = normalizeLegacyUsageRecord(recent);
+          if (!normalized) continue;
+          applyUsageCount(usageMap, launcher, normalized, normalized.usageCount);
+        }
+      } else {
+        for (const record of legacyUsageSnapshot.value) {
+          applyUsageCount(usageMap, launcher, record, record.usageCount);
+        }
+
+        for (const record of launchEvents.value) {
+          applyUsageCount(usageMap, launcher, record, 1);
+        }
+      }
+
+      return Array.from(usageMap.values());
     });
 
     const weeklyTopApps = computed(() => {
@@ -209,8 +432,7 @@ export const useStatsStore = defineStore(
         entry.percentage = total > 0 ? (entry.launches / total) * 100 : 0;
       }
 
-      return Array.from(dist.values())
-        .sort((a, b) => b.launches - a.launches);
+      return Array.from(dist.values()).sort((a, b) => b.launches - a.launches);
     });
 
     const topSearchKeywords = computed(() => {
@@ -257,9 +479,18 @@ export const useStatsStore = defineStore(
 
     return {
       searchHistory,
+      launchEvents,
+      launchTrackingStartedAt,
+      legacyUsageSnapshot,
       recordSearch,
       removeSearchHistory,
       clearSearchHistory,
+      ensureLaunchTrackingStarted,
+      recordLaunchEvent,
+      clearLaunchHistory,
+      removeLaunchEventsForItems,
+      removeLaunchEventsForCategory,
+      remapLaunchEventCategoryRefs,
       appUsageStats,
       weeklyTopApps,
       allTimeTopApps,
@@ -275,6 +506,11 @@ export const useStatsStore = defineStore(
     };
   },
   {
-    persist: createVersionedPersistConfig("stats", ["searchHistory"]),
+    persist: createVersionedPersistConfig("stats", [
+      "searchHistory",
+      "launchEvents",
+      "launchTrackingStartedAt",
+      "legacyUsageSnapshot",
+    ]),
   }
 );

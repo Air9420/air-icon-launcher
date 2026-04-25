@@ -92,4 +92,23 @@ registerStoreVersion("clipboard", 2, [
 ]);
 registerStoreVersion("category", 2, []);
 registerStoreVersion("settings", 2, []);
-registerStoreVersion("stats", 2, []);
+registerStoreVersion("stats", 3, [
+    {
+        fromVersion: 2,
+        migrate: (v2Data: unknown) => migrateStatsV2ToV3(v2Data),
+    },
+]);
+
+function migrateStatsV2ToV3(v2Data: unknown): unknown {
+    const data = v2Data as Record<string, unknown>;
+
+    return {
+        ...data,
+        launchEvents: Array.isArray(data.launchEvents) ? data.launchEvents : [],
+        launchTrackingStartedAt:
+            typeof data.launchTrackingStartedAt === "number" ? data.launchTrackingStartedAt : null,
+        legacyUsageSnapshot: Array.isArray(data.legacyUsageSnapshot) ? data.legacyUsageSnapshot : [],
+        _migratedToV3: true,
+        _migratedAt: Date.now(),
+    };
+}

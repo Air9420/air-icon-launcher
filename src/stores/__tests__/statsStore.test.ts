@@ -4,6 +4,8 @@ import { useLauncherStore } from "../launcherStore";
 import { useCategoryStore } from "../categoryStore";
 import { createPinia, setActivePinia } from "pinia";
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 function setupStores() {
   const pinia = createPinia();
   setActivePinia(pinia);
@@ -12,6 +14,13 @@ function setupStores() {
     launcher: useLauncherStore(),
     category: useCategoryStore(),
   };
+}
+
+function getSeedTimestamp(daysAgo: number, hour: number = 9): number {
+  const date = new Date();
+  date.setHours(hour, 0, 0, 0);
+  date.setDate(date.getDate() - daysAgo);
+  return date.getTime();
 }
 
 describe("statsStore - 智能排序 & 统计", () => {
@@ -44,20 +53,37 @@ describe("statsStore - 智能排序 & 统计", () => {
     }
   });
 
-  function seedUsage(catId: string, _name: string, path: string, count: number, daysAgo: number) {
-    launcher.addLauncherItemsToCategory(catId, { paths: [path], directories: [], icon_base64s: [null] });
-    const items = launcher.getLauncherItemsByCategoryId(catId);
-    const target = items.find((i) => i.path === path);
-    if (target) {
-      for (let i = 0; i < count; i++) {
-        launcher.recordItemUsage(catId, target.id);
-      }
-      const entry = launcher.recentUsedItems.find((r) => r.itemId === target.id);
-      if (entry) {
-        entry.usedAt = Date.now() - daysAgo * 24 * 60 * 60 * 1000;
-        entry.usageCount = count;
-      }
+  function ensureItem(catId: string, path: string) {
+    launcher.addLauncherItemsToCategory(catId, {
+      paths: [path],
+      directories: [],
+      icon_base64s: [null],
+    });
+    const target = launcher.getLauncherItemsByCategoryId(catId).find((item) => item.path === path);
+    expect(target).toBeDefined();
+    return target!;
+  }
+
+  function seedUsage(
+    catId: string,
+    path: string,
+    count: number,
+    daysAgo: number,
+    hour: number = 9
+  ) {
+    const target = ensureItem(catId, path);
+    const firstUsedAt = getSeedTimestamp(daysAgo, hour);
+    stats.ensureLaunchTrackingStarted([], firstUsedAt - DAY_MS);
+
+    for (let i = 0; i < count; i++) {
+      stats.recordLaunchEvent({
+        categoryId: catId,
+        itemId: target.id,
+        usedAt: firstUsedAt + i * 60_000,
+      });
     }
+
+    return target;
   }
 
   describe("recordSearch / topSearchKeywords", () => {
@@ -115,11 +141,49 @@ describe("statsStore - 智能排序 & 统计", () => {
     });
   });
 
+  describe("launch tracking compatibility", () => {
+    it("uses recent-used aggregates before precise tracking starts", () => {
+      const target = ensureItem("cat-work", "C:\\legacy.exe");
+      launcher.importRecentUsedItems([
+        {
+          categoryId: "cat-work",
+          itemId: target.id,
+          usedAt: getSeedTimestamp(2),
+          usageCount: 3,
+        },
+      ]);
+
+      expect(stats.launchTrackingStartedAt).toBeNull();
+      expect(stats.totalLaunchesAllTime).toBe(3);
+      expect(stats.totalLaunchesThisWeek).toBe(3);
+    });
+
+    it("captures a legacy snapshot before switching to precise events", () => {
+      const target = ensureItem("cat-work", "C:\\bridge.exe");
+      launcher.importRecentUsedItems([
+        {
+          categoryId: "cat-work",
+          itemId: target.id,
+          usedAt: getSeedTimestamp(1),
+          usageCount: 3,
+        },
+      ]);
+
+      launcher.recordItemUsage("cat-work", target.id);
+
+      expect(stats.launchEvents).toHaveLength(1);
+      expect(stats.legacyUsageSnapshot).toHaveLength(1);
+      expect(stats.legacyUsageSnapshot[0].usageCount).toBe(3);
+      expect(launcher.recentUsedItems[0].usageCount).toBe(4);
+      expect(stats.totalLaunchesAllTime).toBe(4);
+    });
+  });
+
   describe("weeklyTopApps", () => {
     it("ranks apps by week launches descending", () => {
-      seedUsage("cat-work", "VSCode", "C:\\vscode.exe", 20, 1);
-      seedUsage("cat-work", "Chrome", "C:\\chrome.exe", 5, 2);
-      seedUsage("cat-fun", "Spotify", "C:\\spotify.exe", 3, 6);
+      seedUsage("cat-work", "C:\\vscode.exe", 20, 1);
+      seedUsage("cat-work", "C:\\chrome.exe", 5, 2);
+      seedUsage("cat-fun", "C:\\spotify.exe", 3, 6);
 
       const top = stats.weeklyTopApps;
 
@@ -130,25 +194,26 @@ describe("statsStore - 智能排序 & 统计", () => {
     });
 
     it("excludes apps older than 7 days", () => {
-      seedUsage("cat-work", "OldApp", "C:\\old.exe", 100, 10);
+      seedUsage("cat-work", "C:\\old.exe", 100, 10);
 
-      const top = stats.weeklyTopApps.filter((a) => a.name === "OldApp");
+      const top = stats.weeklyTopApps.filter((a) => a.name === "old");
       expect(top).toHaveLength(0);
     });
   });
 
   describe("timeBasedRecommendations", () => {
-    it("returns apps with time slot usage data", () => {
-      seedUsage("cat-work", "IDE", "C:\\ide.exe", 5, 0);
+    it("returns apps with current time slot usage data", () => {
+      seedUsage("cat-work", "C:\\ide.exe", 5, 0, new Date().getHours());
 
       const recs = stats.timeBasedRecommendations;
       expect(Array.isArray(recs)).toBe(true);
+      expect(recs.some((item) => item.name === "ide")).toBe(true);
     });
   });
 
   describe("frequentlyUsedApps", () => {
     it("shows apps with recent usage and minimum launches", () => {
-      seedUsage("cat-work", "daily", "C:\\daily.exe", 10, 0);
+      seedUsage("cat-work", "C:\\daily.exe", 10, 0);
 
       const freq = stats.frequentlyUsedApps;
       const found = freq.find((a) => a.name === "daily");
@@ -156,7 +221,7 @@ describe("statsStore - 智能排序 & 统计", () => {
     });
 
     it("excludes rarely used apps", () => {
-      seedUsage("cat-work", "rare", "C:\\rare.exe", 1, 0);
+      seedUsage("cat-work", "C:\\rare.exe", 1, 0);
 
       const freq = stats.frequentlyUsedApps;
       const found = freq.find((a) => a.name === "rare");
@@ -166,8 +231,8 @@ describe("statsStore - 智能排序 & 统计", () => {
 
   describe("categoryUsageDistribution", () => {
     it("calculates percentage distribution across categories", () => {
-      seedUsage("cat-work", "IDE", "C:\\ide.exe", 10, 1);
-      seedUsage("cat-fun", "Music", "C:\\music.exe", 4, 2);
+      seedUsage("cat-work", "C:\\ide.exe", 10, 1);
+      seedUsage("cat-fun", "C:\\music.exe", 4, 2);
 
       const dist = stats.categoryUsageDistribution;
 
@@ -179,8 +244,8 @@ describe("statsStore - 智能排序 & 统计", () => {
 
   describe("getSmartSortOrder", () => {
     it("prioritizes high-usage items", () => {
-      seedUsage("cat-work", "heavy", "C:\\heavy.exe", 50, 0);
-      seedUsage("cat-work", "light", "C:\\light.exe", 2, 0);
+      seedUsage("cat-work", "C:\\heavy.exe", 50, 0);
+      seedUsage("cat-work", "C:\\light.exe", 2, 0);
 
       const rawItems = launcher.getLauncherItemsByCategoryId("cat-work");
       const order = stats.getSmartSortOrder("cat-work", rawItems.map((i) => i.id));
@@ -209,11 +274,11 @@ describe("statsStore - 智能排序 & 统计", () => {
 
   describe("totalLaunches counters", () => {
     it("counts total weekly and all-time launches", () => {
-      seedUsage("cat-work", "App1", "C:\\a1.exe", 15, 1);
-      seedUsage("cat-work", "App2", "C:\\a2.exe", 8, 3);
+      seedUsage("cat-work", "C:\\a1.exe", 15, 1);
+      seedUsage("cat-work", "C:\\a2.exe", 8, 3);
 
-      expect(stats.totalLaunchesThisWeek).toBeGreaterThanOrEqual(23);
-      expect(stats.totalLaunchesAllTime).toBeGreaterThanOrEqual(23);
+      expect(stats.totalLaunchesThisWeek).toBe(23);
+      expect(stats.totalLaunchesAllTime).toBe(23);
     });
 
     it("returns zero when no data", () => {

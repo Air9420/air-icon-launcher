@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useLauncherStore } from "../launcherStore";
+import { useStatsStore } from "../statsStore";
 import { createPinia, setActivePinia } from "pinia";
 import * as invokeWrapper from "../../utils/invoke-wrapper";
 import { SEARCH_REQUEST_TIMEOUT_MS } from "../../utils/search-config";
@@ -137,6 +138,7 @@ describe("launcherStore - pure functions", () => {
     });
 
     it("deleteLauncherItem also cleans up pinned and recent", () => {
+      const stats = useStatsStore();
       store.addLauncherItemsToCategory("cat-1", {
         paths: ["C:\\a.exe"],
         directories: [],
@@ -145,11 +147,13 @@ describe("launcherStore - pure functions", () => {
       const items = store.getLauncherItemsByCategoryId("cat-1");
       store.togglePinned("cat-1", items[0].id);
       store.recordItemUsage("cat-1", items[0].id);
+      expect(stats.totalLaunchesAllTime).toBe(1);
 
       store.deleteLauncherItem("cat-1", items[0].id);
 
       expect(store.isItemPinned(items[0].id)).toBe(false);
       expect(store.recentUsedItems).toHaveLength(0);
+      expect(stats.totalLaunchesAllTime).toBe(0);
     });
 
     it("deleteLauncherItem removes dependency references from other items", () => {
@@ -177,6 +181,7 @@ describe("launcherStore - pure functions", () => {
     });
 
     it("deleteLauncherItems removes multiple items and their references", () => {
+      const stats = useStatsStore();
       store.addLauncherItemsToCategory("cat-1", {
         paths: ["C:\\a.exe", "C:\\b.exe", "C:\\c.exe"],
         directories: [],
@@ -185,6 +190,7 @@ describe("launcherStore - pure functions", () => {
       const items = store.getLauncherItemsByCategoryId("cat-1");
       store.togglePinned("cat-1", items[0].id);
       store.recordItemUsage("cat-1", items[1].id);
+      expect(stats.totalLaunchesAllTime).toBe(1);
       store.updateLauncherItem("cat-1", items[2].id, {
         launchDependencies: [
           {
@@ -205,6 +211,7 @@ describe("launcherStore - pure functions", () => {
       expect(store.getLauncherItemsByCategoryId("cat-1")).toHaveLength(1);
       expect(store.isItemPinned(items[0].id)).toBe(false);
       expect(store.recentUsedItems).toHaveLength(0);
+      expect(stats.totalLaunchesAllTime).toBe(0);
       expect(
         store.getLauncherItemById("cat-1", items[2].id)?.launchDependencies
       ).toEqual([]);
@@ -253,6 +260,7 @@ describe("launcherStore - pure functions", () => {
     });
 
     it("moveLauncherItems moves items and remaps dependency category", () => {
+      const stats = useStatsStore();
       store.addLauncherItemsToCategory("cat-1", {
         paths: ["C:\\a.exe", "C:\\b.exe", "C:\\c.exe"],
         directories: [],
@@ -284,6 +292,7 @@ describe("launcherStore - pure functions", () => {
       expect(store.getLauncherItemsByCategoryId("cat-1")).toHaveLength(1);
       expect(store.getLauncherItemsByCategoryId("cat-2")).toHaveLength(2);
       expect(store.recentUsedItems[0].categoryId).toBe("cat-2");
+      expect(stats.getAppUsageForItem(items[0].id)?.categoryId).toBe("cat-2");
       expect(
         store.getLauncherItemById("cat-2", items[1].id)?.launchDependencies
       ).toEqual([
@@ -330,6 +339,7 @@ describe("launcherStore - pure functions", () => {
 
   describe("recordItemUsage", () => {
     it("records first usage", () => {
+      const stats = useStatsStore();
       store.addLauncherItemsToCategory("cat-1", {
         paths: ["C:\\a.exe"],
         directories: [],
@@ -340,9 +350,12 @@ describe("launcherStore - pure functions", () => {
 
       expect(store.recentUsedItems).toHaveLength(1);
       expect(store.recentUsedItems[0].usageCount).toBe(1);
+      expect(stats.launchEvents).toHaveLength(1);
+      expect(stats.totalLaunchesAllTime).toBe(1);
     });
 
     it("increments usage count on repeat", () => {
+      const stats = useStatsStore();
       store.addLauncherItemsToCategory("cat-1", {
         paths: ["C:\\a.exe"],
         directories: [],
@@ -354,6 +367,8 @@ describe("launcherStore - pure functions", () => {
 
       expect(store.recentUsedItems).toHaveLength(1);
       expect(store.recentUsedItems[0].usageCount).toBe(2);
+      expect(stats.launchEvents).toHaveLength(2);
+      expect(stats.totalLaunchesAllTime).toBe(2);
     });
 
     it("moves item to front on reuse", () => {
@@ -386,11 +401,75 @@ describe("launcherStore - pure functions", () => {
 
   describe("clearRecentUsed", () => {
     it("clears all recent items", () => {
+      const stats = useStatsStore();
       store.recentUsedItems = [
         { categoryId: "c1", itemId: "i1", usedAt: 1, usageCount: 1 },
       ];
+      stats.recordLaunchEvent({
+        categoryId: "c1",
+        itemId: "i1",
+        usedAt: Date.now(),
+      });
       store.clearRecentUsed();
       expect(store.recentUsedItems).toHaveLength(0);
+      expect(stats.launchEvents).toHaveLength(0);
+      expect(stats.launchTrackingStartedAt).toBeNull();
+    });
+  });
+
+  describe("importLauncherSnapshot", () => {
+    it("replaces launcher state and resets stats tracking", () => {
+      const stats = useStatsStore();
+      store.addLauncherItemsToCategory("cat-old", {
+        paths: ["C:\\old.exe"],
+        directories: [],
+        icon_base64s: [null],
+      });
+      const oldItem = store.getLauncherItemsByCategoryId("cat-old")[0];
+      store.togglePinned("cat-old", oldItem.id);
+      store.recordItemUsage("cat-old", oldItem.id);
+
+      store.importLauncherSnapshot({
+        items: {
+          "cat-new": [
+            {
+              id: "item-new",
+              name: "new",
+              path: "C:\\new.exe",
+              itemType: "file",
+              isDirectory: false,
+              iconBase64: null,
+              originalIconBase64: null,
+              launchDependencies: [],
+              launchDelaySeconds: 0,
+            },
+          ],
+        },
+        pinnedItemIds: ["item-new"],
+        recentUsedItems: [
+          {
+            categoryId: "cat-new",
+            itemId: "item-new",
+            usedAt: 123,
+            usageCount: 2,
+          },
+        ],
+      });
+
+      expect(store.getLauncherItemsByCategoryId("cat-old")).toEqual([]);
+      expect(store.getLauncherItemsByCategoryId("cat-new")).toHaveLength(1);
+      expect(store.pinnedItemIds).toEqual(["item-new"]);
+      expect(store.recentUsedItems).toEqual([
+        {
+          categoryId: "cat-new",
+          itemId: "item-new",
+          usedAt: 123,
+          usageCount: 2,
+        },
+      ]);
+      expect(stats.launchEvents).toHaveLength(0);
+      expect(stats.launchTrackingStartedAt).toBeNull();
+      expect(stats.totalLaunchesAllTime).toBe(2);
     });
   });
 

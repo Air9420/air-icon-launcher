@@ -729,9 +729,11 @@ export function useDataManagement() {
         clipboardStore.setMaxRecords(snapshot.settings.clipboardMaxRecords);
         categoryStore.importCategories(snapshot.categories);
         categoryStore.setCurrentCategory(snapshot.currentCategoryId);
-        store.importLauncherItems(snapshot.launcherItemsByCategoryId);
-        store.importPinnedItemIds(snapshot.pinnedItemIds);
-        store.importRecentUsedItems(snapshot.recentUsedItems);
+        store.importLauncherSnapshot({
+            items: snapshot.launcherItemsByCategoryId,
+            pinnedItemIds: snapshot.pinnedItemIds,
+            recentUsedItems: snapshot.recentUsedItems,
+        });
         await store.syncSearchIndex();
 
         return {
@@ -844,13 +846,7 @@ export function useDataManagement() {
                     customIconBase64: category.custom_icon_base64 ?? null,
                 }))
             );
-            store.importLauncherItems(mapImportedLauncherItems(categories), {
-                refreshDerivedIcons: true,
-            });
-
             const pinnedIds = data.pinned_item_ids || data.favorite_item_ids || [];
-            store.importPinnedItemIds(filterImportedPinnedIds(itemIds, pinnedIds));
-
             const recentUsedItems = filterImportedRecentUsedItems(
                 itemRefs,
                 data.recent_used_items || []
@@ -860,7 +856,16 @@ export function useDataManagement() {
                 usedAt: item.used_at,
                 usageCount: Math.max(1, Math.floor(item.usage_count ?? 1)),
             }));
-            store.importRecentUsedItems(recentUsedItems);
+            store.importLauncherSnapshot(
+                {
+                    items: mapImportedLauncherItems(categories),
+                    pinnedItemIds: filterImportedPinnedIds(itemIds, pinnedIds),
+                    recentUsedItems,
+                },
+                {
+                    refreshDerivedIcons: true,
+                }
+            );
         }
 
         await store.syncSearchIndex();
