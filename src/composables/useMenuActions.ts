@@ -379,6 +379,12 @@ export function useMenuActions(options: UseMenuActionsOptions) {
         closeContextMenu();
     }
 
+    function onSetCategorySortMode(mode: "manual" | "smart") {
+        uiStore.setCategorySortMode(mode);
+        lastAction.value = mode === "smart" ? "分类排序：智能排序" : "分类排序：手动排序";
+        closeContextMenu();
+    }
+
     /**
      * 处理"设置首页布局预置"菜单动作
      * 
@@ -655,6 +661,7 @@ export function useMenuActions(options: UseMenuActionsOptions) {
      * - `hide-window` - 隐藏窗口
      * - `set-category-cols` - 设置分类列数
      * - `set-launcher-cols` - 设置启动项列数
+     * - `set-category-sort-mode` - 设置分类排序方式
      * - `set-home-layout-preset` - 设置首页布局
      * - `toggle-pinned` / `toggle-favorite` - 切换固定状态
      * - `open-settings` - 打开设置
@@ -677,6 +684,7 @@ export function useMenuActions(options: UseMenuActionsOptions) {
         if (action.kind === "hide-window") return onHideWindow();
         if (action.kind === "set-category-cols") return onSetCategoryCols(action.cols);
         if (action.kind === "set-launcher-cols") return onSetLauncherCols(action.cols);
+        if (action.kind === "set-category-sort-mode") return onSetCategorySortMode(action.mode);
         if (action.kind === "set-home-layout-preset") {
             const section = ctx.homeSection ?? action.section;
             return onSetHomeLayoutPreset(section, action.preset);

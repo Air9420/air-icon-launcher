@@ -12,6 +12,7 @@ export type HomeLayoutPresetKey =
   | "2x6"
   | "1x7"
   | "2x7";
+export type CategorySortMode = "manual" | "smart";
 
 export const CATEGORY_COLS_PRESETS: ReadonlyArray<number> = [4, 5, 6, 7];
 export const LAUNCHER_COLS_PRESETS: ReadonlyArray<number> = [4, 5, 6];
@@ -195,6 +196,7 @@ export const useUIStore = defineStore(
     );
     const categoryCols = ref<number>(5);
     const launcherCols = ref<number>(5);
+    const categorySortMode = ref<CategorySortMode>("manual");
     const homeSectionLayouts = ref<HomeSectionLayouts>(
       migrateHomeSectionLayouts("ui", getDefaultHomeSectionLayouts()),
     );
@@ -215,6 +217,10 @@ export const useUIStore = defineStore(
     function setLauncherCols(cols: number) {
       const next = Math.min(8, Math.max(4, Math.floor(cols)));
       launcherCols.value = next;
+    }
+
+    function setCategorySortMode(mode: CategorySortMode) {
+      categorySortMode.value = mode === "smart" ? "smart" : "manual";
     }
 
     function setHomeSectionLayoutPreset(
@@ -249,11 +255,13 @@ export const useUIStore = defineStore(
       ContextMenuType,
       categoryCols,
       launcherCols,
+      categorySortMode,
       homeSectionLayouts,
       openContextMenu,
       closeContextMenu,
       setCategoryCols,
       setLauncherCols,
+      setCategorySortMode,
       setHomeSectionLayoutPreset,
       setHomeSectionLayouts,
       getHomeSectionLayout,

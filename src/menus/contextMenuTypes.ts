@@ -1,4 +1,5 @@
 import type {
+    CategorySortMode,
     HomeLayoutPresetKey,
     HomeLayoutSectionKey,
 } from "../stores";
@@ -32,6 +33,7 @@ export type BuiltinMenuAction =
     | { kind: "hide-window" }
     | { kind: "set-category-cols"; cols: number }
     | { kind: "set-launcher-cols"; cols: number }
+    | { kind: "set-category-sort-mode"; mode: CategorySortMode }
     | {
           kind: "set-home-layout-preset";
           section: HomeLayoutSectionKey;

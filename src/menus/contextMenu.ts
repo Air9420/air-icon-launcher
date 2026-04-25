@@ -236,6 +236,43 @@ function buildBuiltinMenuModel(_ctx: MenuContext): MenuItem[] {
     },
     {
       type: "group",
+      id: "builtin:group:category-sort-mode",
+      title: "排序方式",
+      order: 225,
+      visible: {
+        and: [
+          {
+            menuType: [
+              enumContextMenuType.IconView,
+              enumContextMenuType.IconItem,
+            ],
+          },
+          { not: { homeSection: ["pinned", "recent"] } },
+        ],
+      },
+      children: [
+        {
+          type: "item",
+          id: "builtin:set-category-sort-mode:manual",
+          label: "手动",
+          action: { kind: "set-category-sort-mode", mode: "manual" },
+          order: 225,
+          mode: "radio",
+          checked: { categorySortMode: "manual" },
+        },
+        {
+          type: "item",
+          id: "builtin:set-category-sort-mode:smart",
+          label: "智能",
+          action: { kind: "set-category-sort-mode", mode: "smart" },
+          order: 226,
+          mode: "radio",
+          checked: { categorySortMode: "smart" },
+        },
+      ],
+    },
+    {
+      type: "group",
       id: "builtin:group:home-layout-preset",
       title: {
         if: { homeSection: "pinned" },

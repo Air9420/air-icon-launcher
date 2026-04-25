@@ -92,6 +92,7 @@ const props = defineProps<{
     categoryCols?: number;
     launcherCols?: number;
     currentHomeSection?: "pinned" | "recent";
+    currentCategorySortMode?: "manual" | "smart";
     pinnedLayoutPreset?: HomeLayoutPresetKey;
     recentLayoutPreset?: HomeLayoutPresetKey;
     currentCategoryId?: string;
@@ -118,6 +119,7 @@ const menuContext = computed<MenuContext>(() => {
         categoryId: props.currentCategoryId ?? null,
         itemId: props.currentItemId ?? null,
         homeSection: props.currentHomeSection ?? null,
+        categorySortMode: props.currentCategorySortMode ?? "manual",
         item,
         category: props.currentCategoryId
             ? {

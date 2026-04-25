@@ -50,6 +50,7 @@ const {
 const {
     categoryCols,
     launcherCols,
+    categorySortMode,
     homeSectionLayouts,
 } = storeToRefs(uiStore);
 
@@ -194,6 +195,7 @@ onBeforeUnmount(async () => {
         :has-current-category-custom-icon="hasCurrentCategoryCustomIcon"
         :category-cols="categoryCols"
         :launcher-cols="launcherCols"
+        :current-category-sort-mode="categorySortMode"
         :current-home-section="currentHomeSection || undefined"
         :pinned-layout-preset="homeSectionLayouts.pinned.preset"
         :recent-layout-preset="homeSectionLayouts.recent.preset"

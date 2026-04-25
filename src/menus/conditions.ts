@@ -1,9 +1,10 @@
 import { enumContextMenuType } from "./contextMenuTypes";
-import type { HomeLayoutPresetKey } from "../stores";
+import type { CategorySortMode, HomeLayoutPresetKey } from "../stores";
 
 export type VisibilityCondition =
   | { menuType: enumContextMenuType | enumContextMenuType[] }
   | { homeSection: "pinned" | "recent" | ("pinned" | "recent")[] }
+  | { categorySortMode: CategorySortMode | CategorySortMode[] }
   | { item: { pinned?: boolean; favorite?: boolean; customIcon?: boolean } }
   | { category: true | { customIcon?: boolean } }
   | { layout: { categoryCols?: number; launcherCols?: number; pinnedPreset?: string; recentPreset?: string } }
@@ -20,6 +21,7 @@ export type ResolveContext = {
   itemId: string | null;
   categoryId: string | null;
   homeSection: "pinned" | "recent" | null;
+  categorySortMode?: CategorySortMode;
   item?: {
     pinned: boolean;
     favorite: boolean;
@@ -56,6 +58,17 @@ function isHomeSectionMatch(
     ? condition.homeSection
     : [condition.homeSection];
   return sections.includes(ctx.homeSection);
+}
+
+function isCategorySortModeMatch(
+  condition: { categorySortMode: CategorySortMode | CategorySortMode[] },
+  ctx: ResolveContext,
+): boolean {
+  if (!ctx.categorySortMode) return false;
+  const modes = Array.isArray(condition.categorySortMode)
+    ? condition.categorySortMode
+    : [condition.categorySortMode];
+  return modes.includes(ctx.categorySortMode);
 }
 
 function isItemMatch(
@@ -115,6 +128,9 @@ export function evaluateCondition(
   }
   if ("homeSection" in condition) {
     return isHomeSectionMatch(condition, ctx);
+  }
+  if ("categorySortMode" in condition) {
+    return isCategorySortModeMatch(condition, ctx);
   }
   if ("item" in condition) {
     return isItemMatch(condition, ctx);

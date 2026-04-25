@@ -5,6 +5,7 @@ export {
     useUIStore,
     type enumContextMenuType,
     HOME_LAYOUT_PRESETS,
+    type CategorySortMode,
     type HomeLayoutSectionKey,
     type HomeLayoutPresetKey,
     type HomeSectionLayout,
