@@ -33,7 +33,7 @@ describe("useDataManagement helpers", () => {
             itemType: "file",
             isDirectory: false,
             iconBase64: null,
-            originalIconBase64: null,
+            hasCustomIcon: false,
             isFavorite: false,
             lastUsedAt: undefined,
             launchDependencies: [
@@ -55,7 +55,7 @@ describe("useDataManagement helpers", () => {
             itemType: "file",
             isDirectory: false,
             iconBase64: null,
-            originalIconBase64: null,
+            hasCustomIcon: false,
             isFavorite: false,
             lastUsedAt: undefined,
             launchDependencies: [],
@@ -168,7 +168,7 @@ describe("useDataManagement helpers", () => {
             itemType: "file",
             isDirectory: false,
             iconBase64: null,
-            originalIconBase64: null,
+            hasCustomIcon: false,
             isFavorite: false,
             lastUsedAt: undefined,
             launchDependencies: [],
@@ -202,5 +202,91 @@ describe("useDataManagement helpers", () => {
         usage_count: 2,
       },
     ]);
+  });
+
+  it("exports custom icon state without original_icon_base64", () => {
+    const launcherData = buildLauncherExportData(
+      [{ id: "cat-1", name: "工具", customIconBase64: null }],
+      {
+        "cat-1": [
+          {
+            id: "item-file-default",
+            name: "PowerToys",
+            path: "C:\\PowerToys.exe",
+            url: undefined,
+            itemType: "file",
+            isDirectory: false,
+            iconBase64: "default-icon",
+            hasCustomIcon: false,
+            isFavorite: false,
+            lastUsedAt: undefined,
+            launchDependencies: [],
+            launchDelaySeconds: 0,
+          },
+          {
+            id: "item-file-custom",
+            name: "Custom",
+            path: "C:\\Custom.exe",
+            url: undefined,
+            itemType: "file",
+            isDirectory: false,
+            iconBase64: "custom-icon",
+            hasCustomIcon: true,
+            isFavorite: false,
+            lastUsedAt: undefined,
+            launchDependencies: [],
+            launchDelaySeconds: 0,
+          },
+        ],
+      },
+      [],
+      []
+    );
+
+    expect(launcherData.categories[0].items).toEqual([
+      expect.objectContaining({
+        id: "item-file-default",
+        icon_base64: null,
+      }),
+      expect.objectContaining({
+        id: "item-file-custom",
+        icon_base64: "custom-icon",
+        has_custom_icon: true,
+      }),
+    ]);
+    expect("original_icon_base64" in launcherData.categories[0].items[0]).toBe(false);
+    expect("original_icon_base64" in launcherData.categories[0].items[1]).toBe(false);
+  });
+
+  it("maps legacy original_icon_base64 to hasCustomIcon during import", () => {
+    const itemsMap = mapImportedLauncherItems([
+      {
+        id: "cat-1",
+        name: "工具",
+        items: [
+          {
+            id: "item-1",
+            name: "Custom",
+            path: "C:\\Custom.exe",
+            item_type: "file",
+            is_directory: false,
+            icon_base64: "custom-icon",
+            original_icon_base64: "default-icon",
+          },
+          {
+            id: "item-2",
+            name: "Default",
+            path: "C:\\Default.exe",
+            item_type: "file",
+            is_directory: false,
+            icon_base64: "default-icon",
+            original_icon_base64: "default-icon",
+          },
+        ],
+      },
+    ]);
+
+    expect(itemsMap["cat-1"][0].hasCustomIcon).toBe(true);
+    expect(itemsMap["cat-1"][1].hasCustomIcon).toBe(false);
   });
 });

@@ -50,6 +50,7 @@ type ImportedLauncherItem = {
     item_type?: 'file' | 'url';
     is_directory: boolean;
     icon_base64?: string | null;
+    has_custom_icon?: boolean;
     original_icon_base64?: string | null;
     is_favorite?: boolean;
     last_used_at?: number | null;
@@ -458,6 +459,14 @@ export function validateImportedData(result: ImportedDataPayload): ImportValidat
                         `launcher_data.categories[${categoryIndex}].items[${itemIndex}].is_directory 必须是布尔值`
                     );
                 }
+                if (
+                    item?.has_custom_icon !== undefined &&
+                    typeof item.has_custom_icon !== "boolean"
+                ) {
+                    errors.push(
+                        `launcher_data.categories[${categoryIndex}].items[${itemIndex}].has_custom_icon 必须是布尔值`
+                    );
+                }
 
                 (item.launch_dependencies || []).forEach((dependency, dependencyIndex) => {
                     if (!dependency?.category_id?.trim() || !dependency?.item_id?.trim()) {
@@ -528,6 +537,25 @@ function formatLocalDateForFilename(date: Date) {
     return `${y}-${m}-${d}`;
 }
 
+function normalizeImportedIconBase64(value: string | null | undefined): string | null {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
+function resolveImportedHasCustomIcon(item: ImportedLauncherItem): boolean {
+    if (typeof item.has_custom_icon === "boolean") {
+        return item.has_custom_icon;
+    }
+
+    const originalIcon = normalizeImportedIconBase64(item.original_icon_base64 ?? null);
+    if (originalIcon === null) {
+        return false;
+    }
+
+    return normalizeImportedIconBase64(item.icon_base64 ?? null) !== originalIcon;
+}
+
 export function mapImportedLauncherItems(
     categories: ImportedCategory[]
 ): Record<string, LauncherItem[]> {
@@ -540,8 +568,8 @@ export function mapImportedLauncherItems(
             url: item.url,
             itemType: item.item_type || 'file',
             isDirectory: item.is_directory,
-            iconBase64: item.icon_base64 ?? null,
-            originalIconBase64: item.original_icon_base64 ?? null,
+            iconBase64: normalizeImportedIconBase64(item.icon_base64 ?? null),
+            hasCustomIcon: resolveImportedHasCustomIcon(item),
             isFavorite: item.is_favorite,
             lastUsedAt: item.last_used_at ?? undefined,
             launchDependencies: (item.launch_dependencies || [])
@@ -581,8 +609,11 @@ export function buildLauncherExportData(
                 url: item.url,
                 item_type: item.itemType,
                 is_directory: item.isDirectory,
-                icon_base64: item.iconBase64,
-                original_icon_base64: item.originalIconBase64,
+                icon_base64:
+                    item.itemType === "file" && item.hasCustomIcon !== true
+                        ? null
+                        : item.iconBase64,
+                has_custom_icon: item.hasCustomIcon === true ? true : undefined,
                 is_favorite: item.isFavorite || false,
                 last_used_at: item.lastUsedAt || null,
                 launch_dependencies: item.launchDependencies.map((dependency) => ({

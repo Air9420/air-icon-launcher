@@ -199,16 +199,49 @@ fn apply_app_config_patch(config: &mut AppConfig, patch: AppConfigPatch) {
     }
 }
 
+fn normalize_optional_string_field(value: &mut Option<String>) {
+    let normalized = value
+        .as_ref()
+        .map(|current| current.trim())
+        .filter(|current| !current.is_empty())
+        .map(|current| current.to_string());
+    *value = normalized;
+}
+
+fn sanitize_launcher_item(item: &mut LauncherItemData) {
+    item.item_type = if item.item_type.trim().eq_ignore_ascii_case("url") {
+        "url".to_string()
+    } else {
+        "file".to_string()
+    };
+
+    normalize_optional_string_field(&mut item.icon_base64);
+    normalize_optional_string_field(&mut item.original_icon_base64);
+
+    let legacy_has_custom_icon = match &item.original_icon_base64 {
+        Some(original_icon) => item.icon_base64.as_ref() != Some(original_icon),
+        None => false,
+    };
+    item.has_custom_icon = item.has_custom_icon || legacy_has_custom_icon;
+
+    if item.item_type == "file" && !item.has_custom_icon {
+        item.icon_base64 = None;
+    }
+
+    item.original_icon_base64 = None;
+}
+
 fn sanitize_launcher_data(mut launcher_data: LauncherData) -> LauncherData {
     let mut item_ids = HashSet::new();
     let mut item_refs = HashSet::new();
 
-    for category in &launcher_data.categories {
+    for category in &mut launcher_data.categories {
         if category.id.trim().is_empty() {
             continue;
         }
 
-        for item in &category.items {
+        for item in &mut category.items {
+            sanitize_launcher_item(item);
             if item.id.trim().is_empty() {
                 continue;
             }
@@ -427,7 +460,7 @@ impl ConfigManager {
 
         match fs::read_to_string(&self.launcher_data_path) {
             Ok(content) => match serde_json::from_str::<LauncherData>(&content) {
-                Ok(data) => data,
+                Ok(data) => sanitize_launcher_data(data),
                 Err(_) => LauncherData::default(),
             },
             Err(_) => LauncherData::default(),
@@ -435,7 +468,8 @@ impl ConfigManager {
     }
 
     pub fn save_launcher_data(&self, data: &LauncherData) -> Result<(), String> {
-        let content = serde_json::to_string_pretty(data).map_err(|e| e.to_string())?;
+        let sanitized = sanitize_launcher_data(data.clone());
+        let content = serde_json::to_string_pretty(&sanitized).map_err(|e| e.to_string())?;
         write_atomically(&self.launcher_data_path, content.as_bytes())
     }
 
@@ -1265,6 +1299,107 @@ mod tests {
         let migrated_raw = std::fs::read_to_string(manager.config_path()).unwrap();
         assert!(!migrated_raw.contains("sk-legacy"));
         assert!(migrated_raw.contains("\"ai_organizer_api_key\": \"\""));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn sanitize_launcher_data_migrates_legacy_original_icon_fields() {
+        let sanitized = sanitize_launcher_data(LauncherData {
+            version: CONFIG_VERSION.to_string(),
+            categories: vec![CategoryData {
+                id: "cat-1".to_string(),
+                name: "工具".to_string(),
+                custom_icon_base64: None,
+                items: vec![
+                    LauncherItemData {
+                        id: "file-default".to_string(),
+                        name: "Default".to_string(),
+                        path: "C:\\A.exe".to_string(),
+                        icon_base64: Some("icon-a".to_string()),
+                        original_icon_base64: Some("icon-a".to_string()),
+                        ..LauncherItemData::default()
+                    },
+                    LauncherItemData {
+                        id: "file-custom".to_string(),
+                        name: "Custom".to_string(),
+                        path: "C:\\B.exe".to_string(),
+                        icon_base64: Some("custom-b".to_string()),
+                        original_icon_base64: Some("origin-b".to_string()),
+                        ..LauncherItemData::default()
+                    },
+                    LauncherItemData {
+                        id: "url-item".to_string(),
+                        name: "URL".to_string(),
+                        path: String::new(),
+                        url: Some("https://example.com".to_string()),
+                        item_type: "url".to_string(),
+                        icon_base64: Some("icon-url".to_string()),
+                        original_icon_base64: Some("icon-url".to_string()),
+                        ..LauncherItemData::default()
+                    },
+                ],
+            }],
+            favorite_item_ids: Vec::new(),
+            recent_used_items: Vec::new(),
+        });
+
+        let items = &sanitized.categories[0].items;
+        assert_eq!(items[0].icon_base64, None);
+        assert!(!items[0].has_custom_icon);
+        assert_eq!(items[0].original_icon_base64, None);
+
+        assert_eq!(items[1].icon_base64.as_deref(), Some("custom-b"));
+        assert!(items[1].has_custom_icon);
+        assert_eq!(items[1].original_icon_base64, None);
+
+        assert_eq!(items[2].item_type, "url");
+        assert_eq!(items[2].icon_base64.as_deref(), Some("icon-url"));
+        assert!(!items[2].has_custom_icon);
+        assert_eq!(items[2].original_icon_base64, None);
+    }
+
+    #[test]
+    fn save_launcher_data_omits_original_icon_base64_from_disk() {
+        let base = create_test_base("launcher-icon-migration");
+        let manager = create_test_manager(&base);
+
+        let launcher_data = LauncherData {
+            version: CONFIG_VERSION.to_string(),
+            categories: vec![CategoryData {
+                id: "cat-1".to_string(),
+                name: "工具".to_string(),
+                custom_icon_base64: None,
+                items: vec![
+                    LauncherItemData {
+                        id: "file-default".to_string(),
+                        name: "Default".to_string(),
+                        path: "C:\\A.exe".to_string(),
+                        icon_base64: Some("icon-a".to_string()),
+                        original_icon_base64: Some("icon-a".to_string()),
+                        ..LauncherItemData::default()
+                    },
+                    LauncherItemData {
+                        id: "file-custom".to_string(),
+                        name: "Custom".to_string(),
+                        path: "C:\\B.exe".to_string(),
+                        icon_base64: Some("custom-b".to_string()),
+                        original_icon_base64: Some("origin-b".to_string()),
+                        ..LauncherItemData::default()
+                    },
+                ],
+            }],
+            favorite_item_ids: Vec::new(),
+            recent_used_items: Vec::new(),
+        };
+
+        manager.save_launcher_data(&launcher_data).unwrap();
+
+        let raw = std::fs::read_to_string(manager.launcher_data_path()).unwrap();
+        assert!(!raw.contains("original_icon_base64"));
+        assert!(raw.contains("\"icon_base64\": null"));
+        assert!(raw.contains("\"has_custom_icon\": true"));
+        assert!(!raw.contains("\"has_custom_icon\": false"));
 
         let _ = std::fs::remove_dir_all(&base);
     }

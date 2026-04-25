@@ -23,7 +23,7 @@ export type LauncherItem = {
     itemType: 'file' | 'url';
     isDirectory: boolean;
     iconBase64: string | null;
-    originalIconBase64?: string | null;
+    hasCustomIcon?: boolean;
     isFavorite?: boolean;
     lastUsedAt?: number;
     launchDependencies: LaunchDependency[];
@@ -232,6 +232,45 @@ export const useLauncherStore = defineStore(
             return trimmed.length > 0 ? trimmed : null;
         }
 
+        function normalizeHasCustomIcon(value: unknown): boolean {
+            return value === true;
+        }
+
+        function resolveLegacyHasCustomIcon(
+            item: Pick<LauncherItem, "iconBase64" | "hasCustomIcon"> & {
+                originalIconBase64?: string | null;
+            }
+        ): boolean {
+            if (typeof item.hasCustomIcon === "boolean") {
+                return item.hasCustomIcon;
+            }
+
+            const originalIcon = normalizeIconBase64(item.originalIconBase64);
+            if (originalIcon === null) {
+                return false;
+            }
+
+            return normalizeIconBase64(item.iconBase64) !== originalIcon;
+        }
+
+        function normalizeImportedLauncherItem(
+            item: LauncherItem & { originalIconBase64?: string | null }
+        ): LauncherItem {
+            const { originalIconBase64: _legacyOriginalIcon, ...rest } = item;
+            const normalizedIcon = normalizeIconBase64(item.iconBase64);
+            const hasCustomIcon = resolveLegacyHasCustomIcon(item);
+
+            if (rest.itemType === "file" && !hasCustomIcon) {
+                cacheOriginalIconForFileItem(rest.itemType, rest.path, normalizedIcon);
+            }
+
+            return {
+                ...rest,
+                iconBase64: normalizedIcon,
+                hasCustomIcon,
+            };
+        }
+
         function cacheOriginalIconForFileItem(
             itemType: LauncherItem["itemType"],
             path: string,
@@ -254,8 +293,7 @@ export const useLauncherStore = defineStore(
             if (item.itemType !== "file") return item;
 
             const currentIcon = normalizeIconBase64(item.iconBase64);
-            const originalIcon = normalizeIconBase64(item.originalIconBase64);
-            if (currentIcon || originalIcon) return item;
+            if (currentIcon || normalizeHasCustomIcon(item.hasCustomIcon)) return item;
 
             const cachedIcon = getCachedOriginalIconForPath(item.path);
             if (!cachedIcon) return item;
@@ -263,7 +301,7 @@ export const useLauncherStore = defineStore(
             return {
                 ...item,
                 iconBase64: cachedIcon,
-                originalIconBase64: cachedIcon,
+                hasCustomIcon: false,
             };
         }
 
@@ -274,8 +312,37 @@ export const useLauncherStore = defineStore(
             if (!normalizedPath) return false;
 
             const currentIcon = normalizeIconBase64(item.iconBase64);
-            const originalIcon = normalizeIconBase64(item.originalIconBase64);
-            return currentIcon === originalIcon;
+            return !!currentIcon && !normalizeHasCustomIcon(item.hasCustomIcon);
+        }
+
+        function isHttpUrl(url: string): boolean {
+            return url.startsWith("http://") || url.startsWith("https://");
+        }
+
+        async function refreshLauncherItemUrlFavicon(
+            categoryId: string,
+            itemId: string,
+            currentUrl: string
+        ): Promise<void> {
+            const normalizedUrl = currentUrl.trim();
+            if (!isHttpUrl(normalizedUrl)) return;
+
+            try {
+                const result = await invoke<string | null>("fetch_favicon_from_url", {
+                    url: normalizedUrl,
+                });
+                if (!result.ok) return;
+
+                const iconBase64 = result.value;
+                if (!iconBase64) return;
+
+                const item = getLauncherItemById(categoryId, itemId);
+                if (!item || normalizeHasCustomIcon(item.hasCustomIcon)) return;
+
+                updateLauncherItemIcon(categoryId, itemId, iconBase64);
+            } catch (error) {
+                console.warn("Failed to refresh launcher favicon:", error);
+            }
         }
 
         function getSearchEntryKey(categoryId: string, itemId: string): string {
@@ -822,7 +889,7 @@ export const useLauncherStore = defineStore(
                     itemType,
                     isDirectory: directorySet.has(path),
                     iconBase64,
-                    originalIconBase64: iconBase64,
+                    hasCustomIcon: false,
                     launchDependencies: [],
                     launchDelaySeconds: 0,
                 };
@@ -871,7 +938,7 @@ export const useLauncherStore = defineStore(
                         itemType,
                         isDirectory: directorySet.has(paths[i]),
                         iconBase64,
-                        originalIconBase64: iconBase64,
+                        hasCustomIcon: false,
                         launchDependencies: [],
                         launchDelaySeconds: 0,
                     });
@@ -909,7 +976,7 @@ export const useLauncherStore = defineStore(
                 const icon = pathToIcon.get(item.path);
                 if (icon === undefined) return item;
                 changed = true;
-                const updated = { ...item, iconBase64: icon, originalIconBase64: icon };
+                const updated = { ...item, iconBase64: icon, hasCustomIcon: false };
                 updatedItems.push(updated);
                 return updated;
             });
@@ -940,7 +1007,7 @@ export const useLauncherStore = defineStore(
                 itemType: 'url',
                 isDirectory: false,
                 iconBase64,
-                originalIconBase64: iconBase64,
+                hasCustomIcon: iconBase64 !== null,
                 launchDependencies: [],
                 launchDelaySeconds: 0,
             };
@@ -980,7 +1047,7 @@ export const useLauncherStore = defineStore(
                 itemType: payload.itemType,
                 isDirectory: payload.itemType === 'file' ? !!payload.isDirectory : false,
                 iconBase64,
-                originalIconBase64: iconBase64,
+                hasCustomIcon: iconBase64 !== null,
                 launchDependencies: normalizeLaunchDependencies(payload.launchDependencies, {
                     categoryId,
                     itemId: id,
@@ -1001,11 +1068,15 @@ export const useLauncherStore = defineStore(
             const index = list.findIndex((x) => x.id === itemId);
             if (index === -1) return;
             const normalizedIcon = normalizeIconBase64(iconBase64);
+            const currentItem = list[index];
+            if (currentItem.itemType === "file") {
+                cacheOriginalIconForFileItem(currentItem.itemType, currentItem.path, normalizedIcon);
+            }
             const next = [...list];
             next[index] = {
-                ...next[index],
+                ...currentItem,
                 iconBase64: normalizedIcon,
-                originalIconBase64: normalizedIcon,
+                hasCustomIcon: false,
             };
             setLauncherItemsByCategoryId(categoryId, next);
         }
@@ -1046,7 +1117,11 @@ export const useLauncherStore = defineStore(
             if (index === -1) return;
             const normalizedIcon = normalizeIconBase64(iconBase64);
             const next = [...list];
-            next[index] = { ...next[index], iconBase64: normalizedIcon };
+            next[index] = {
+                ...next[index],
+                iconBase64: normalizedIcon,
+                hasCustomIcon: true,
+            };
             setLauncherItemsByCategoryId(categoryId, next);
         }
 
@@ -1054,18 +1129,35 @@ export const useLauncherStore = defineStore(
             const list = getLauncherItemsByCategoryId(categoryId);
             const index = list.findIndex((x) => x.id === itemId);
             if (index === -1) return;
+            const currentItem = list[index];
             const next = [...list];
-            next[index] = { 
-                ...next[index], 
-                iconBase64: normalizeIconBase64(next[index].originalIconBase64 ?? null),
+            const restoredIcon =
+                currentItem.itemType === "file"
+                    ? getCachedOriginalIconForPath(currentItem.path)
+                    : null;
+            next[index] = {
+                ...currentItem,
+                iconBase64: restoredIcon,
+                hasCustomIcon: false,
             };
             setLauncherItemsByCategoryId(categoryId, next);
+
+            if (currentItem.itemType === "file" && !restoredIcon) {
+                void hydrateMissingIconsForItems([{ categoryId, itemId }], {
+                    forceReplace: true,
+                });
+                return;
+            }
+
+            if (currentItem.itemType === "url" && currentItem.url) {
+                void refreshLauncherItemUrlFavicon(categoryId, itemId, currentItem.url);
+            }
         }
 
         function hasCustomIcon(categoryId: string, itemId: string): boolean {
             const item = getLauncherItemById(categoryId, itemId);
             if (!item) return false;
-            return normalizeIconBase64(item.iconBase64) !== normalizeIconBase64(item.originalIconBase64);
+            return normalizeHasCustomIcon(item.hasCustomIcon);
         }
 
         async function hydrateMissingIconsForItems(
@@ -1097,11 +1189,11 @@ export const useLauncherStore = defineStore(
                 if (!item || item.itemType !== "file") continue;
 
                 const currentIcon = normalizeIconBase64(item.iconBase64);
-                const originalIcon = normalizeIconBase64(item.originalIconBase64);
+                const hasCustomIcon = normalizeHasCustomIcon(item.hasCustomIcon);
                 if (!forceReplace) {
                     if (currentIcon) continue;
-                    if (originalIcon && originalIcon !== currentIcon) continue;
-                } else if (currentIcon && originalIcon && currentIcon !== originalIcon) {
+                    if (hasCustomIcon) continue;
+                } else if (hasCustomIcon) {
                     continue;
                 }
 
@@ -1118,7 +1210,7 @@ export const useLauncherStore = defineStore(
                             next[index] = {
                                 ...next[index],
                                 iconBase64: cachedIcon,
-                                originalIconBase64: cachedIcon,
+                                hasCustomIcon: false,
                             };
                             setLauncherItemsByCategoryId(target.categoryId, next);
                         }
@@ -1187,16 +1279,16 @@ export const useLauncherStore = defineStore(
                         const hydratedIcon = categoryUpdates.get(item.id);
                         if (!hydratedIcon) return item;
                         const currentIcon = normalizeIconBase64(item.iconBase64);
-                        const originalIcon = normalizeIconBase64(item.originalIconBase64);
+                        const hasCustomIcon = normalizeHasCustomIcon(item.hasCustomIcon);
                         if (!forceReplace && currentIcon) return item;
-                        if (forceReplace && currentIcon && originalIcon && currentIcon !== originalIcon) {
+                        if (forceReplace && hasCustomIcon) {
                             return item;
                         }
                         changed = true;
                         return {
                             ...item,
                             iconBase64: hydratedIcon,
-                            originalIconBase64: hydratedIcon,
+                            hasCustomIcon: false,
                         };
                     });
                     if (changed) {
@@ -1364,7 +1456,11 @@ export const useLauncherStore = defineStore(
             const refreshTargets: LauncherItemRef[] = [];
             for (const [categoryId, categoryItems] of Object.entries(items)) {
                 nextItems[categoryId] = categoryItems.map((item) => {
-                    const nextItem = applyCachedOriginalIcon(item);
+                    const nextItem = applyCachedOriginalIcon(
+                        normalizeImportedLauncherItem(
+                            item as LauncherItem & { originalIconBase64?: string | null }
+                        )
+                    );
                     if (options.refreshDerivedIcons && shouldRefreshDerivedIcon(nextItem)) {
                         refreshTargets.push({
                             categoryId,

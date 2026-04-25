@@ -439,7 +439,7 @@ describe("launcherStore - pure functions", () => {
               itemType: "file",
               isDirectory: false,
               iconBase64: null,
-              originalIconBase64: null,
+              hasCustomIcon: false,
               launchDependencies: [],
               launchDelaySeconds: 0,
             },
@@ -528,7 +528,7 @@ describe("launcherStore - pure functions", () => {
 
       const hydrated = store.getLauncherItemsByCategoryId("cat-1")[0];
       expect(hydrated.iconBase64).toBe("cached-icon");
-      expect(hydrated.originalIconBase64).toBe("cached-icon");
+      expect(hydrated.hasCustomIcon).toBe(false);
       expect(invokeSpy).not.toHaveBeenCalled();
     });
 
@@ -554,9 +554,9 @@ describe("launcherStore - pure functions", () => {
 
       const hydrated = store.getLauncherItemsByCategoryId("cat-1");
       expect(hydrated[0].iconBase64).toBe("icon-a");
-      expect(hydrated[0].originalIconBase64).toBe("icon-a");
+      expect(hydrated[0].hasCustomIcon).toBe(false);
       expect(hydrated[1].iconBase64).toBe("icon-b");
-      expect(hydrated[1].originalIconBase64).toBe("icon-b");
+      expect(hydrated[1].hasCustomIcon).toBe(false);
       expect(getCachedLauncherIcon("C:\\a.exe")).toBe("icon-a");
       expect(getCachedLauncherIcon("C:\\b.exe")).toBe("icon-b");
       expect(invokeSpy).toHaveBeenCalledTimes(1);
@@ -584,7 +584,7 @@ describe("launcherStore - pure functions", () => {
 
       const after = store.getLauncherItemsByCategoryId("cat-1")[0];
       expect(after.iconBase64).toBe("custom-icon");
-      expect(after.originalIconBase64).toBe("original-icon");
+      expect(after.hasCustomIcon).toBe(true);
       expect(invokeSpy).not.toHaveBeenCalled();
     });
 
@@ -605,7 +605,7 @@ describe("launcherStore - pure functions", () => {
               itemType: "file",
               isDirectory: false,
               iconBase64: null,
-              originalIconBase64: null,
+              hasCustomIcon: false,
               launchDependencies: [],
               launchDelaySeconds: 0,
             },
@@ -620,7 +620,7 @@ describe("launcherStore - pure functions", () => {
 
       const refreshed = store.getLauncherItemsByCategoryId("cat-1")[0];
       expect(refreshed.iconBase64).toBe("real-icon");
-      expect(refreshed.originalIconBase64).toBe("real-icon");
+      expect(refreshed.hasCustomIcon).toBe(false);
       expect(getCachedLauncherIcon("C:\\a.exe")).toBe("real-icon");
     });
 
@@ -640,7 +640,7 @@ describe("launcherStore - pure functions", () => {
               itemType: "file",
               isDirectory: false,
               iconBase64: "custom-icon",
-              originalIconBase64: "original-icon",
+              hasCustomIcon: true,
               launchDependencies: [],
               launchDelaySeconds: 0,
             },
@@ -653,8 +653,30 @@ describe("launcherStore - pure functions", () => {
 
       const preserved = store.getLauncherItemsByCategoryId("cat-1")[0];
       expect(preserved.iconBase64).toBe("custom-icon");
-      expect(preserved.originalIconBase64).toBe("original-icon");
+      expect(preserved.hasCustomIcon).toBe(true);
       expect(invokeSpy).not.toHaveBeenCalled();
+    });
+
+    it("infers legacy custom icon state from originalIconBase64 during import", () => {
+      store.importLauncherItems({
+        "cat-1": [
+          {
+            id: "item-1",
+            name: "a",
+            path: "C:\\a.exe",
+            itemType: "file",
+            isDirectory: false,
+            iconBase64: "custom-icon",
+            originalIconBase64: "default-icon",
+            launchDependencies: [],
+            launchDelaySeconds: 0,
+          } as any,
+        ],
+      });
+
+      const imported = store.getLauncherItemsByCategoryId("cat-1")[0];
+      expect(imported.iconBase64).toBe("custom-icon");
+      expect(imported.hasCustomIcon).toBe(true);
     });
   });
 

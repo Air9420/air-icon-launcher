@@ -16,7 +16,7 @@ describe("storage-migrations", () => {
               itemType: "file",
               isDirectory: false,
               iconBase64: null,
-              originalIconBase64: null,
+              hasCustomIcon: false,
             },
           ],
         },

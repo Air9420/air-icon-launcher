@@ -78,11 +78,14 @@ describe("versioned-persist", () => {
     const items = parsed.data.launcherItemsByCategoryId["cat-1"];
 
     expect(items[0].iconBase64).toBeNull();
-    expect(items[0].originalIconBase64).toBeNull();
+    expect(items[0].hasCustomIcon).toBeUndefined();
+    expect("originalIconBase64" in items[0]).toBe(false);
     expect(items[1].iconBase64).toBe("custom-b");
-    expect(items[1].originalIconBase64).toBe("origin-b");
+    expect(items[1].hasCustomIcon).toBe(true);
+    expect("originalIconBase64" in items[1]).toBe(false);
     expect(items[2].iconBase64).toBe("icon-url");
-    expect(items[2].originalIconBase64).toBe("icon-url");
+    expect(items[2].hasCustomIcon).toBeUndefined();
+    expect("originalIconBase64" in items[2]).toBe(false);
   });
 
   it("compacts default file icons on launcher persist read", () => {
@@ -121,8 +124,10 @@ describe("versioned-persist", () => {
     const items = parsed.launcherItemsByCategoryId["cat-1"];
 
     expect(items[0].iconBase64).toBeNull();
-    expect(items[0].originalIconBase64).toBeNull();
+    expect(items[0].hasCustomIcon).toBeUndefined();
+    expect("originalIconBase64" in items[0]).toBe(false);
     expect(items[1].iconBase64).toBe("custom-b");
-    expect(items[1].originalIconBase64).toBe("origin-b");
+    expect(items[1].hasCustomIcon).toBe(true);
+    expect("originalIconBase64" in items[1]).toBe(false);
   });
 });

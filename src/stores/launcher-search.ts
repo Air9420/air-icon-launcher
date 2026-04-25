@@ -90,7 +90,7 @@ export function mergeRustSearchResults(
                 itemType: "file" as const,
                 isDirectory: false,
                 iconBase64: null,
-                originalIconBase64: null,
+                hasCustomIcon: false,
                 launchDependencies: [],
                 launchDelaySeconds: 0,
             };

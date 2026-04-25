@@ -2,6 +2,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 pub const CONFIG_VERSION: &str = "1.0";
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HomeSectionLayout {
@@ -232,6 +236,9 @@ pub struct LauncherItemData {
     pub item_type: String,
     pub is_directory: bool,
     pub icon_base64: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub has_custom_icon: bool,
+    #[serde(default, skip_serializing)]
     pub original_icon_base64: Option<String>,
     pub is_favorite: bool,
     pub last_used_at: Option<u64>,
@@ -249,6 +256,7 @@ impl Default for LauncherItemData {
             item_type: "file".to_string(),
             is_directory: false,
             icon_base64: None,
+            has_custom_icon: false,
             original_icon_base64: None,
             is_favorite: false,
             last_used_at: None,

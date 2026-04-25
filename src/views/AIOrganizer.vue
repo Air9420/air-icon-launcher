@@ -598,7 +598,7 @@ async function applySuggestions() {
                     itemType: "file",
                     isDirectory: false,
                     iconBase64,
-                    originalIconBase64: iconBase64,
+                    hasCustomIcon: false,
                     launchDependencies: [],
                     launchDelaySeconds: 0,
                 };

@@ -12,6 +12,10 @@ function normalizeBase64Value(value: unknown): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeBooleanValue(value: unknown): boolean | null {
+    return typeof value === "boolean" ? value : null;
+}
+
 function compactLauncherPersistData(data: PersistData): PersistData {
     if (!data || typeof data !== "object") {
         return data;
@@ -36,24 +40,43 @@ function compactLauncherPersistData(data: PersistData): PersistData {
 
             const item = rawItem as Record<string, unknown>;
             const itemType = item.itemType === "url" ? "url" : "file";
-            if (itemType !== "file") return rawItem;
+            const explicitCustomIcon = normalizeBooleanValue(item.hasCustomIcon);
+            const icon = normalizeBase64Value(item.iconBase64);
+            const originalIcon = normalizeBase64Value(item.originalIconBase64);
+            const hasCustomIcon =
+                explicitCustomIcon ?? (originalIcon !== null ? icon !== originalIcon : false);
+            const { originalIconBase64: _legacyOriginalIcon, ...rest } = item;
+
+            if (itemType !== "file") {
+                if (explicitCustomIcon === null || "originalIconBase64" in item) {
+                    hasCategoryChanged = true;
+                    return {
+                        ...rest,
+                        hasCustomIcon: hasCustomIcon || undefined,
+                    };
+                }
+                return rawItem;
+            }
 
             const path = typeof item.path === "string" ? item.path.trim() : "";
             if (!path) return rawItem;
 
-            const icon = normalizeBase64Value(item.iconBase64);
-            const originalIcon = normalizeBase64Value(item.originalIconBase64);
-            const hasCustomIcon = icon !== originalIcon;
-
             if (hasCustomIcon || !icon) {
+                if (explicitCustomIcon === null || "originalIconBase64" in item) {
+                    hasCategoryChanged = true;
+                    return {
+                        ...rest,
+                        hasCustomIcon: hasCustomIcon || undefined,
+                    };
+                }
                 return rawItem;
             }
 
             hasCategoryChanged = true;
             return {
-                ...item,
+                ...rest,
                 iconBase64: null,
-                originalIconBase64: null,
+                hasCustomIcon: undefined,
             };
         });
 

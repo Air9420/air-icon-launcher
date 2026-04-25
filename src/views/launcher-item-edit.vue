@@ -634,7 +634,7 @@ async function onChangeIcon() {
     if (!iconBase64) return;
 
     if (item.value) {
-        store.updateLauncherItemIcon(props.categoryId, props.itemId!, iconBase64);
+        store.setLauncherItemIcon(props.categoryId, props.itemId!, iconBase64);
     } else {
         draftIconBase64.value = iconBase64;
     }
