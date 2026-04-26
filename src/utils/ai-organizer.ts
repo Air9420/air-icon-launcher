@@ -3,7 +3,24 @@ export type InstalledAppScanItem = {
     path: string;
     icon_base64: string | null;
     source: string;
+    publisher?: string | null;
 };
+
+import {
+    classifyInstalledApp as classifyInstalledAppPipeline,
+    normalizeApp as normalizeAppForPipelineRaw,
+    type NormalizedApp as PipelineNormalizedApp,
+} from "./classification";
+
+function normalizeAppForPipeline(app: InstalledAppScanItem): PipelineNormalizedApp {
+    return normalizeAppForPipelineRaw({
+        name: app.name,
+        path: app.path,
+        icon_base64: app.icon_base64,
+        source: app.source,
+        publisher: app.publisher,
+    });
+}
 
 export type OrganizerSuggestionItem = InstalledAppScanItem & {
     categoryKey: string;
@@ -551,26 +568,27 @@ export function buildOrganizerSuggestions(
             continue;
         }
 
-        const matched = classifyInstalledApp(app);
+        const normalized = normalizeAppForPipeline(app);
+        const result = classifyInstalledAppPipeline(normalized);
         const nextItem: OrganizerSuggestionItem = {
             ...app,
-            categoryKey: matched.rule.key,
-            categoryName: matched.rule.name,
-            categoryDescription: matched.rule.description,
-            reason: matched.reason,
-            score: matched.score,
+            categoryKey: result.rule.key,
+            categoryName: result.rule.name,
+            categoryDescription: result.rule.description,
+            reason: result.reason,
+            score: Math.round(result.confidence * 100),
         };
 
-        const existing = grouped.get(matched.rule.key);
+        const existing = grouped.get(result.rule.key);
         if (existing) {
             existing.items.push(nextItem);
             continue;
         }
 
-        grouped.set(matched.rule.key, {
-            key: matched.rule.key,
-            name: matched.rule.name,
-            description: matched.rule.description,
+        grouped.set(result.rule.key, {
+            key: result.rule.key,
+            name: result.rule.name,
+            description: result.rule.description,
             items: [nextItem],
         });
     }
@@ -652,85 +670,6 @@ function shouldExcludeApp(app: NormalizedApp): boolean {
     return EXCLUSION_RULES.some((rule) =>
         rule.terms.some((term) => matchesTerm(app.normalizedName, term) || matchesTerm(app.normalizedPath, term))
     );
-}
-
-function classifyInstalledApp(app: NormalizedApp): {
-    rule: CategoryRule;
-    reason: string;
-    score: number;
-} {
-    if (isLikelyNonLaunchableItem(app)) {
-        const componentRule = CATEGORY_BY_KEY.get("component") || FALLBACK_CATEGORY;
-        return {
-            rule: componentRule,
-            reason: "命中组件特征：运行库/后台工具",
-            score: 980,
-        };
-    }
-
-    if (matchesTerm(app.normalizedName, "微信开发者工具")) {
-        const developmentRule = CATEGORY_BY_KEY.get("development") || FALLBACK_CATEGORY;
-        return {
-            rule: developmentRule,
-            reason: "命中应用映射：微信开发者工具",
-            score: 999,
-        };
-    }
-
-    let bestRule = FALLBACK_CATEGORY;
-    let bestScore = 0;
-    let bestReason = "未命中特征词，先归到其他";
-
-    for (const rule of CATEGORY_RULES) {
-        const matchedExactTerms = (rule.exactTerms || []).filter((term) =>
-            matchesTerm(app.normalizedName, term)
-        );
-        const matchedKeywords = (rule.keywords || []).filter((term) =>
-            matchesTerm(app.normalizedName, term)
-        );
-        const matchedPathKeywords = (rule.pathKeywords || []).filter((term) =>
-            matchesTerm(app.normalizedPath, term)
-        );
-
-        const hitCount =
-            matchedExactTerms.length + matchedKeywords.length + matchedPathKeywords.length;
-        const score =
-            matchedExactTerms.length * 80 +
-            matchedKeywords.length * 24 +
-            matchedPathKeywords.length * 10 +
-            (hitCount > 0 ? rule.bias || 0 : 0);
-
-        if (score <= bestScore) {
-            continue;
-        }
-
-        bestRule = rule;
-        bestScore = score;
-        bestReason = buildReason(matchedExactTerms, matchedKeywords, matchedPathKeywords);
-    }
-
-    return {
-        rule: bestRule,
-        reason: bestReason,
-        score: bestScore,
-    };
-}
-
-function buildReason(
-    matchedExactTerms: string[],
-    matchedKeywords: string[],
-    matchedPathKeywords: string[]
-): string {
-    if (matchedExactTerms.length > 0) {
-        return `命中应用映射：${matchedExactTerms.slice(0, 2).join(" / ")}`;
-    }
-    if (matchedKeywords.length > 0) {
-        return `命中关键词：${matchedKeywords.slice(0, 2).join(" / ")}`;
-    }
-    if (matchedPathKeywords.length > 0) {
-        return `命中安装路径：${matchedPathKeywords[0]}`;
-    }
-    return "未命中特征词，先归到其他";
 }
 
 function matchesTerm(text: string, rawTerm: string): boolean {
