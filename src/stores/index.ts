@@ -23,6 +23,8 @@ export {
     type PinnedMergedItem,
 } from "./launcherStore";
 
+export { useOverrideStore, buildOverrideKeys, getEffectiveConfidence } from "./overrideStore";
+
 import { useLauncherStore } from "./launcherStore";
 
 export const Store = useLauncherStore;

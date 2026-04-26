@@ -160,6 +160,13 @@ export function setOverrideLookupFn(fn: (app: NormalizedApp) => CategoryOverride
     _lookupOverride = fn;
 }
 
+export function initOverrideLookupFromStore(): void {
+    import("../../stores/overrideStore").then(({ useOverrideStore }) => {
+        const store = useOverrideStore();
+        setOverrideLookupFn((app: NormalizedApp) => store.lookupOverride(app));
+    });
+}
+
 export function classifyInstalledApp(app: NormalizedApp): ClassificationResult {
     const layer0 = layer0_ComponentCheck(app);
     if (layer0) return layer0;
