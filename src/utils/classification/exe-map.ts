@@ -104,6 +104,8 @@ export const EXE_MAP: Record<string, CategoryKey> = {
     "teamspeak.exe": "office",
     "mumble.exe": "office",
     "maono link.exe": "media",
+    "atk v hub.exe": "system",
+    "mchose hub.exe": "system",
 };
 
 export function lookupExeMap(exeName: string): CategoryKey | null {

@@ -104,6 +104,7 @@ export const CATEGORY_RULES: CategoryRule[] = [
             "pixpin", "utools", "mem reduct", "process lasso", "easyuefi",
             "latencymon", "rpi imager", "raspberry pi imager",
             "火绒", "huorong", "hips",
+            "atk v hub", "mchose hub", "外设", "驱动",
         ],
         pathKeywords: ["utilities", "security", "aomei", "dism++", "图吧", "huorong"],
         publisherKeywords: ["7-zip", "rarlab", "voidtools", "360", "aomei"],

@@ -415,6 +415,24 @@ describe("classifyInstalledApp - 系统工具 (system)", () => {
         expect(result.rule.key).toBe("system");
     });
 
+    it("ATK V HUB → system", () => {
+        const app = makeApp({
+            name: "ATK V HUB2.3.68",
+            path: "Z:\\Apps\\ATK_V_HUB\\ATK V HUB.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("system");
+    });
+
+    it("MCHOSE HUB → system", () => {
+        const app = makeApp({
+            name: "MCHOSE HUB",
+            path: "Z:\\Apps\\迈从HUB\\MCHOSE HUB\\MCHOSE HUB.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("system");
+    });
+
     it("ProcessLassoLauncher → system", () => {
         const app = makeApp({
             name: "Process Lasso",
