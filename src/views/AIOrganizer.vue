@@ -116,6 +116,50 @@
             </div>
         </section>
 
+        <section v-if="hasSuggestions && pendingProposalCount > 0" class="rule-proposal-panel">
+            <div class="section-header">
+                <div class="section-header-copy">
+                    <div class="toolbar-title">规则发现</div>
+                    <div class="toolbar-subtitle">
+                        AI 发现 {{ pendingProposalCount }} 条新规则，可一键应用到规则引擎
+                    </div>
+                </div>
+                <div class="section-header-actions">
+                    <button class="ghost-btn" type="button" @click="loadProposalsFromOverrides">
+                        刷新
+                    </button>
+                    <button class="primary-btn" type="button" :disabled="pendingProposals.length === 0"
+                        @click="approveAllProposals">
+                        全部应用
+                    </button>
+                </div>
+            </div>
+
+            <div class="proposal-list">
+                <div v-for="proposal in pendingProposals.slice(0, 10)" :key="proposal.id" class="proposal-card">
+                    <div class="proposal-info">
+                        <span class="proposal-badge" :class="proposal.rule.type">
+                            {{ proposal.rule.type }}
+                        </span>
+                        <code class="proposal-value">{{ proposal.rule.value }}</code>
+                        <span class="proposal-arrow">→</span>
+                        <span class="proposal-category">{{ proposal.rule.categoryKey }}</span>
+                        <span class="proposal-evidence">
+                            {{ proposal.rule.evidence.length }} 个样本: {{ proposal.rule.evidence.slice(0, 3).join(", ") }}
+                        </span>
+                    </div>
+                    <div class="proposal-actions">
+                        <button class="ghost-btn small" type="button" @click="rejectSingleProposal(proposal.id)">
+                            忽略
+                        </button>
+                        <button class="primary-btn small" type="button" @click="approveSingleProposal(proposal.id)">
+                            应用
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <section v-if="scanError" class="empty-state error-state">
             <h2>扫描失败</h2>
             <p>{{ scanError }}</p>
@@ -192,7 +236,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
-import { Store, useCategoryStore, useGuideStore, useOverrideStore, type LauncherItem } from "../stores";
+import { Store, useCategoryStore, useGuideStore, useOverrideStore, buildOverrideKeys, type LauncherItem } from "../stores";
 import { showToast } from "../composables/useGlobalToast";
 import {
     buildOrganizerSuggestions,
@@ -215,6 +259,8 @@ import {
 import { shouldSendToAI, getSuspicionReport } from "../utils/classification/ai-filter";
 import { getCachedAICategory, setCachedAICategory } from "../utils/classification/ai-cache";
 import { classifyInstalledApp, normalizeApp as normalizeAppForPipeline } from "../utils/classification";
+import { discoverPatterns } from "../utils/classification/pattern-discovery";
+import { useRuleProposalStore } from "../utils/classification/rule-proposal";
 import { extractErrorMessage, invokeOrThrow } from "../utils/invoke-wrapper";
 import { writeTextFileViaCommand } from "../utils/system-commands";
 
@@ -243,6 +289,7 @@ const launcherStore = Store();
 const categoryStore = useCategoryStore();
 const guideStore = useGuideStore();
 const overrideStore = useOverrideStore();
+const ruleProposalStore = useRuleProposalStore();
 
 const isScanning = ref(false);
 const isApplying = ref(false);
@@ -660,6 +707,58 @@ function showMoveMenu(item: DraftSuggestionItem, category: DraftSuggestionCatego
 
 function closeMoveMenu() {
     moveMenuTarget.value = null;
+}
+
+const pendingProposals = computed(() => ruleProposalStore.pendingProposals());
+const pendingProposalCount = computed(() => ruleProposalStore.pendingProposals().length);
+
+function loadProposalsFromOverrides() {
+    const overrideMap = new Map<string, { name: string; publisherToken: string | null; exeName: string; nameTokens: string[] }>();
+    for (const category of categories.value) {
+        for (const item of category.items) {
+            const normalized = normalizeAppForPipeline({
+                name: item.name,
+                path: item.path,
+                icon_base64: item.icon_base64,
+                source: item.source,
+                publisher: item.publisher ?? null,
+            });
+            const keys = buildOverrideKeys(normalized);
+            for (const key of keys) {
+                if (!overrideMap.has(key)) {
+                    overrideMap.set(key, {
+                        name: normalized.name,
+                        publisherToken: normalized.publisherToken,
+                        exeName: normalized.exeName,
+                        nameTokens: normalized.nameTokens,
+                    });
+                }
+            }
+        }
+    }
+
+    const proposals = discoverPatterns(
+        overrideStore.categoryOverrides,
+        (key) => overrideMap.get(key) ?? null
+    );
+
+    for (const proposal of proposals) {
+        ruleProposalStore.addProposal(proposal);
+    }
+}
+
+function approveSingleProposal(proposalId: string) {
+    ruleProposalStore.approveProposal(proposalId);
+}
+
+function rejectSingleProposal(proposalId: string) {
+    ruleProposalStore.rejectProposal(proposalId);
+}
+
+function approveAllProposals() {
+    for (const proposal of ruleProposalStore.pendingProposals()) {
+        ruleProposalStore.approveProposal(proposal.id);
+    }
 }
 
 function moveItemToCategory(item: DraftSuggestionItem, fromCategory: DraftSuggestionCategory, targetCategoryKey: string) {
@@ -1732,6 +1831,121 @@ function pruneAndSortCategories() {
         &:hover {
             background: var(--color-bg-hover, #3a3a3a);
         }
+    }
+}
+
+.rule-proposal-panel {
+    margin: 0 24px 16px;
+    background: var(--color-bg-elevated, #2a2a2a);
+    border: 1px solid var(--color-border, #444);
+    border-radius: 12px;
+    overflow: hidden;
+
+    .section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--color-border, #444);
+
+        .section-header-copy {
+            flex: 1;
+        }
+
+        .section-header-actions {
+            display: flex;
+            gap: 8px;
+        }
+    }
+
+    .proposal-list {
+        max-height: 320px;
+        overflow-y: auto;
+        padding: 8px;
+    }
+
+    .proposal-card {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        border-radius: 8px;
+        background: var(--color-bg, #1a1a1a);
+        margin-bottom: 6px;
+
+        &:last-child {
+            margin-bottom: 0;
+        }
+    }
+
+    .proposal-info {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        flex: 1;
+        min-width: 0;
+    }
+
+    .proposal-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        white-space: nowrap;
+
+        &.publisher {
+            background: #3b82f620;
+            color: #60a5fa;
+        }
+        &.exe {
+            background: #8b5cf620;
+            color: #a78bfa;
+        }
+        &.keyword {
+            background: #10b98120;
+            color: #34d399;
+        }
+    }
+
+    .proposal-value {
+        font-size: 13px;
+        color: var(--color-text, #eee);
+        font-family: monospace;
+        background: transparent;
+        padding: 0;
+    }
+
+    .proposal-arrow {
+        color: var(--color-text-secondary, #999);
+    }
+
+    .proposal-category {
+        font-size: 13px;
+        color: var(--color-accent, #3b82f6);
+        font-weight: 500;
+    }
+
+    .proposal-evidence {
+        font-size: 11px;
+        color: var(--color-text-secondary, #999);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 200px;
+    }
+
+    .proposal-actions {
+        display: flex;
+        gap: 6px;
+        flex-shrink: 0;
+    }
+
+    .ghost-btn.small,
+    .primary-btn.small {
+        padding: 4px 12px;
+        font-size: 12px;
     }
 }
 </style>
