@@ -10,6 +10,11 @@ const NON_LAUNCHABLE_TERMS = [
     "runtime", "redistributable", "sdk", "driver", "update helper",
     "vc_redist", "directx", ".net framework", "visual c++",
     "component", "helper", "service", "daemon",
+    "package cache", "unins", "uninstall", "setup", "install",
+];
+
+const NON_LAUNCHABLE_PATH_TOKENS = [
+    "package cache", "unins", "uninstall", "setup", "install",
 ];
 
 function isLikelyNonLaunchableItem(app: NormalizedApp): boolean {
@@ -18,8 +23,9 @@ function isLikelyNonLaunchableItem(app: NormalizedApp): boolean {
         if (nameLower.includes(term)) return true;
     }
     for (const token of app.pathTokens) {
-        for (const term of NON_LAUNCHABLE_TERMS) {
-            if (token.includes(term)) return true;
+        const tokenLower = token.toLowerCase();
+        for (const term of NON_LAUNCHABLE_PATH_TOKENS) {
+            if (tokenLower.includes(term)) return true;
         }
     }
     return false;

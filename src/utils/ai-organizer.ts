@@ -548,6 +548,11 @@ const NON_LAUNCHABLE_TERMS = [
     "运行库",
     "组件",
     "system component",
+    "package cache",
+    "unins",
+    "uninstall",
+    "setup",
+    "install",
 ];
 
 const CATEGORY_BY_KEY = new Map(CATEGORY_RULES.map((rule) => [rule.key, rule]));

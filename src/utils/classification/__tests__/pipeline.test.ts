@@ -160,6 +160,25 @@ describe("classifyInstalledApp - Layer 0: 组件检测", () => {
         const result = classifyInstalledApp(app);
         expect(result.rule.key).toBe("component");
     });
+
+    it("python setup in Package Cache → component", () => {
+        const app = makeApp({
+            name: "Python 3.12.1 64 bit",
+            path: "C:\\Users\\Air\\AppData\\Local\\Package Cache\\{86e52725-ef45-452f-ac4c-b8958718bfea}\\python-3.12.1-amd64.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("component");
+        expect(result.confidence).toBeGreaterThanOrEqual(0.95);
+    });
+
+    it("setup.exe in Package Cache → component", () => {
+        const app = makeApp({
+            name: "PowerShell 7.4.2.0",
+            path: "C:\\ProgramData\\Package Cache\\{57ab3d40-c876-4caf-88cd-3bbfc669479c}\\PowerShell-7.4.2-win-x64.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("component");
+    });
 });
 
 describe("classifyInstalledApp - Normalization", () => {
