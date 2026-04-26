@@ -212,9 +212,11 @@ import {
     type AIOrganizerConfig,
     type AIOrganizerRefineResponse,
 } from "../utils/ai-organizer-ai";
+import { shouldSendToAI, getSuspicionReport } from "../utils/classification/ai-filter";
+import { getCachedAICategory, setCachedAICategory } from "../utils/classification/ai-cache";
+import { classifyInstalledApp, normalizeApp as normalizeAppForPipeline } from "../utils/classification";
 import { extractErrorMessage, invokeOrThrow } from "../utils/invoke-wrapper";
 import { writeTextFileViaCommand } from "../utils/system-commands";
-import { normalizeApp as normalizeAppForPipeline } from "../utils/classification/normalizer";
 
 type DraftSuggestionItem = OrganizerSuggestionItem & {
     selected: boolean;
@@ -422,11 +424,48 @@ async function refineAllItemsWithAI() {
         const savedConfig = await saveAIOrganizerConfig(config);
         syncAiConfigRefs(savedConfig);
 
+        const filteredCandidates = candidates.filter((item) => {
+            const cachedCategory = getCachedAICategory(normalizeAppForPipeline({
+                name: item.name,
+                path: item.path,
+                icon_base64: item.icon_base64,
+                source: item.source,
+                publisher: item.publisher ?? null,
+            }));
+            if (cachedCategory) {
+                if (cachedCategory !== item.categoryKey) {
+                    const targetRule = organizerCategoryByKey.get(cachedCategory);
+                    if (targetRule) {
+                        item.categoryKey = cachedCategory;
+                        item.categoryName = targetRule.name;
+                        item.categoryDescription = targetRule.description;
+                        item.reason = "AI 缓存命中";
+                    }
+                }
+                return false;
+            }
+
+            const normalizedApp = normalizeAppForPipeline({
+                name: item.name,
+                path: item.path,
+                icon_base64: item.icon_base64,
+                source: item.source,
+                publisher: item.publisher ?? null,
+            });
+            const result = classifyInstalledApp(normalizedApp);
+            return shouldSendToAI(result);
+        });
+
+        if (filteredCandidates.length === 0) {
+            showToast("所有软件已通过规则引擎和缓存覆盖，无需 AI 精修");
+            return;
+        }
+
         let changedCount = 0;
         let processedCount = 0;
         let failedBatchCount = 0;
 
-        const allBatches = chunkItems(candidates, AI_BATCH_SIZE);
+        const allBatches = chunkItems(filteredCandidates, AI_BATCH_SIZE);
         type BatchTask = {
             batch: typeof allBatches[0];
             promise: Promise<AIOrganizerRefineResponse>;
@@ -439,15 +478,32 @@ async function refineAllItemsWithAI() {
         const startTask = (batchIndex: number): BatchTask => {
             const batch = allBatches[batchIndex];
             const promise = refineOrganizerBatchWithAI(
-                batch.map((item) => ({
-                    id: item.aiRefId,
-                    name: item.name,
-                    path: item.path,
-                    source: item.source,
-                    currentCategoryKey: item.categoryKey,
-                    currentReason: item.reason,
-                    score: item.score,
-                })),
+                batch.map((item) => {
+                    const normalizedApp = normalizeAppForPipeline({
+                        name: item.name,
+                        path: item.path,
+                        icon_base64: item.icon_base64,
+                        source: item.source,
+                        publisher: item.publisher ?? null,
+                    });
+                    const result = classifyInstalledApp(normalizedApp);
+                    const suspicion = getSuspicionReport(result);
+                    return {
+                        id: item.aiRefId,
+                        name: item.name,
+                        path: item.path,
+                        source: item.source,
+                        publisher: item.publisher ?? null,
+                        exeName: normalizedApp.exeName,
+                        currentCategoryKey: item.categoryKey,
+                        currentReason: item.reason,
+                        currentConfidence: result.confidence,
+                        ruleMatchedLayers: suspicion.isSuspicious
+                            ? [...suspicion.signals, `confidence=${result.confidence}`]
+                            : [`confidence=${result.confidence}`],
+                        score: item.score,
+                    };
+                }),
                 getCategoriesForAiRefine()
             );
             return { batch, promise, batchIndex };
@@ -476,12 +532,25 @@ async function refineAllItemsWithAI() {
 
             if (settled.status === "fulfilled") {
                 changedCount += applyAiAssignments(settled.value.assignments);
+                for (const assignment of settled.value.assignments) {
+                    const found = settled.task.batch.find(item => item.aiRefId === assignment.id);
+                    if (found) {
+                        const normalizedApp = normalizeAppForPipeline({
+                            name: found.name,
+                            path: found.path,
+                            icon_base64: found.icon_base64,
+                            source: found.source,
+                            publisher: found.publisher ?? null,
+                        });
+                        setCachedAICategory(normalizedApp, assignment.category_key);
+                    }
+                }
             } else {
                 failedBatchCount += 1;
                 console.error(settled.reason);
             }
 
-            aiProgressText.value = `AI 精修 ${processedCount}/${candidates.length}`;
+            aiProgressText.value = `AI 精修 ${processedCount}/${filteredCandidates.length}`;
 
             if (nextBatchIndex < allBatches.length) {
                 pendingTasks.push(startTask(nextBatchIndex));

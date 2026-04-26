@@ -18,8 +18,16 @@ pub struct AIOrganizerItemInput {
     pub name: String,
     pub path: String,
     pub source: String,
+    #[serde(default)]
+    pub publisher: Option<String>,
+    #[serde(default, rename = "exe_name")]
+    pub exe_name: Option<String>,
     pub current_category_key: String,
     pub current_reason: String,
+    #[serde(default)]
+    pub current_confidence: Option<f64>,
+    #[serde(default, rename = "rule_matched_layers")]
+    pub rule_matched_layers: Option<Vec<String>>,
     pub score: f64,
 }
 
@@ -30,6 +38,14 @@ struct AIOrganizerItemPromptInput {
     pub path: String,
     pub source: String,
     pub current_category_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub publisher: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exe_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_confidence: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rule_matched_layers: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_hint: Option<&'static str>,
 }
@@ -137,6 +153,10 @@ pub async fn refine_installed_apps_with_ai(
             path: shorten_path_for_prompt(&item.path),
             source: item.source.clone(),
             current_category_key: item.current_category_key.clone(),
+            publisher: item.publisher.clone(),
+            exe_name: item.exe_name.clone(),
+            current_confidence: item.current_confidence,
+            rule_matched_layers: item.rule_matched_layers.clone(),
             app_hint: lookup_app_hint(&item.name),
         })
         .collect();

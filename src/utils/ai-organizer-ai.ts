@@ -13,8 +13,12 @@ export type AIOrganizerRefineItem = {
     name: string;
     path: string;
     source: string;
+    publisher: string | null;
+    exeName: string;
     currentCategoryKey: string;
     currentReason: string;
+    currentConfidence: number;
+    ruleMatchedLayers: string[];
     score: number;
 };
 
@@ -69,8 +73,12 @@ export async function refineOrganizerBatchWithAI(
                 name: item.name,
                 path: item.path,
                 source: item.source,
+                publisher: item.publisher,
+                exe_name: item.exeName,
                 current_category_key: item.currentCategoryKey,
                 current_reason: item.currentReason,
+                current_confidence: item.currentConfidence,
+                rule_matched_layers: item.ruleMatchedLayers,
                 score: item.score,
             })),
         },
