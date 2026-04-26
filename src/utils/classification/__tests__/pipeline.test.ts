@@ -405,6 +405,234 @@ describe("classifyInstalledApp - 系统工具 (system)", () => {
         const result = classifyInstalledApp(app);
         expect(result.rule.key).toBe("system");
     });
+
+    it("火绒安全软件 → system", () => {
+        const app = makeApp({
+            name: "火绒安全软件",
+            path: "Z:\\火绒\\Huorong\\Sysdiag\\bin\\HipsMain.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("system");
+    });
+
+    it("ProcessLassoLauncher → system", () => {
+        const app = makeApp({
+            name: "Process Lasso",
+            path: "Z:\\应用\\Process Lasso\\ProcessLassoLauncher.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("system");
+    });
+});
+
+describe("classifyInstalledApp - 网络代理 (network)", () => {
+    it("Wireshark → network", () => {
+        const app = makeApp({
+            name: "Wireshark 4.4.3",
+            path: "Z:\\Apps\\Wireshark\\Wireshark.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("network");
+    });
+});
+
+describe("classifyInstalledApp - 开发工具 (development)", () => {
+    it("Xshell → development", () => {
+        const app = makeApp({
+            name: "Xshell 7",
+            path: "Z:\\Xshell\\Xshell.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("development");
+    });
+
+    it("FinalShell → development", () => {
+        const app = makeApp({
+            name: "FinalShell",
+            path: "E:\\finalshell\\finalshell.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("development");
+    });
+
+    it("Navicat → development", () => {
+        const app = makeApp({
+            name: "PremiumSoft Navicat Premium 16.0",
+            path: "E:\\Navicat Premium 16\\navicat.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("development");
+    });
+
+    it("CMake → development", () => {
+        const app = makeApp({
+            name: "CMake cmake gui",
+            path: "Z:\\Cmake\\bin\\cmake-gui.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("development");
+    });
+
+    it("Bun → development", () => {
+        const app = makeApp({
+            name: "Bun",
+            path: "C:\\Users\\Air\\.bun\\bin\\bun.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("development");
+    });
+
+    it("NVM for Windows → development", () => {
+        const app = makeApp({
+            name: "NVM for Windows 1.1.12",
+            path: "Z:\\nvm\\nvm.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("development");
+    });
+
+    it("PowerShell 7 → development", () => {
+        const app = makeApp({
+            name: "PowerShell 7",
+            path: "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("development");
+    });
+
+    it("Nsight Compute → development", () => {
+        const app = makeApp({
+            name: "Nsight Compute",
+            path: "C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2021.2.2\\host\\windows-desktop-win7-x64\\ncu-ui.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("development");
+    });
+
+    it("Nsight Systems → development", () => {
+        const app = makeApp({
+            name: "Nsight Systems 2023.3.3",
+            path: "C:\\Program Files\\NVIDIA Corporation\\Nsight Systems 2023.3.3\\host-windows-x64\\nsys-ui.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("development");
+    });
+});
+
+describe("classifyInstalledApp - 模拟器 (emulator)", () => {
+    it("雷电模拟器 → emulator", () => {
+        const app = makeApp({
+            name: "雷电模拟器",
+            path: "Z:\\Apps\\安卓模拟器\\leidian\\LDPlayer9\\dnplayer.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("emulator");
+    });
+
+    it("逍遥多开器 → emulator", () => {
+        const app = makeApp({
+            name: "逍遥多开器",
+            path: "Z:\\Apps\\Microvirt\\MEmu\\MEmuConsole.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("emulator");
+    });
+});
+
+describe("classifyInstalledApp - 网络代理 (network)", () => {
+    it("Clash Verge → network", () => {
+        const app = makeApp({
+            name: "Clash Verge",
+            path: "Z:\\Apps\\clash-verge-rev\\clash-verge.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("network");
+    });
+});
+
+describe("classifyInstalledApp - 办公 (office)", () => {
+    it("腾讯会议 → office", () => {
+        const app = makeApp({
+            name: "腾讯会议",
+            path: "Z:\\Apps\\腾讯会议\\WeMeet\\WeMeetApp.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("office");
+    });
+
+    it("KOOK → office", () => {
+        const app = makeApp({
+            name: "KOOK",
+            path: "Z:\\应用\\KOOK\\KOOK.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("office");
+    });
+
+    it("TeamSpeak → office", () => {
+        const app = makeApp({
+            name: "TeamSpeak",
+            path: "C:\\Users\\Air\\AppData\\Local\\Programs\\TeamSpeak\\TeamSpeak.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("office");
+    });
+
+    it("Mumble → office", () => {
+        const app = makeApp({
+            name: "Mumble",
+            path: "C:\\Program Files\\Mumble\\client\\mumble.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("office");
+    });
+
+    it("Oopz → office (游戏语音，不是 AI)", () => {
+        const app = makeApp({
+            name: "Oopz",
+            path: "Z:\\oopz\\oopz.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("office");
+    });
+
+    it("QQScLauncher → office", () => {
+        const app = makeApp({
+            name: "腾讯QQ",
+            path: "E:\\QQ\\Bin\\QQScLauncher.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("office");
+    });
+});
+
+describe("classifyInstalledApp - 游戏平台 (gaming)", () => {
+    it("EALauncher.exe → gaming", () => {
+        const app = makeApp({
+            name: "EA",
+            path: "C:\\Program Files\\Electronic Arts\\EA Desktop\\EA Desktop\\EALauncher.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("gaming");
+    });
+
+    it("5E对战平台 → gaming (对战平台不是加速器)", () => {
+        const app = makeApp({
+            name: "5E对战平台",
+            path: "Z:\\Apps\\5ePlay\\5EClient\\5EClient.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("gaming");
+    });
+
+    it("完美世界竞技平台 → gaming", () => {
+        const app = makeApp({
+            name: "完美世界竞技平台 1.0.25121811",
+            path: "Z:\\Apps\\完美世界\\完美世界竞技平台.exe",
+        });
+        const result = classifyInstalledApp(app);
+        expect(result.rule.key).toBe("gaming");
+    });
 });
 
 describe("classifyInstalledApp - Normalization", () => {
