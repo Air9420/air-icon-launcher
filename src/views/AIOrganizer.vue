@@ -158,7 +158,9 @@
 
                 <div class="item-grid" v-show="!category.collapsed">
                     <button v-for="item in category.items" :key="item.aiRefId" class="item-chip"
-                        :class="{ selected: item.selected }" type="button" @click="item.selected = !item.selected">
+                        :class="{ selected: item.selected }" type="button"
+                        @click="item.selected = !item.selected"
+                        @contextmenu="showMoveMenu(item, category, $event)">
                         <div class="item-icon">
                             <img v-if="item.icon_base64" :src="getIconSrc(item.icon_base64)" alt="" draggable="false">
                             <span v-else>{{ item.name.slice(0, 1) }}</span>
@@ -171,6 +173,15 @@
                         </div>
                     </button>
                 </div>
+
+                <div v-if="moveMenuTarget && moveMenuTarget.category === category" class="move-menu" @click.stop>
+                    <div class="move-menu-title">移动到分类</div>
+                    <button v-for="cat in organizerCategories.filter(c => c.key !== category.key)" :key="cat.key"
+                        class="move-menu-item" type="button"
+                        @click="moveItemToCategory(moveMenuTarget!.item, moveMenuTarget!.category, cat.key)">
+                        {{ cat.name }}
+                    </button>
+                </div>
             </article>
         </section>
     </div>
@@ -181,7 +192,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
-import { Store, useCategoryStore, useGuideStore, type LauncherItem } from "../stores";
+import { Store, useCategoryStore, useGuideStore, useOverrideStore, type LauncherItem } from "../stores";
 import { showToast } from "../composables/useGlobalToast";
 import {
     buildOrganizerSuggestions,
@@ -203,6 +214,7 @@ import {
 } from "../utils/ai-organizer-ai";
 import { extractErrorMessage, invokeOrThrow } from "../utils/invoke-wrapper";
 import { writeTextFileViaCommand } from "../utils/system-commands";
+import { normalizeApp as normalizeAppForPipeline } from "../utils/classification/normalizer";
 
 type DraftSuggestionItem = OrganizerSuggestionItem & {
     selected: boolean;
@@ -228,6 +240,7 @@ const router = useRouter();
 const launcherStore = Store();
 const categoryStore = useCategoryStore();
 const guideStore = useGuideStore();
+const overrideStore = useOverrideStore();
 
 const isScanning = ref(false);
 const isApplying = ref(false);
@@ -324,12 +337,14 @@ onMounted(() => {
     ).then((unlisten) => {
         unlistenIconUpdate = unlisten;
     });
+    document.addEventListener("click", closeMoveMenu);
     window.setTimeout(() => {
         void scanInstalledApps();
     }, 16);
 });
 
 onUnmounted(() => {
+    document.removeEventListener("click", closeMoveMenu);
     if (unlistenIconUpdate) {
         unlistenIconUpdate();
     }
@@ -565,6 +580,63 @@ function toggleCategorySelection(category: DraftSuggestionCategory) {
 
 function toggleCategoryCollapsed(category: DraftSuggestionCategory) {
     category.collapsed = !category.collapsed;
+}
+
+const moveMenuTarget = ref<{ item: DraftSuggestionItem; category: DraftSuggestionCategory } | null>(null);
+
+function showMoveMenu(item: DraftSuggestionItem, category: DraftSuggestionCategory, event: MouseEvent) {
+    event.stopPropagation();
+    moveMenuTarget.value = { item, category };
+}
+
+function closeMoveMenu() {
+    moveMenuTarget.value = null;
+}
+
+function moveItemToCategory(item: DraftSuggestionItem, fromCategory: DraftSuggestionCategory, targetCategoryKey: string) {
+    if (fromCategory.key === targetCategoryKey) return;
+
+    const targetRule = organizerCategoryByKey.get(targetCategoryKey);
+    if (!targetRule) return;
+
+    const normalizedApp = normalizeAppForPipeline({
+        name: item.name,
+        path: item.path,
+        icon_base64: item.icon_base64,
+        source: item.source,
+        publisher: item.publisher ?? null,
+    });
+    overrideStore.addOverrideForApp(normalizedApp, targetCategoryKey, "user");
+
+    const fromIndex = fromCategory.items.indexOf(item);
+    if (fromIndex === -1) return;
+    fromCategory.items.splice(fromIndex, 1);
+
+    item.categoryKey = targetCategoryKey;
+    item.categoryName = targetRule.name;
+    item.categoryDescription = targetRule.description;
+    item.reason = "用户手动修正";
+
+    const targetCategory = categories.value.find(c => c.key === targetCategoryKey);
+    if (targetCategory) {
+        targetCategory.items.unshift(item);
+    } else {
+        const newCategory: DraftSuggestionCategory = {
+            key: targetRule.key,
+            name: targetRule.name,
+            description: targetRule.description,
+            collapsed: false,
+            items: [item],
+        };
+        categories.value.push(newCategory);
+    }
+
+    if (fromCategory.items.length === 0) {
+        const catIndex = categories.value.indexOf(fromCategory);
+        if (catIndex !== -1) categories.value.splice(catIndex, 1);
+    }
+
+    closeMoveMenu();
 }
 
 async function applySuggestions() {
@@ -933,6 +1005,17 @@ function applyAiAssignments(assignments: AIOrganizerAssignment[]): number {
 
         if (!categoryChanged && !categoryNameChanged && !categoryDescriptionChanged && !reasonChanged) {
             continue;
+        }
+
+        if (categoryChanged) {
+            const normalizedApp = normalizeAppForPipeline({
+                name: found.item.name,
+                path: found.item.path,
+                icon_base64: found.item.icon_base64,
+                source: found.item.source,
+                publisher: found.item.publisher ?? null,
+            });
+            overrideStore.addOverrideForApp(normalizedApp, resolvedCategory.key, "ai");
         }
 
         found.item.categoryKey = resolvedCategory.key;
@@ -1415,6 +1498,7 @@ function pruneAndSortCategories() {
 
 .category-card {
     padding: 18px;
+    position: relative;
 }
 
 .category-header {
@@ -1543,6 +1627,42 @@ function pruneAndSortCategories() {
 @media (max-width: 900px) {
     .ai-form {
         grid-template-columns: 1fr;
+    }
+}
+
+.move-menu {
+    position: absolute;
+    right: 8px;
+    top: 100%;
+    z-index: 100;
+    background: var(--color-bg-elevated, #2a2a2a);
+    border: 1px solid var(--color-border, #444);
+    border-radius: 8px;
+    padding: 4px 0;
+    min-width: 140px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+
+    .move-menu-title {
+        padding: 6px 12px;
+        font-size: 11px;
+        color: var(--color-text-secondary, #999);
+        font-weight: 600;
+    }
+
+    .move-menu-item {
+        display: block;
+        width: 100%;
+        padding: 6px 12px;
+        border: none;
+        background: none;
+        color: var(--color-text, #eee);
+        font-size: 13px;
+        text-align: left;
+        cursor: pointer;
+
+        &:hover {
+            background: var(--color-bg-hover, #3a3a3a);
+        }
     }
 }
 </style>

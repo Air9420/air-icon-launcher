@@ -16,6 +16,7 @@ import FocusIndicator from "./components/common/FocusIndicator.vue";
 const OnboardingGuide = defineAsyncComponent(() => import("./components/OnboardingGuide.vue"));
 import { Store, useCategoryStore, useSettingsStore, useGuideStore } from "./stores";
 import { useUIStore } from "./stores/uiStore";
+import { initOverrideLookupFromStore } from "./utils/classification/pipeline";
 
 import { useContextMenu } from "./composables/useContextMenu";
 import { useMenuActions } from "./composables/useMenuActions";
@@ -123,6 +124,8 @@ const hasLauncherItems = computed(() =>
 );
 
 onMounted(async () => {
+    initOverrideLookupFromStore();
+
     await settingsStore.hydratePersistedConfig();
     await settingsStore.refreshAutostartStatus();
 
