@@ -261,6 +261,7 @@ import { getCachedAICategory, setCachedAICategory } from "../utils/classificatio
 import { classifyInstalledApp, normalizeApp as normalizeAppForPipeline } from "../utils/classification";
 import { discoverPatterns } from "../utils/classification/pattern-discovery";
 import { useRuleProposalStore } from "../utils/classification/rule-proposal";
+import { useWebAiExportStore } from "../composables/useWebAiExport";
 import { extractErrorMessage, invokeOrThrow } from "../utils/invoke-wrapper";
 import { writeTextFileViaCommand } from "../utils/system-commands";
 
@@ -290,6 +291,7 @@ const categoryStore = useCategoryStore();
 const guideStore = useGuideStore();
 const overrideStore = useOverrideStore();
 const ruleProposalStore = useRuleProposalStore();
+const webAiExportStore = useWebAiExportStore();
 
 const isScanning = ref(false);
 const isApplying = ref(false);
@@ -645,8 +647,11 @@ async function exportWebAiPrompt() {
         }
 
         const path = typeof selected === "string" ? selected : selected[0];
-        await writeTextFileViaCommand(path, buildWebAiMarkdownPrompt());
-        showToast("AI 精修 Markdown 已导出");
+        const itemIds = aiCandidateItems.value.map(item => item.aiRefId);
+        const md5 = await webAiExportStore.recordExport(itemIds);
+        const markdown = buildWebAiMarkdownPrompt(md5);
+        await writeTextFileViaCommand(path, markdown);
+        showToast(`AI 精修 Markdown 已导出（${itemIds.length} 项）`);
     } catch (error) {
         console.error(error);
         showToast(extractErrorMessage(error) || "导出 Markdown 失败", { type: "error" });
@@ -663,8 +668,16 @@ async function applyManualAiJson() {
 
     isApplyingManualAiJson.value = true;
     try {
-        const assignments = parseManualAiJson(manualAiJson.value);
-        const changedCount = applyAiAssignments(assignments);
+        const parsed = parseManualAiJson(manualAiJson.value);
+
+        const itemIds = aiCandidateItems.value.map(item => item.aiRefId);
+        const validation = await webAiExportStore.validateForImport(parsed._scan_md5 || "", itemIds);
+        if (!validation.valid) {
+            showToast(validation.reason || "校验失败", { type: "error" });
+            return;
+        }
+
+        const changedCount = applyAiAssignments(parsed.assignments);
         pruneAndSortCategories();
         showToast(
             changedCount > 0
@@ -887,8 +900,9 @@ function getAiConfig(): AIOrganizerConfig {
     };
 }
 
-function buildWebAiMarkdownPrompt(): string {
+function buildWebAiMarkdownPrompt(md5: string): string {
     const payload = {
+        _scan_md5: md5,
         categories: getCategoriesForAiRefine(),
         items: aiCandidateItems.value.map((item) => ({
             id: item.aiRefId,
@@ -906,17 +920,21 @@ function buildWebAiMarkdownPrompt(): string {
         "",
         "请你根据下面的应用列表，对每个应用重新选择最合适的分类。",
         "",
+        "⚠️ **重要**：返回的 JSON 必须包含 `_scan_md5` 字段，值必须与输入完全一致，否则结果将被拒绝。",
+        "",
         "要求：",
-        "1. 每个 `item` 都必须返回一条结果，`id` 必须和输入完全一致",
-        "2. 优先使用提供的分类 `category_key`",
-        "3. 若确实无法归入现有分类，可新建分类：自定义 `category_key`，并补充 `category_name`、`category_description`",
-        "4. 游戏加速器单独归到 `game_booster`，不要并入 `gaming`",
-        "5. SDK、运行库、后台组件、无界面工具优先归到 `component`",
-        "6. 除非完全无法判断，否则不要使用 `other`",
-        "7. 只输出完整 JSON，不要输出解释，不要输出 Markdown 代码块",
+        "1. 返回的 JSON 必须包含 `_scan_md5` 字段，值必须为 `" + md5 + "`",
+        "2. 每个 `item` 都必须返回一条结果，`id` 必须和输入完全一致",
+        "3. 优先使用提供的分类 `category_key`",
+        "4. 若确实无法归入现有分类，可新建分类：自定义 `category_key`，并补充 `category_name`、`category_description`",
+        "5. 游戏加速器单独归到 `game_booster`，不要并入 `gaming`",
+        "6. SDK、运行库、后台组件、无界面工具优先归到 `component`",
+        "7. 除非完全无法判断，否则不要使用 `other`",
+        "8. 只输出完整 JSON，不要输出解释，不要输出 Markdown 代码块",
         "",
         "输出格式：",
         '{',
+        '  "_scan_md5": "扫描校验码（必须原样返回）",',
         '  "assignments": [',
         '    {',
         '      "id": "应用 id（必须原样返回）",',
@@ -937,8 +955,9 @@ function buildWebAiMarkdownPrompt(): string {
     ].join("\n");
 }
 
-function parseManualAiJson(raw: string): AIOrganizerAssignment[] {
+function parseManualAiJson(raw: string): { _scan_md5: string; assignments: AIOrganizerAssignment[] } {
     const parsed = JSON.parse(stripJsonCodeFence(raw)) as {
+        _scan_md5?: string;
         assignments?: Array<{
             id?: string;
             category_key?: string;
@@ -952,7 +971,7 @@ function parseManualAiJson(raw: string): AIOrganizerAssignment[] {
         throw new Error("JSON 中缺少 assignments 数组");
     }
 
-    return parsed.assignments
+    const assignments = parsed.assignments
         .filter((assignment) => typeof assignment?.id === "string" && typeof assignment?.category_key === "string")
         .map((assignment) => ({
             id: assignment.id as string,
@@ -967,6 +986,8 @@ function parseManualAiJson(raw: string): AIOrganizerAssignment[] {
                 ? assignment.category_description.trim()
                 : undefined,
         }));
+
+    return { _scan_md5: parsed._scan_md5 || "", assignments };
 }
 
 function stripJsonCodeFence(raw: string): string {
