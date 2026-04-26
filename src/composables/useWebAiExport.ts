@@ -47,32 +47,68 @@ export const useWebAiExportStore = defineStore(
             return md5;
         }
 
-        async function validateForImport(
+        async function buildIdMapping(
             md5: string,
-            itemIds: string[]
-        ): Promise<{ valid: boolean; reason?: string }> {
+            currentItemIds: string[]
+        ): Promise<{
+            valid: boolean;
+            reason?: string;
+            mapping?: Map<string, string>;
+            isHistorical?: boolean;
+        }> {
             const record = findByMd5(md5);
+
             if (!record) {
-                return { valid: false, reason: "MD5 不在任何导出记录中，可能是旧版数据或伪造" };
-            }
-
-            const sortedImportIds = [...itemIds].sort();
-            if (sortedImportIds.length !== record.itemCount) {
                 return {
                     valid: false,
-                    reason: `项目数量不匹配：导出时 ${record.itemCount} 项，当前 ${sortedImportIds.length} 项，请使用对应扫描的导出结果`,
+                    reason: "MD5 不在任何导出记录中，可能是旧版数据或伪造",
+                    mapping: undefined,
                 };
             }
 
-            const sameIds = sortedImportIds.every((id, i) => id === record.itemIds[i]);
-            if (!sameIds) {
+            const sortedCurrentIds = [...currentItemIds].sort();
+            const sameAsCurrent =
+                sortedCurrentIds.length === record.itemCount &&
+                sortedCurrentIds.every((id, i) => id === record.itemIds[i]);
+
+            if (sameAsCurrent) {
+                const identityMap = new Map<string, string>();
+                for (const id of currentItemIds) {
+                    identityMap.set(id, id);
+                }
                 return {
-                    valid: false,
-                    reason: "导出时的软件列表与当前扫描不一致，请使用对应扫描的导出结果",
+                    valid: true,
+                    mapping: identityMap,
+                    isHistorical: false,
                 };
             }
 
-            return { valid: true };
+            const historicalMap = new Map<string, string>();
+
+            for (const historicalId of record.itemIds) {
+                const normalizedHistorical = historicalId.replace(/^(a\d+):.*/, "$1");
+                for (const currentId of currentItemIds) {
+                    const normalizedCurrent = currentId.replace(/^(a\d+):.*/, "$1");
+                    if (normalizedHistorical === normalizedCurrent) {
+                        historicalMap.set(historicalId, currentId);
+                        break;
+                    }
+                }
+            }
+
+            if (historicalMap.size < record.itemCount * 0.8) {
+                return {
+                    valid: false,
+                    reason: `仅匹配到 ${historicalMap.size}/${record.itemCount} 项，扫描差异过大，请使用对应扫描的导出结果`,
+                    mapping: undefined,
+                };
+            }
+
+            return {
+                valid: true,
+                mapping: historicalMap,
+                isHistorical: true,
+            };
         }
 
         function clearHistory(): void {
@@ -82,7 +118,7 @@ export const useWebAiExportStore = defineStore(
         return {
             exportHistory,
             recordExport,
-            validateForImport,
+            buildIdMapping,
             clearHistory,
         };
     },

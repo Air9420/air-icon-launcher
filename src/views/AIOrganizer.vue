@@ -671,13 +671,37 @@ async function applyManualAiJson() {
         const parsed = parseManualAiJson(manualAiJson.value);
 
         const itemIds = aiCandidateItems.value.map(item => item.aiRefId);
-        const validation = await webAiExportStore.validateForImport(parsed._scan_md5 || "", itemIds);
-        if (!validation.valid) {
-            showToast(validation.reason || "校验失败", { type: "error" });
+        const mappingResult = await webAiExportStore.buildIdMapping(parsed._scan_md5 || "", itemIds);
+
+        if (!mappingResult.valid) {
+            showToast(mappingResult.reason || "校验失败", { type: "error" });
             return;
         }
 
-        const changedCount = applyAiAssignments(parsed.assignments);
+        const idMapping = mappingResult.mapping!;
+        let changedCount = 0;
+        const unmappedCount = { value: 0 };
+
+        const mappedAssignments = parsed.assignments
+            .map(assignment => {
+                const historicalId = assignment.id;
+                const currentId = idMapping.get(historicalId);
+                if (!currentId) {
+                    unmappedCount.value++;
+                    return null;
+                }
+                return { ...assignment, id: currentId };
+            })
+            .filter(Boolean) as typeof parsed.assignments;
+
+        if (mappingResult.isHistorical) {
+            showToast(
+                `检测到历史扫描结果，已自动映射 ${mappedAssignments.length}/${parsed.assignments.length} 项`,
+                { duration: 4000 }
+            );
+        }
+
+        changedCount = applyAiAssignments(mappedAssignments);
         pruneAndSortCategories();
         showToast(
             changedCount > 0
