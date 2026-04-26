@@ -13,6 +13,16 @@ const MAX_LAUNCH_EVENT_AGE_MS = 180 * DAY_MS;
 const MIN_TIME_SLOT_RECOMMENDATION_LAUNCHES = 3;
 const MIN_TIME_SLOT_RECOMMENDATION_TOTAL_LAUNCHES = 5;
 const MIN_TIME_SLOT_RECOMMENDATION_SLOT_SHARE = 0.3;
+
+function getTimeBasedThreshold(totalLaunches: number): {
+  minSlotLaunches: number;
+  minTotalLaunches: number;
+  minSlotShare: number;
+} {
+  if (totalLaunches < 3) return { minSlotLaunches: 2, minTotalLaunches: 2, minSlotShare: 0.4 };
+  if (totalLaunches < 10) return { minSlotLaunches: 2, minTotalLaunches: 3, minSlotShare: 0.3 };
+  return { minSlotLaunches: MIN_TIME_SLOT_RECOMMENDATION_LAUNCHES, minTotalLaunches: MIN_TIME_SLOT_RECOMMENDATION_TOTAL_LAUNCHES, minSlotShare: MIN_TIME_SLOT_RECOMMENDATION_SLOT_SHARE };
+}
 const TIME_BASED_RECOMMENDATION_SLOT_WEIGHT = 5;
 const TIME_BASED_RECOMMENDATION_WEEK_WEIGHT = 2;
 const TIME_BASED_RECOMMENDATION_RECENT_DAY_SCORE = 50;
@@ -442,10 +452,14 @@ export const useStatsStore = defineStore(
           };
         })
         .filter(
-          ({ stats, currentSlotLaunches, slotShare }) =>
-            currentSlotLaunches >= MIN_TIME_SLOT_RECOMMENDATION_LAUNCHES &&
-            stats.totalLaunches >= MIN_TIME_SLOT_RECOMMENDATION_TOTAL_LAUNCHES &&
-            slotShare >= MIN_TIME_SLOT_RECOMMENDATION_SLOT_SHARE
+          ({ stats, currentSlotLaunches, slotShare }) => {
+            const threshold = getTimeBasedThreshold(stats.totalLaunches);
+            return (
+              currentSlotLaunches >= threshold.minSlotLaunches &&
+              stats.totalLaunches >= threshold.minTotalLaunches &&
+              slotShare >= threshold.minSlotShare
+            );
+          }
         )
         .sort((a, b) => {
           const scoreDiff = b.score - a.score;
