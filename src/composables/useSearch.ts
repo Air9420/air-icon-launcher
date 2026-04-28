@@ -1,14 +1,12 @@
-import { computed, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import { useThrottleFn } from "@vueuse/core";
 import { storeToRefs } from "pinia";
-import {
-    useLauncherStore,
-    type GlobalSearchMergedResult,
-    type RustSearchResult,
-} from "../stores/launcherStore";
+import { useLauncherStore } from "../stores/launcherStore";
 import { SEARCH_THROTTLE_MS } from "../utils/search-config";
 
-export type SearchResult = RustSearchResult;
+export type SearchResult = ReturnType<typeof useLauncherStore> extends () => infer R
+    ? R extends { rustSearchResults: infer T } ? T : never
+    : never;
 
 export interface SearchQuery {
     keyword: string;
@@ -18,7 +16,6 @@ export interface SearchQuery {
 export function useSearch() {
     const launcherStore = useLauncherStore();
     const {
-        searchKeyword,
         rustSearchResults,
         rustSearchMergedResults,
         isRustSearchReady,
@@ -74,16 +71,8 @@ export function useSearch() {
         await search({ keyword });
     }, SEARCH_THROTTLE_MS, true);
 
-    watch(searchKeyword, async (newKeyword) => {
-        if (!newKeyword.trim()) {
-            searchError.value = null;
-            return;
-        }
-        await throttledSearch(newKeyword);
-    });
-
-    const searchResults = computed<SearchResult[]>(() => rustSearchResults.value);
-    const mergedResults = computed<GlobalSearchMergedResult[]>(() => rustSearchMergedResults.value);
+    const searchResults = computed(() => rustSearchResults.value);
+    const mergedResults = computed(() => rustSearchMergedResults.value);
 
     return {
         searchResults,
@@ -92,5 +81,6 @@ export function useSearch() {
         searchError,
         search,
         updateSearchIndex,
+        throttledSearch,
     };
 }

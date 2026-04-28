@@ -12,15 +12,18 @@ export {
     type HomeSectionLayouts,
 } from "./uiStore";
 export { useCategoryStore, type Category } from "./categoryStore";
+export { useItemsStore } from "./itemsStore";
+export { useSearchStore } from "./searchStore";
 export {
     useLauncherStore,
-    type LaunchDependency,
     type LauncherItem,
-    type GlobalSearchResult,
-    type GlobalSearchMergedResult,
+    type LaunchDependency,
     type RecentUsedItem,
     type RecentUsedMergedItem,
     type PinnedMergedItem,
+    type GlobalSearchMergedResult,
+    type RustSearchResult,
+    type RustSearchMatchType,
 } from "./launcherStore";
 
 export { useOverrideStore, buildOverrideKeys, getEffectiveConfidence } from "./overrideStore";

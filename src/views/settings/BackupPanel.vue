@@ -54,7 +54,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useDataManagement, type BackupInfo } from "../../composables/useDataManagement";
-import { useLauncherStore } from "../../stores";
+import { useSearchStore } from "../../stores";
 import { showToast } from "../../composables/useGlobalToast";
 
 const isProcessing = ref<boolean>(false);
@@ -100,8 +100,8 @@ async function onRestoreBackup(filename: string) {
     try {
         isProcessing.value = true;
         const restored = await dataManagement.restoreBackup(filename);
-        const launcherStore = useLauncherStore();
-        await launcherStore.syncSearchIndex();
+        const searchStore = useSearchStore();
+        await searchStore.syncFullIndex();
         showToast("备份恢复成功！", { type: "success" });
         restored.notices.forEach((notice) => {
             showToast(notice, { type: "info", duration: 5000 });
