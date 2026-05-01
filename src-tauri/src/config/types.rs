@@ -108,6 +108,10 @@ pub struct AppConfig {
     pub ai_organizer_model: String,
     #[serde(alias = "aiOrganizerApiKey")]
     pub ai_organizer_api_key: String,
+    #[serde(alias = "autoHideCountdownSeconds")]
+    pub auto_hide_countdown_seconds: usize,
+    #[serde(alias = "autoHideEnabled")]
+    pub auto_hide_enabled: bool,
 }
 
 fn deserialize_window_effect_type<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -161,6 +165,8 @@ impl Default for AppConfig {
             ai_organizer_base_url: "https://api.openai.com/v1".to_string(),
             ai_organizer_model: "gpt-5.4-mini".to_string(),
             ai_organizer_api_key: String::new(),
+            auto_hide_countdown_seconds: 30,
+            auto_hide_enabled: true,
         }
     }
 }
@@ -188,6 +194,10 @@ pub struct AppConfigPatch {
     pub ai_organizer_base_url: Option<String>,
     pub ai_organizer_model: Option<String>,
     pub ai_organizer_api_key: Option<String>,
+    #[serde(alias = "autoHideCountdownSeconds")]
+    pub auto_hide_countdown_seconds: Option<usize>,
+    #[serde(alias = "autoHideEnabled")]
+    pub auto_hide_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

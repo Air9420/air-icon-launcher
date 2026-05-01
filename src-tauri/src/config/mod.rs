@@ -116,6 +116,18 @@ fn preserve_missing_imported_config_fields(
     )?;
     insert_config_value_if_missing(
         config,
+        "auto_hide_countdown_seconds",
+        &["auto_hide_countdown_seconds", "autoHideCountdownSeconds"],
+        current.auto_hide_countdown_seconds,
+    )?;
+    insert_config_value_if_missing(
+        config,
+        "auto_hide_enabled",
+        &["auto_hide_enabled", "autoHideEnabled"],
+        current.auto_hide_enabled,
+    )?;
+    insert_config_value_if_missing(
+        config,
         "plugin_sandbox_enabled",
         &["plugin_sandbox_enabled", "pluginSandboxEnabled"],
         current.plugin_sandbox_enabled,
@@ -187,6 +199,12 @@ fn apply_app_config_patch(config: &mut AppConfig, patch: AppConfigPatch) {
     }
     if let Some(value) = patch.strong_shortcut_mode {
         config.strong_shortcut_mode = value;
+    }
+    if let Some(value) = patch.auto_hide_countdown_seconds {
+        config.auto_hide_countdown_seconds = value;
+    }
+    if let Some(value) = patch.auto_hide_enabled {
+        config.auto_hide_enabled = value;
     }
     if let Some(value) = patch.plugin_sandbox_enabled {
         config.plugin_sandbox_enabled = value;
@@ -814,6 +832,8 @@ fn import_data_internal(
             current.performance_mode = settings.performance_mode;
             current.window_effect_type = settings.window_effect_type;
             current.strong_shortcut_mode = settings.strong_shortcut_mode;
+            current.auto_hide_countdown_seconds = settings.auto_hide_countdown_seconds;
+            current.auto_hide_enabled = settings.auto_hide_enabled;
             current.clipboard_history_enabled = settings.clipboard_history_enabled;
             current.home_section_layouts = settings.home_section_layouts;
             current.clipboard_max_records = settings.clipboard_max_records;
@@ -1121,6 +1141,8 @@ mod tests {
         assert!(!config.performance_mode);
         assert_eq!(config.window_effect_type, "blur");
         assert!(config.strong_shortcut_mode);
+        assert_eq!(config.auto_hide_countdown_seconds, 30);
+        assert!(config.auto_hide_enabled);
         assert_eq!(config.clipboard_max_image_size_mb, 1.0);
         assert_eq!(config.backup_frequency, "none");
         assert_eq!(config.home_section_layouts.pinned.preset, "1x5");
@@ -1189,6 +1211,8 @@ mod tests {
         assert!(settings.performance_mode);
         assert_eq!(settings.window_effect_type, "acrylic");
         assert!(!settings.strong_shortcut_mode);
+        assert_eq!(settings.auto_hide_countdown_seconds, 30);
+        assert!(settings.auto_hide_enabled);
     }
 
     #[test]
@@ -1199,6 +1223,8 @@ mod tests {
         config.performance_mode = false;
         config.window_effect_type = "blur".to_string();
         config.strong_shortcut_mode = true;
+        config.auto_hide_countdown_seconds = 60;
+        config.auto_hide_enabled = false;
 
         apply_app_config_patch(
             &mut config,
@@ -1206,6 +1232,8 @@ mod tests {
                 performance_mode: Some(true),
                 corner_hotspot_position: Some("bottom-left".to_string()),
                 strong_shortcut_mode: Some(false),
+                auto_hide_countdown_seconds: Some(45),
+                auto_hide_enabled: Some(true),
                 ..AppConfigPatch::default()
             },
         );
@@ -1216,6 +1244,8 @@ mod tests {
         assert_eq!(config.window_effect_type, "blur");
         assert_eq!(config.corner_hotspot_position, "bottom-left");
         assert!(!config.strong_shortcut_mode);
+        assert_eq!(config.auto_hide_countdown_seconds, 45);
+        assert!(config.auto_hide_enabled);
     }
 
     #[test]
