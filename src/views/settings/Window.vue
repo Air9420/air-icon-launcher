@@ -111,7 +111,7 @@
             <div class="hint">
                 成功打开一个启动项后自动隐藏本程序窗口
             </div>
-            <div class="hint" style="margin-top: 4px; color: var(--text-hint);">
+            <div class="hint compact">
                 💡 按住 <kbd>Ctrl</kbd> 键可连续启动多个，松开后自动隐藏
             </div>
         </div>
@@ -328,25 +328,19 @@ async function onHideOnCtrlRightClickChange() {
 }
 </script>
 
-<style scoped>
+<style lang="scss" scoped>
+@use "../../styles/settings/section" as settings;
+
 .window-settings {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
+    @include settings.page-stack();
 }
 
 .section {
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 16px;
-    padding: 14px;
+    @include settings.section-card();
 }
 
 .section-title {
-    font-size: 13px;
-    font-weight: 700;
-    color: var(--text-secondary);
-    margin-bottom: 10px;
+    @include settings.section-title();
 }
 
 .segmented {
@@ -394,14 +388,15 @@ async function onHideOnCtrlRightClickChange() {
 }
 
 .hint {
-    margin-top: 8px;
-    font-size: 12px;
-    color: var(--text-hint);
-    -webkit-app-region: no-drag;
+    @include settings.hint();
 }
 
 .hint.error {
     color: var(--error-color);
+}
+
+.hint.compact {
+    margin-top: 4px;
 }
 
 .autostart-methods {

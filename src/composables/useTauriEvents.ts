@@ -40,6 +40,7 @@ import { useRouter } from "vue-router";
 import { useWindowPosition } from "./useWindowPosition";
 import { useSettingsStore } from "../stores";
 import { storeToRefs } from "pinia";
+import { showToast } from "./useGlobalToast";
 
 /**
  * Tauri 事件监听 Composable
@@ -141,6 +142,12 @@ export function useTauriEvents() {
             await emit("window-shown", null);
         });
         unlisteners.push(unlistenCornerHotspot);
+
+        const unlistenNoExternalMonitor = await listen("display-no-external-monitor", async () => {
+            showToast("当前只有一个显示器，无法切换投影模式", { type: "info", duration: 3000 });
+        });
+        unlisteners.push(unlistenNoExternalMonitor);
+
     }
 
     /**

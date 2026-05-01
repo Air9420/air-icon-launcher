@@ -15,6 +15,7 @@ pub enum FollowMouseYAnchor {
 pub struct AppSettings {
     pub toggle_shortcut: String,
     pub clipboard_shortcut: String,
+    pub display_shortcut: String,
     pub follow_mouse_on_show: bool,
     pub follow_mouse_y_anchor: FollowMouseYAnchor,
 }
@@ -29,6 +30,7 @@ impl Default for AppSettingsState {
             inner: Mutex::new(AppSettings {
                 toggle_shortcut: "alt+space".to_string(),
                 clipboard_shortcut: "alt+v".to_string(),
+                display_shortcut: String::new(),
                 follow_mouse_on_show: false,
                 follow_mouse_y_anchor: FollowMouseYAnchor::Center,
             }),
@@ -47,6 +49,7 @@ impl AppSettingsState {
             inner: Mutex::new(AppSettings {
                 toggle_shortcut: config.toggle_shortcut.clone(),
                 clipboard_shortcut: config.clipboard_shortcut.clone(),
+                display_shortcut: config.display_shortcut.clone(),
                 follow_mouse_on_show: config.follow_mouse_on_show,
                 follow_mouse_y_anchor: anchor,
             }),
@@ -187,7 +190,10 @@ pub fn set_follow_mouse_y_anchor(
 }
 
 pub fn register_toggle_shortcut(app: &AppHandle, shortcut: &str) -> AppResult<()> {
-    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    use std::str::FromStr;
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+    let shortcut = Shortcut::from_str(shortcut)
+        .map_err(|e| AppError::invalid_input(format!("Invalid toggle shortcut: {}", e)))?;
 
     app.global_shortcut()
         .on_shortcut(shortcut, move |app, _shortcut, event| {
@@ -204,7 +210,10 @@ pub fn register_toggle_shortcut(app: &AppHandle, shortcut: &str) -> AppResult<()
 }
 
 pub fn register_clipboard_shortcut(app: &AppHandle, shortcut: &str) -> AppResult<()> {
-    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    use std::str::FromStr;
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+    let shortcut = Shortcut::from_str(shortcut)
+        .map_err(|e| AppError::invalid_input(format!("Invalid clipboard shortcut: {}", e)))?;
 
     app.global_shortcut()
         .on_shortcut(shortcut, move |app, _shortcut, event| {
@@ -365,4 +374,99 @@ pub fn show_window_with_follow_mouse(
 
     show_main_window(&app, follow, anchor);
     Ok(())
+}
+
+pub fn register_display_shortcut(app: &AppHandle, shortcut: &str) -> AppResult<()> {
+    use std::str::FromStr;
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+    let shortcut = Shortcut::from_str(shortcut)
+        .map_err(|e| AppError::invalid_input(format!("Invalid display shortcut: {}", e)))?;
+
+    app.global_shortcut()
+        .on_shortcut(shortcut, move |app, _shortcut, event| {
+            use tauri_plugin_global_shortcut::ShortcutState;
+            if event.state == ShortcutState::Pressed {
+                match crate::display::get_display_count_internal() {
+                    Ok(count) if count < 2 => {
+                        let _ = app.emit("display-no-external-monitor", ());
+                    }
+                    _ => {
+                        if let Err(err) = crate::display::toggle_display_mode() {
+                            eprintln!("[display] Failed to toggle display mode: {}", err.message);
+                        }
+                    }
+                }
+            }
+        })
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_display_shortcut(
+    app: AppHandle,
+    state: tauri::State<'_, AppSettingsState>,
+    shortcut: String,
+) -> AppResult<()> {
+    let shortcut = shortcut.trim().to_string();
+
+    let old = state
+        .inner
+        .lock()
+        .map(|g| g.display_shortcut.clone())
+        .map_err(|_| AppError::internal("Failed to lock app settings state"))?;
+
+    if old == shortcut {
+        return Ok(());
+    }
+
+    if !shortcut.is_empty() {
+        register_display_shortcut(&app, shortcut.as_str())?;
+    }
+
+    if !old.is_empty() {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+        let _ = app.global_shortcut().unregister(old.as_str());
+    }
+
+    {
+        let mut g = state
+            .inner
+            .lock()
+            .map_err(|_| AppError::internal("Failed to lock app settings state"))?;
+        g.display_shortcut = shortcut;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn suspend_display_shortcut(
+    app: AppHandle,
+    state: tauri::State<'_, AppSettingsState>,
+) -> AppResult<String> {
+    let shortcut = state
+        .inner
+        .lock()
+        .map(|g| g.display_shortcut.clone())
+        .map_err(|_| AppError::internal("Failed to lock app settings state"))?;
+
+    if shortcut.is_empty() {
+        return Ok(shortcut);
+    }
+
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let _ = app.global_shortcut().unregister(shortcut.as_str());
+    Ok(shortcut)
+}
+
+#[tauri::command]
+pub fn resume_display_shortcut(app: AppHandle, shortcut: String) -> AppResult<()> {
+    let shortcut = shortcut.trim();
+    if shortcut.is_empty() {
+        return Ok(());
+    }
+
+    register_display_shortcut(&app, shortcut)
 }

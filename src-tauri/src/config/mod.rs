@@ -149,6 +149,9 @@ fn apply_app_config_patch(config: &mut AppConfig, patch: AppConfigPatch) {
     if let Some(value) = patch.clipboard_shortcut {
         config.clipboard_shortcut = value;
     }
+    if let Some(value) = patch.display_shortcut {
+        config.display_shortcut = value;
+    }
     if let Some(value) = patch.follow_mouse_on_show {
         config.follow_mouse_on_show = value;
     }
@@ -304,7 +307,11 @@ fn sync_runtime_state_after_import(
 ) -> Result<(), String> {
     if let (Some(app_handle), Some(clipboard_state)) = (app_handle, clipboard_state) {
         let config = manager.load_config();
-        crate::clipboard::sync_runtime_config_from_app_config(app_handle, clipboard_state, &config)?;
+        crate::clipboard::sync_runtime_config_from_app_config(
+            app_handle,
+            clipboard_state,
+            &config,
+        )?;
     }
 
     Ok(())
@@ -712,12 +719,9 @@ pub fn restore_backup(
         );
         return Err(err);
     }
-    if let Err(err) = sync_runtime_state_after_import(
-        &manager,
-        Some(&app_handle),
-        Some(clipboard_state.inner()),
-    )
-    .map_err(|e| AppError::new("CLIPBOARD_RUNTIME_SYNC_ERROR", e))
+    if let Err(err) =
+        sync_runtime_state_after_import(&manager, Some(&app_handle), Some(clipboard_state.inner()))
+            .map_err(|e| AppError::new("CLIPBOARD_RUNTIME_SYNC_ERROR", e))
     {
         let _ = restore_persisted_snapshot(
             &manager,
