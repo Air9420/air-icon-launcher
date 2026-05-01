@@ -17,6 +17,7 @@
                     @click="startRecording('main')"
                 />
             </div>
+            <div class="hint">显示或隐藏启动器主界面</div>
             <div class="shortcut-row">
                 <span class="shortcut-label">剪贴板</span>
                 <input
@@ -31,6 +32,25 @@
                     @blur="onInputBlur('clipboard')"
                     @click="startRecording('clipboard')"
                 />
+            </div>
+            <div class="hint">快速打开剪贴板历史面板</div>
+            <div class="shortcut-row">
+                <span class="shortcut-label">投影切换</span>
+                <input
+                    ref="displayInputRef"
+                    v-model="displayShortcutDraft"
+                    class="input shortcut-input"
+                    :class="{ recording: recording && recordingTarget === 'display' }"
+                    type="text"
+                    placeholder="点击后按下快捷键"
+                    readonly
+                    @focus="startRecording('display')"
+                    @blur="onInputBlur('display')"
+                    @click="startRecording('display')"
+                />
+            </div>
+            <div class="hint">
+                在「仅电脑屏幕」和「扩展」模式之间快速切换（仅在多屏幕环境下可用）
             </div>
             <div class="hint">
                 {{
@@ -74,24 +94,28 @@ const settingsStore = useSettingsStore();
 const {
     toggleShortcut,
     clipboardShortcut,
+    displayShortcut,
     strongShortcutMode,
 } = storeToRefs(settingsStore);
 
 const shortcutDraft = ref<string>("");
 const clipboardShortcutDraft = ref<string>("");
+const displayShortcutDraft = ref<string>("");
 const recording = ref<boolean>(false);
-const recordingTarget = ref<"main" | "clipboard">("main");
+const recordingTarget = ref<"main" | "clipboard" | "display">("main");
 const suspendedMainShortcut = ref<string>("");
 const shortcutError = ref<string>("");
 const mainInputRef = ref<HTMLInputElement | null>(null);
 const clipboardInputRef = ref<HTMLInputElement | null>(null);
+const displayInputRef = ref<HTMLInputElement | null>(null);
 
 watchEffect(() => {
     shortcutDraft.value = toggleShortcut.value;
     clipboardShortcutDraft.value = clipboardShortcut.value;
+    displayShortcutDraft.value = displayShortcut.value;
 });
 
-function startRecording(target: "main" | "clipboard") {
+function startRecording(target: "main" | "clipboard" | "display") {
     if (recording.value) return;
     recording.value = true;
     recordingTarget.value = target;
@@ -112,6 +136,7 @@ async function cancelRecording() {
     recording.value = false;
     shortcutDraft.value = toggleShortcut.value;
     clipboardShortcutDraft.value = clipboardShortcut.value;
+    displayShortcutDraft.value = displayShortcut.value;
     shortcutError.value = "";
     if (recordingTarget.value === "main" && suspendedMainShortcut.value) {
         try {
@@ -122,7 +147,7 @@ async function cancelRecording() {
     }
 }
 
-async function onInputBlur(target: "main" | "clipboard") {
+async function onInputBlur(target: "main" | "clipboard" | "display") {
     if (recording.value && recordingTarget.value === target) {
         await cancelRecording();
     }
@@ -164,8 +189,8 @@ async function onRecordKeyDown(ev: KeyboardEvent) {
     shortcutError.value = "";
 
     if (recordingTarget.value === "main") {
-        if (next === clipboardShortcut.value) {
-            shortcutError.value = "主窗口快捷键不能与剪贴板快捷键相同";
+        if (next === clipboardShortcut.value || next === displayShortcut.value) {
+            shortcutError.value = "主窗口快捷键不能与其他快捷键相同";
             shortcutDraft.value = toggleShortcut.value;
             if (suspendedMainShortcut.value) {
                 try {
@@ -199,9 +224,9 @@ async function onRecordKeyDown(ev: KeyboardEvent) {
                 }
             }
         }
-    } else {
-        if (next === toggleShortcut.value) {
-            shortcutError.value = "剪贴板快捷键不能与主窗口快捷键相同";
+    } else if (recordingTarget.value === "clipboard") {
+        if (next === toggleShortcut.value || next === displayShortcut.value) {
+            shortcutError.value = "剪贴板快捷键不能与其他快捷键相同";
             clipboardShortcutDraft.value = clipboardShortcut.value;
             return;
         }
@@ -211,6 +236,19 @@ async function onRecordKeyDown(ev: KeyboardEvent) {
         } catch (e: unknown) {
             shortcutError.value = typeof e === "string" ? e : e instanceof Error ? e.message || "设置失败" : "设置失败";
             clipboardShortcutDraft.value = clipboardShortcut.value;
+        }
+    } else if (recordingTarget.value === "display") {
+        if (next === toggleShortcut.value || next === clipboardShortcut.value) {
+            shortcutError.value = "投影切换快捷键不能与其他快捷键相同";
+            displayShortcutDraft.value = displayShortcut.value;
+            return;
+        }
+        displayShortcutDraft.value = next;
+        try {
+            await settingsStore.setDisplayShortcut(next);
+        } catch (e: unknown) {
+            shortcutError.value = typeof e === "string" ? e : e instanceof Error ? e.message || "设置失败" : "设置失败";
+            displayShortcutDraft.value = displayShortcut.value;
         }
     }
 }
@@ -230,32 +268,29 @@ onBeforeUnmount(() => {
 });
 </script>
 
-<style scoped>
+<style lang="scss" scoped>
+@use "../../styles/settings/section" as settings;
+
 .shortcuts-settings {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
+    @include settings.page-stack();
 }
 
 .section {
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 16px;
-    padding: 14px;
+    @include settings.section-card();
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
 }
 
 .section-title {
-    font-size: 13px;
-    font-weight: 700;
-    color: var(--text-secondary);
-    margin-bottom: 10px;
+    @include settings.section-title(0);
 }
 
 .shortcut-row {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 8px;
+    margin-bottom: 0;
 }
 
 .shortcut-row:last-child {
@@ -290,10 +325,7 @@ onBeforeUnmount(() => {
 }
 
 .hint {
-    margin-top: 8px;
-    font-size: 12px;
-    color: var(--text-hint);
-    -webkit-app-region: no-drag;
+    @include settings.hint(0);
 }
 
 .hint.error {

@@ -113,6 +113,7 @@ export const useSettingsStore = defineStore(
         const cornerHotspotSensitivity = ref<CornerHotspotSensitivity>("medium");
         const toggleShortcut = ref<string>("alt+space");
         const clipboardShortcut = ref<string>("alt+v");
+        const displayShortcut = ref<string>("");
         const followMouseOnShow = ref<boolean>(false);
         const followMouseYAnchor = ref<"top" | "center" | "bottom">("center");
         const autostartEnabled = ref<boolean>(false);
@@ -227,6 +228,19 @@ export const useSettingsStore = defineStore(
             }
         }
 
+        async function setDisplayShortcut(shortcut: string) {
+            const next = shortcut.trim();
+            if (!next) return;
+            try {
+                await invokeOrThrow("set_display_shortcut", { shortcut: next });
+                await saveAppConfigPatch({ display_shortcut: next });
+                displayShortcut.value = next;
+            } catch (e) {
+                console.error(e);
+                throw e;
+            }
+        }
+
         async function setFollowMouseOnShow(enabled: boolean) {
             try {
                 await invokeOrThrow("set_follow_mouse_on_show", { enabled });
@@ -267,6 +281,7 @@ export const useSettingsStore = defineStore(
             );
             toggleShortcut.value = config.toggle_shortcut || "alt+space";
             clipboardShortcut.value = config.clipboard_shortcut || "alt+v";
+            displayShortcut.value = config.display_shortcut || "";
             followMouseOnShow.value = !!config.follow_mouse_on_show;
             followMouseYAnchor.value = normalizeFollowMouseAnchor(config.follow_mouse_y_anchor);
             performanceMode.value = config.performance_mode ?? false;
@@ -531,6 +546,7 @@ export const useSettingsStore = defineStore(
             cornerHotspotSensitivity,
             toggleShortcut,
             clipboardShortcut,
+            displayShortcut,
             followMouseOnShow,
             followMouseYAnchor,
             autostartEnabled,
@@ -552,6 +568,7 @@ export const useSettingsStore = defineStore(
             setCornerHotspotSensitivity,
             setToggleShortcut,
             setClipboardShortcut,
+            setDisplayShortcut,
             setFollowMouseOnShow,
             setFollowMouseYAnchor,
             applyPersistedConfig,
@@ -578,6 +595,7 @@ export const useSettingsStore = defineStore(
             "cornerHotspotSensitivity",
             "toggleShortcut",
             "clipboardShortcut",
+            "displayShortcut",
             "followMouseOnShow",
             "followMouseYAnchor",
             "hideOnCtrlRightClick",

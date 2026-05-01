@@ -1,0 +1,26 @@
+@mixin page-stack($gap: 14px) {
+    display: flex;
+    flex-direction: column;
+    gap: $gap;
+}
+
+@mixin section-card($padding: 14px, $radius: 16px) {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: $radius;
+    padding: $padding;
+}
+
+@mixin section-title($margin-bottom: 10px) {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    margin-bottom: $margin-bottom;
+}
+
+@mixin hint($margin-top: 8px, $color: var(--text-hint)) {
+    margin-top: $margin-top;
+    font-size: 12px;
+    color: $color;
+    -webkit-app-region: no-drag;
+}

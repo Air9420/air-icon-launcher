@@ -102,11 +102,11 @@ async function onOpenGitHub() {
 }
 </script>
 
-<style scoped>
+<style lang="scss" scoped>
+@use "../../styles/settings/section" as settings;
+
 .about-settings {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
+    @include settings.page-stack();
 }
 
 .app-info {
@@ -150,17 +150,11 @@ async function onOpenGitHub() {
 }
 
 .section {
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 16px;
-    padding: 14px;
+    @include settings.section-card();
 }
 
 .section-title {
-    font-size: 13px;
-    font-weight: 700;
-    color: var(--text-secondary);
-    margin-bottom: 10px;
+    @include settings.section-title();
 }
 
 .description {
@@ -259,10 +253,7 @@ async function onOpenGitHub() {
 }
 
 .hint {
-    margin-top: 8px;
-    font-size: 12px;
-    color: var(--text-hint);
-    -webkit-app-region: no-drag;
+    @include settings.hint();
 }
 
 .copyright {

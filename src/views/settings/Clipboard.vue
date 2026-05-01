@@ -255,25 +255,19 @@ async function onResetStoragePath() {
 }
 </script>
 
-<style scoped>
+<style lang="scss" scoped>
+@use "../../styles/settings/section" as settings;
+
 .clipboard-settings {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
+    @include settings.page-stack();
 }
 
 .section {
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 16px;
-    padding: 14px;
+    @include settings.section-card();
 }
 
 .section-title {
-    font-size: 13px;
-    font-weight: 700;
-    color: var(--text-secondary);
-    margin-bottom: 10px;
+    @include settings.section-title();
 }
 
 .action-buttons {
@@ -434,9 +428,6 @@ async function onResetStoragePath() {
 }
 
 .hint {
-    margin-top: 8px;
-    font-size: 12px;
-    color: var(--text-hint);
-    -webkit-app-region: no-drag;
+    @include settings.hint();
 }
 </style>

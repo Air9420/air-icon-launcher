@@ -6,6 +6,7 @@ mod commands;
 mod config;
 mod corner_hotspot;
 mod db;
+mod display;
 mod drag;
 mod error;
 mod keyboard_hook;
@@ -60,16 +61,27 @@ pub fn run() {
                 }
             }
             {
-                let (toggle, clipboard_shortcut) = handle
+                let (toggle, clipboard_shortcut, display_shortcut) = handle
                     .state::<app_settings::AppSettingsState>()
                     .inner
                     .lock()
-                    .map(|g| (g.toggle_shortcut.clone(), g.clipboard_shortcut.clone()))
-                    .unwrap_or(("alt+space".to_string(), "alt+v".to_string()));
+                    .map(|g| {
+                        (
+                            g.toggle_shortcut.clone(),
+                            g.clipboard_shortcut.clone(),
+                            g.display_shortcut.clone(),
+                        )
+                    })
+                    .unwrap_or(("alt+space".to_string(), "alt+v".to_string(), String::new()));
 
                 let _ = app_settings::register_toggle_shortcut(&handle, toggle.as_str());
                 let _ =
                     app_settings::register_clipboard_shortcut(&handle, clipboard_shortcut.as_str());
+
+                if !display_shortcut.is_empty() {
+                    let _ =
+                        app_settings::register_display_shortcut(&handle, display_shortcut.as_str());
+                }
 
                 if let Some(config) = keyboard_hook::parse_hotkey(toggle.as_str()) {
                     keyboard_hook::register_hotkey(config);
@@ -99,6 +111,9 @@ pub fn run() {
             app_settings::suspend_toggle_shortcut,
             app_settings::resume_toggle_shortcut,
             app_settings::set_clipboard_shortcut,
+            app_settings::set_display_shortcut,
+            app_settings::suspend_display_shortcut,
+            app_settings::resume_display_shortcut,
             app_settings::show_window_with_follow_mouse,
             keyboard_hook::set_strong_shortcut_mode,
             keyboard_hook::get_strong_shortcut_mode,
@@ -163,6 +178,10 @@ pub fn run() {
             system::read_local_image_as_data_url,
             system::write_text_file,
             system::get_current_monitor_fingerprint,
+            display::get_current_display_mode,
+            display::get_display_count,
+            display::set_display_mode,
+            display::toggle_display_mode,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
