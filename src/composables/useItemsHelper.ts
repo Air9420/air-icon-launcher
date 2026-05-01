@@ -2,6 +2,7 @@ import { invoke } from "../utils/invoke-wrapper";
 import {
     getCachedLauncherIcon,
     setCachedLauncherIcon,
+    setCachedLauncherIcons,
     removeCachedLauncherIcons,
 } from "../utils/launcher-icon-cache";
 import type { LauncherItem, LaunchDependency } from "../stores/launcherStore";
@@ -157,7 +158,11 @@ type IconHydrationOptions = {
     skipCache?: boolean;
 };
 
-export function useItemsHelper(getLauncherItemsByCategoryId: (categoryId: string) => LauncherItem[], getLauncherItemById: (categoryId: string, itemId: string) => LauncherItem | null, setLauncherItemsByCategoryId: (categoryId: string, items: LauncherItem[]) => void) {
+export function useItemsHelper(
+    getLauncherItemsByCategoryId: (categoryId: string) => LauncherItem[],
+    getLauncherItemById: (categoryId: string, itemId: string) => LauncherItem | null,
+    mergeLauncherItemsByCategoryId: (itemsByCategoryId: Record<string, LauncherItem[]>) => void
+) {
     const iconHydrationInFlight = new Set<string>();
 
     async function refreshLauncherItemUrlFavicon(
@@ -194,6 +199,49 @@ export function useItemsHelper(getLauncherItemsByCategoryId: (categoryId: string
         if (!Array.isArray(targets) || targets.length === 0) return;
         const forceReplace = options.forceReplace === true;
         const skipCache = options.skipCache === true;
+        const iconUpdatesByCategory = new Map<string, Map<string, string>>();
+
+        function queueIconUpdate(categoryId: string, itemId: string, iconBase64: string) {
+            if (!iconUpdatesByCategory.has(categoryId)) {
+                iconUpdatesByCategory.set(categoryId, new Map<string, string>());
+            }
+            iconUpdatesByCategory.get(categoryId)!.set(itemId, iconBase64);
+        }
+
+        function applyQueuedIconUpdates() {
+            if (iconUpdatesByCategory.size === 0) return;
+
+            const nextItemsByCategoryId: Record<string, LauncherItem[]> = {};
+            for (const [categoryId, categoryUpdates] of iconUpdatesByCategory) {
+                const list = getLauncherItemsByCategoryId(categoryId);
+                let changed = false;
+                const next = list.map((item) => {
+                    const hydratedIcon = categoryUpdates.get(item.id);
+                    if (!hydratedIcon) return item;
+
+                    const currentIcon = normalizeIconBase64(item.iconBase64);
+                    const hasCustomIcon = normalizeHasCustomIcon(item.hasCustomIcon);
+                    if (!forceReplace && currentIcon) return item;
+                    if (forceReplace && hasCustomIcon) {
+                        return item;
+                    }
+
+                    changed = true;
+                    return {
+                        ...item,
+                        iconBase64: hydratedIcon,
+                        hasCustomIcon: false,
+                    };
+                });
+                if (changed) {
+                    nextItemsByCategoryId[categoryId] = next;
+                }
+            }
+
+            if (Object.keys(nextItemsByCategoryId).length > 0) {
+                mergeLauncherItemsByCategoryId(nextItemsByCategoryId);
+            }
+        }
 
         const uniqueTargets: Array<{
             key: string;
@@ -230,17 +278,7 @@ export function useItemsHelper(getLauncherItemsByCategoryId: (categoryId: string
             if (!skipCache) {
                 const cachedIcon = getCachedOriginalIconForPath(path);
                 if (cachedIcon) {
-                    const list = getLauncherItemsByCategoryId(target.categoryId);
-                    const index = list.findIndex((x) => x.id === target.itemId);
-                    if (index !== -1) {
-                        const next = [...list];
-                        next[index] = {
-                            ...next[index],
-                            iconBase64: cachedIcon,
-                            hasCustomIcon: false,
-                        };
-                        setLauncherItemsByCategoryId(target.categoryId, next);
-                    }
+                    queueIconUpdate(target.categoryId, target.itemId, cachedIcon);
                     continue;
                 }
             }
@@ -253,7 +291,10 @@ export function useItemsHelper(getLauncherItemsByCategoryId: (categoryId: string
             });
         }
 
-        if (uniqueTargets.length === 0) return;
+        if (uniqueTargets.length === 0) {
+            applyQueuedIconUpdates();
+            return;
+        }
 
         const uniquePaths: string[] = [];
         const seenPaths = new Set<string>();
@@ -263,7 +304,10 @@ export function useItemsHelper(getLauncherItemsByCategoryId: (categoryId: string
             uniquePaths.push(target.path);
         }
 
-        if (uniquePaths.length === 0) return;
+        if (uniquePaths.length === 0) {
+            applyQueuedIconUpdates();
+            return;
+        }
 
         for (const target of uniqueTargets) {
             iconHydrationInFlight.add(target.key);
@@ -280,48 +324,28 @@ export function useItemsHelper(getLauncherItemsByCategoryId: (categoryId: string
             }
 
             const iconByPath = new Map<string, string>();
+            const cacheEntries: Array<{ path: string; iconBase64: string }> = [];
             for (let i = 0; i < uniquePaths.length; i++) {
                 const normalizedIcon = normalizeIconBase64(result.value[i]);
                 if (!normalizedIcon) continue;
                 iconByPath.set(uniquePaths[i], normalizedIcon);
-                setCachedLauncherIcon(uniquePaths[i], normalizedIcon);
+                cacheEntries.push({
+                    path: uniquePaths[i],
+                    iconBase64: normalizedIcon,
+                });
             }
 
             if (iconByPath.size === 0) return;
+            if (cacheEntries.length > 0) {
+                setCachedLauncherIcons(cacheEntries);
+            }
 
-            const updatesByCategory = new Map<string, Map<string, string>>();
             for (const target of uniqueTargets) {
                 const icon = iconByPath.get(target.path);
                 if (!icon) continue;
-                if (!updatesByCategory.has(target.categoryId)) {
-                    updatesByCategory.set(target.categoryId, new Map<string, string>());
-                }
-                updatesByCategory.get(target.categoryId)!.set(target.itemId, icon);
+                queueIconUpdate(target.categoryId, target.itemId, icon);
             }
-
-            for (const [categoryId, categoryUpdates] of updatesByCategory) {
-                const list = getLauncherItemsByCategoryId(categoryId);
-                let changed = false;
-                const next = list.map((item) => {
-                    const hydratedIcon = categoryUpdates.get(item.id);
-                    if (!hydratedIcon) return item;
-                    const currentIcon = normalizeIconBase64(item.iconBase64);
-                    const hasCustomIcon = normalizeHasCustomIcon(item.hasCustomIcon);
-                    if (!forceReplace && currentIcon) return item;
-                    if (forceReplace && hasCustomIcon) {
-                        return item;
-                    }
-                    changed = true;
-                    return {
-                        ...item,
-                        iconBase64: hydratedIcon,
-                        hasCustomIcon: false,
-                    };
-                });
-                if (changed) {
-                    setLauncherItemsByCategoryId(categoryId, next);
-                }
-            }
+            applyQueuedIconUpdates();
         } catch (e) {
             console.error("Failed to hydrate launcher icons:", e);
         } finally {

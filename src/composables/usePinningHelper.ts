@@ -3,6 +3,7 @@ import { useCategoryStore, type Category } from "../stores/categoryStore";
 import { useStatsStore } from "../stores/statsStore";
 import { useUIStore } from "../stores/uiStore";
 import { normalizeLauncherItemKey } from "../stores/launcher-search";
+import { itemEventBus } from "../events/itemEvents";
 import type {
     LauncherItem,
     RecentUsedItem,
@@ -15,9 +16,7 @@ export function usePinningHelper(
     getLauncherItemById: (categoryId: string, itemId: string) => LauncherItem | null,
     pinnedItemIds: { value: string[] },
     recentUsedItems: { value: RecentUsedItem[] },
-    enqueueSearchUpdateByItemId: (itemId: string) => void,
-    enqueueSearchUpdateByRef: (categoryId: string, itemId: string) => void,
-    enqueueSearchRefreshForAllItems: () => void
+    onRefreshAllItems?: () => void
 ) {
     function buildLauncherItemIndexes(categories: Category[]) {
         const itemById = new Map<string, { item: LauncherItem; categoryId: string }>();
@@ -52,7 +51,7 @@ export function usePinningHelper(
         } else {
             pinnedItemIds.value = [...pinnedItemIds.value, itemId];
         }
-        enqueueSearchUpdateByItemId(itemId);
+        itemEventBus.emit({ type: 'item:pinningToggled', categoryId, itemId, isPinned: !isPinned });
     }
 
     function isItemPinned(itemId: string): boolean {
@@ -93,19 +92,26 @@ export function usePinningHelper(
             itemId,
             usedAt: now,
         });
-        enqueueSearchUpdateByRef(categoryId, itemId);
+        const record: RecentUsedItem = recentUsedItems.value[0];
+        itemEventBus.emit({
+            type: 'item:usageRecorded',
+            categoryId,
+            itemId,
+            usageCount: record?.usageCount ?? 1,
+            lastUsedAt: now,
+        });
     }
 
     function clearRecentUsed() {
         recentUsedItems.value = [];
         const stats = useStatsStore();
         stats.clearLaunchHistory();
-        enqueueSearchRefreshForAllItems();
+        onRefreshAllItems?.();
     }
 
     function importPinnedItemIds(newIds: string[]) {
         pinnedItemIds.value = [...new Set(newIds)];
-        enqueueSearchRefreshForAllItems();
+        onRefreshAllItems?.();
     }
 
     function reorderPinnedItemIds(newOrder: string[]) {
@@ -120,7 +126,7 @@ export function usePinningHelper(
         recentUsedItems.value = newItems;
         const stats = useStatsStore();
         stats.clearLaunchHistory();
-        enqueueSearchRefreshForAllItems();
+        onRefreshAllItems?.();
     }
 
     function getRecentUsedItems(limit: number = 5): RecentUsedItem[] {

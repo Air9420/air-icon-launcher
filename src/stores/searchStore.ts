@@ -1,8 +1,9 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../utils/invoke-wrapper";
 import { itemEventBus } from "../events/itemEvents";
 import { useLauncherStore } from "./launcherStore";
+import { useCategoryStore } from "./categoryStore";
 
 type SearchIndexItemPayload = {
     id: string;
@@ -72,8 +73,8 @@ export const useSearchStore = defineStore("search", () => {
 
         try {
             const result = await invoke("update_search_items_incremental", { changes });
-            if (!result) {
-                console.error("Failed to incrementally sync search index");
+            if (!result.ok) {
+                console.error("Failed to incrementally sync search index:", result.error);
             }
         } catch (e) {
             console.error("Failed to incrementally sync search index:", e);
@@ -133,6 +134,38 @@ export const useSearchStore = defineStore("search", () => {
                         pendingChanges.value.added.push(toSearchIndexItem(e.toCategoryId, item));
                     }
                 }
+                scheduleFlush();
+            })
+        );
+
+        unsubscribers.push(
+            itemEventBus.on('item:pinningToggled', (e) => {
+                const launcherStore = useLauncherStore();
+                // Item could be in any category; search across all
+                const categoryStore = useCategoryStore();
+                for (const cat of categoryStore.categories) {
+                    const item = launcherStore.getLauncherItemById(cat.id, e.itemId);
+                    if (item) {
+                        pendingChanges.value.updated.push(toSearchIndexItem(cat.id, item));
+                    }
+                }
+                scheduleFlush();
+            })
+        );
+
+        unsubscribers.push(
+            itemEventBus.on('item:usageRecorded', (e) => {
+                pendingChanges.value.updated.push({
+                    id: e.itemId,
+                    name: '',
+                    path: '',
+                    category_id: e.categoryId,
+                    usage_count: e.usageCount,
+                    last_used_at: e.lastUsedAt,
+                    is_pinned: false,
+                    search_tokens: [],
+                    rank_score: 0,
+                });
                 scheduleFlush();
             })
         );

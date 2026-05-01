@@ -16,6 +16,7 @@
     "core:window:allow-current-monitor",
     "core:window:allow-available-monitors",
     "core:window:allow-primary-monitor",
-    "dialog:default"
+    "dialog:default",
+    "mcp-bridge:default"
   ]
 }

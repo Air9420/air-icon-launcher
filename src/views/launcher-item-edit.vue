@@ -84,7 +84,6 @@
                             class="input"
                             type="text"
                             :placeholder="pathPlaceholder"
-                            :readonly="!isCreateMode"
                         />
                         <button
                             v-if="isCreateMode"
@@ -416,6 +415,8 @@ function onSave() {
     if (item.value.itemType === 'url') {
         patch.url = url.value.trim();
         patch.path = '';
+    } else {
+        patch.path = path.value.trim();
     }
 
     store.updateLauncherItem(props.categoryId, props.itemId!, patch);

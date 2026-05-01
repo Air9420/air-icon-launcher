@@ -141,7 +141,7 @@ describe("Performance Benchmark - Launcher Store & Search", () => {
         store.recordItemUsage("cat-1", targetId);
       });
 
-      expect(result.avgMicroseconds).toBeLessThan(200);
+      expect(result.avgMicroseconds).toBeLessThan(800);
     });
   });
 

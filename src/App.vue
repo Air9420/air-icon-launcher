@@ -22,6 +22,7 @@ import { useContextMenu } from "./composables/useContextMenu";
 import { useMenuActions } from "./composables/useMenuActions";
 import { useDragDrop } from "./composables/useDragDrop";
 import { useTauriEvents } from "./composables/useTauriEvents";
+import { useSearchStore } from "./stores";
 import { useGlobalEvents } from "./composables/useGlobalEvents";
 import { useTheme } from "./composables/useTheme";
 import { useWindowDrag } from "./composables/useWindowDrag";
@@ -37,6 +38,7 @@ const categoryStore = useCategoryStore();
 const settingsStore = useSettingsStore();
 const uiStore = useUIStore();
 const guideStore = useGuideStore();
+const searchStore = useSearchStore();
 const router = useRouter();
 const isDev = import.meta.env.DEV;
 
@@ -124,6 +126,7 @@ const hasLauncherItems = computed(() =>
 );
 
 onMounted(async () => {
+    setPageUnloading(false);
     initOverrideLookupFromStore();
 
     await settingsStore.hydratePersistedConfig();
@@ -148,6 +151,7 @@ onMounted(async () => {
     await initializeTauriEvents();
     initializeWindowDrag();
     await initializePositionTracking();
+    searchStore.startListening();
 
     applyTheme(theme.value);
     applyEffectsDisabled(!windowEffectsEnabled.value);
@@ -183,6 +187,7 @@ onBeforeUnmount(async () => {
     cleanupTauriEvents();
     cleanupWindowDrag();
     cleanupThemeWatcher();
+    searchStore.stopListening();
 });
 </script>
 

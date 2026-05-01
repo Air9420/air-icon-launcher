@@ -38,7 +38,7 @@ export function useSearchSync(
     const pendingSearchDeleted = new Map<string, SearchIndexDeletedPayload>();
     let searchIndexFlushTimer: ReturnType<typeof setTimeout> | null = null;
     let searchIndexSyncInFlight: Promise<void> | null = null;
-    let isFullSearchIndexSyncInFlight = false;
+    let fullSearchIndexSyncInFlight: Promise<void> | null = null;
 
     function getSearchEntryKey(categoryId: string, itemId: string): string {
         return `${categoryId}:${itemId}`;
@@ -198,44 +198,50 @@ export function useSearchSync(
     }
 
     async function syncSearchIndexInternal(waitIncrementalInFlight: boolean): Promise<void> {
-        if (isFullSearchIndexSyncInFlight) return;
-        if (waitIncrementalInFlight && searchIndexSyncInFlight) {
-            await searchIndexSyncInFlight;
+        if (fullSearchIndexSyncInFlight) {
+            return fullSearchIndexSyncInFlight;
         }
 
-        cancelPendingSearchFlush();
-        clearPendingSearchChanges();
-        isFullSearchIndexSyncInFlight = true;
+        fullSearchIndexSyncInFlight = (async () => {
+            if (waitIncrementalInFlight && searchIndexSyncInFlight) {
+                await searchIndexSyncInFlight;
+            }
 
-        try {
-            const categoryStore = useCategoryStore();
-            const rankingSignals = collectSearchRankingSignals();
-            const items: SearchIndexItemPayload[] = [];
+            cancelPendingSearchFlush();
+            clearPendingSearchChanges();
 
-            for (const category of categoryStore.categories) {
-                const catItems = getLauncherItemsByCategoryId(category.id);
-                for (const item of catItems) {
-                    items.push(toSearchIndexItem(category.id, item, rankingSignals));
+            try {
+                const categoryStore = useCategoryStore();
+                const rankingSignals = collectSearchRankingSignals();
+                const items: SearchIndexItemPayload[] = [];
+
+                for (const category of categoryStore.categories) {
+                    const catItems = getLauncherItemsByCategoryId(category.id);
+                    for (const item of catItems) {
+                        items.push(toSearchIndexItem(category.id, item, rankingSignals));
+                    }
+                }
+
+                const result = await invoke("update_search_items", { items });
+                if (!result.ok) {
+                    console.error("Failed to sync search index:", result.error);
+                    isRustSearchReady.value = false;
+                    return;
+                }
+
+                isRustSearchReady.value = true;
+            } catch (e) {
+                console.error("Failed to sync search index:", e);
+                isRustSearchReady.value = false;
+            } finally {
+                fullSearchIndexSyncInFlight = null;
+                if (isRustSearchReady.value && hasPendingSearchChanges()) {
+                    scheduleSearchIncrementalFlush(0);
                 }
             }
+        })();
 
-            const result = await invoke("update_search_items", { items });
-            if (!result.ok) {
-                console.error("Failed to sync search index:", result.error);
-                isRustSearchReady.value = false;
-                return;
-            }
-
-            isRustSearchReady.value = true;
-        } catch (e) {
-            console.error("Failed to sync search index:", e);
-            isRustSearchReady.value = false;
-        } finally {
-            isFullSearchIndexSyncInFlight = false;
-            if (isRustSearchReady.value && hasPendingSearchChanges()) {
-                scheduleSearchIncrementalFlush(0);
-            }
-        }
+        return fullSearchIndexSyncInFlight;
     }
 
     async function flushPendingSearchChanges(): Promise<void> {
@@ -243,7 +249,7 @@ export function useSearchSync(
             clearPendingSearchChanges();
             return;
         }
-        if (isFullSearchIndexSyncInFlight || searchIndexSyncInFlight) {
+        if (fullSearchIndexSyncInFlight || searchIndexSyncInFlight) {
             return;
         }
 

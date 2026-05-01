@@ -5,7 +5,9 @@ export type ItemEvent =
     | { type: 'item:updated'; categoryId: string; item: LauncherItem }
     | { type: 'item:deleted'; categoryId: string; itemId: string }
     | { type: 'item:moved'; fromCategoryId: string; toCategoryId: string; itemIds: string[] }
-    | { type: 'item:iconUpdated'; categoryId: string; itemId: string; iconBase64: string | null };
+    | { type: 'item:iconUpdated'; categoryId: string; itemId: string; iconBase64: string | null }
+    | { type: 'item:pinningToggled'; categoryId: string; itemId: string; isPinned: boolean }
+    | { type: 'item:usageRecorded'; categoryId: string; itemId: string; usageCount: number; lastUsedAt: number };
 
 type Listener<T extends ItemEvent> = (event: T) => void;
 

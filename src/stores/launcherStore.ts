@@ -101,6 +101,7 @@ export type RustSearchResult = {
 
 type ImportLauncherItemsOptions = {
   refreshDerivedIcons?: boolean;
+  suppressEvents?: boolean;
 };
 
 type ImportLauncherSnapshotPayload = {
@@ -138,6 +139,17 @@ export const useLauncherStore = defineStore(
       };
     }
 
+    function mergeLauncherItemsByCategoryId(
+      itemsByCategoryId: Record<string, LauncherItem[]>,
+    ) {
+      if (Object.keys(itemsByCategoryId).length === 0) return;
+
+      launcherItemsByCategoryId.value = {
+        ...launcherItemsByCategoryId.value,
+        ...itemsByCategoryId,
+      };
+    }
+
     function getLauncherItemById(categoryId: string, itemId: string) {
       return (
         getLauncherItemsByCategoryId(categoryId).find((x) => x.id === itemId) ||
@@ -153,18 +165,12 @@ export const useLauncherStore = defineStore(
     } = useItemsHelper(
       getLauncherItemsByCategoryId,
       getLauncherItemById,
-      setLauncherItemsByCategoryId,
+      mergeLauncherItemsByCategoryId,
     );
 
     const {
-      enqueueSearchChanges,
-      enqueueSearchUpdateByRef,
-      enqueueSearchUpdateByItemId,
-      enqueueSearchRefreshForAllItems,
-      syncSearchIndexInternal,
       syncSearchIndex,
       searchLauncherItems,
-      toSearchIndexItem,
     } = useSearchSync(
       getLauncherItemsByCategoryId,
       getLauncherItemById,
@@ -192,9 +198,6 @@ export const useLauncherStore = defineStore(
       getLauncherItemById,
       pinnedItemIds,
       recentUsedItems,
-      enqueueSearchUpdateByItemId,
-      enqueueSearchUpdateByRef,
-      enqueueSearchRefreshForAllItems,
     );
 
     function updateLauncherItem(
@@ -227,9 +230,6 @@ export const useLauncherStore = defineStore(
             : next[index].launchDelaySeconds,
       };
       setLauncherItemsByCategoryId(categoryId, next);
-      enqueueSearchChanges({
-        updated: [toSearchIndexItem(categoryId, next[index])],
-      });
       itemEventBus.emit({ type: 'item:updated', categoryId, item: next[index] });
     }
 
@@ -333,9 +333,6 @@ export const useLauncherStore = defineStore(
         (dependency) =>
           dependency.categoryId === categoryId && dependency.itemId === itemId,
       );
-      enqueueSearchChanges({
-        deleted: [{ category_id: categoryId, id: itemId }],
-      });
       itemEventBus.emit({ type: 'item:deleted', categoryId, itemId });
     }
 
@@ -366,12 +363,9 @@ export const useLauncherStore = defineStore(
           dependency.categoryId === categoryId &&
           targetIds.has(dependency.itemId),
       );
-      enqueueSearchChanges({
-        deleted: removedItems.map((item) => ({
-          category_id: categoryId,
-          id: item.id,
-        })),
-      });
+      for (const item of removedItems) {
+        itemEventBus.emit({ type: 'item:deleted', categoryId, itemId: item.id });
+      }
     }
 
     function updateLauncherItems(
@@ -405,11 +399,9 @@ export const useLauncherStore = defineStore(
       if (!changed) return;
 
       setLauncherItemsByCategoryId(categoryId, next);
-      enqueueSearchChanges({
-        updated: updatedItems.map((item) =>
-          toSearchIndexItem(categoryId, item),
-        ),
-      });
+      for (const item of updatedItems) {
+        itemEventBus.emit({ type: 'item:updated', categoryId, item });
+      }
     }
 
     function moveLauncherItems(
@@ -471,15 +463,6 @@ export const useLauncherStore = defineStore(
         })),
       );
 
-      enqueueSearchChanges({
-        deleted: movedItems.map((item) => ({
-          category_id: sourceCategoryId,
-          id: item.id,
-        })),
-        added: movedItems.map((item) =>
-          toSearchIndexItem(targetCategoryId, item),
-        ),
-      });
       itemEventBus.emit({ type: 'item:moved', fromCategoryId: sourceCategoryId, toCategoryId: targetCategoryId, itemIds });
     }
 
@@ -518,9 +501,9 @@ export const useLauncherStore = defineStore(
       });
 
       setLauncherItemsByCategoryId(categoryId, [...existing, ...nextItems]);
-      enqueueSearchChanges({
-        added: nextItems.map((item) => toSearchIndexItem(categoryId, item)),
-      });
+      for (const item of nextItems) {
+        itemEventBus.emit({ type: 'item:created', categoryId, item });
+      }
     }
 
     async function addLauncherItemsToCategoryBatched(
@@ -566,9 +549,9 @@ export const useLauncherStore = defineStore(
         }
 
         setLauncherItemsByCategoryId(categoryId, [...existing, ...batchItems]);
-        enqueueSearchChanges({
-          added: batchItems.map((item) => toSearchIndexItem(categoryId, item)),
-        });
+        for (const item of batchItems) {
+          itemEventBus.emit({ type: 'item:created', categoryId, item });
+        }
 
         if (batch < totalBatches - 1) {
           await new Promise<void>((resolve) =>
@@ -609,11 +592,9 @@ export const useLauncherStore = defineStore(
 
       if (changed) {
         setLauncherItemsByCategoryId(categoryId, next);
-        enqueueSearchChanges({
-          updated: updatedItems.map((item) =>
-            toSearchIndexItem(categoryId, item),
-          ),
-        });
+        for (const item of updatedItems) {
+          itemEventBus.emit({ type: 'item:updated', categoryId, item });
+        }
       }
     }
 
@@ -640,9 +621,7 @@ export const useLauncherStore = defineStore(
         launchDelaySeconds: 0,
       };
       setLauncherItemsByCategoryId(categoryId, [...existing, newItem]);
-      enqueueSearchChanges({
-        added: [toSearchIndexItem(categoryId, newItem)],
-      });
+      itemEventBus.emit({ type: 'item:created', categoryId, item: newItem });
       return newItem.id;
     }
 
@@ -692,9 +671,6 @@ export const useLauncherStore = defineStore(
       };
 
       setLauncherItemsByCategoryId(categoryId, [...existing, newItem]);
-      enqueueSearchChanges({
-        added: [toSearchIndexItem(categoryId, newItem)],
-      });
       itemEventBus.emit({ type: 'item:created', categoryId, item: newItem });
 
       return id;
@@ -749,12 +725,6 @@ export const useLauncherStore = defineStore(
         (dependency) => dependency.categoryId === categoryId,
       );
       if (removedItems.length > 0) {
-        enqueueSearchChanges({
-          deleted: removedItems.map((item) => ({
-            category_id: categoryId,
-            id: item.id,
-          })),
-        });
         for (const item of removedItems) {
           itemEventBus.emit({ type: 'item:deleted', categoryId, itemId: item.id });
         }
@@ -847,7 +817,7 @@ export const useLauncherStore = defineStore(
       rustSearchResults.value = [];
     }
 
-    function importLauncherItems(
+    async function importLauncherItems(
       items: Record<string, LauncherItem[]>,
       options: ImportLauncherItemsOptions = {},
     ) {
@@ -855,14 +825,20 @@ export const useLauncherStore = defineStore(
       const refreshTargets: LauncherItemRef[] = [];
       for (const [categoryId, categoryItems] of Object.entries(items)) {
         nextItems[categoryId] = categoryItems.map((item) => {
-          const nextItem = applyCachedOriginalIcon(
-            normalizeImportedLauncherItem(
-              item as LauncherItem & { originalIconBase64?: string | null },
-            ),
+          const normalizedImportedItem = normalizeImportedLauncherItem(
+            item as LauncherItem & { originalIconBase64?: string | null },
           );
+          const nextItem = applyCachedOriginalIcon(normalizedImportedItem);
+          const importedHadDerivedIcon =
+            shouldRefreshDerivedIcon(normalizedImportedItem);
+          const stillMissingDerivedIcon =
+            nextItem.itemType === "file" &&
+            !nextItem.hasCustomIcon &&
+            !nextItem.iconBase64 &&
+            !!nextItem.path.trim();
           if (
             options.refreshDerivedIcons &&
-            shouldRefreshDerivedIcon(nextItem)
+            (importedHadDerivedIcon || stillMissingDerivedIcon)
           ) {
             refreshTargets.push({
               categoryId,
@@ -872,6 +848,9 @@ export const useLauncherStore = defineStore(
           return nextItem;
         });
       }
+      // Yield to browser so pending UI events (mouse clicks, window drag) can
+      // be processed before the reactivity cascade from bulk store assignment.
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
       launcherItemsByCategoryId.value = nextItems;
       if (options.refreshDerivedIcons && refreshTargets.length > 0) {
         void hydrateMissingIconsForItems(refreshTargets, {
@@ -879,26 +858,24 @@ export const useLauncherStore = defineStore(
           skipCache: true,
         });
       }
-      if (isRustSearchReady.value) {
-        void syncSearchIndexInternal(true);
-      }
-      for (const [categoryId, categoryItems] of Object.entries(items)) {
-        for (const item of categoryItems) {
-          itemEventBus.emit({ type: 'item:created', categoryId, item });
+      if (!options.suppressEvents) {
+        for (const [categoryId, categoryItems] of Object.entries(items)) {
+          for (const item of categoryItems) {
+            itemEventBus.emit({ type: 'item:created', categoryId, item });
+          }
         }
       }
     }
 
-    function importLauncherSnapshot(
+    async function importLauncherSnapshot(
       snapshot: ImportLauncherSnapshotPayload,
       options: ImportLauncherItemsOptions = {},
     ) {
-      importLauncherItems(snapshot.items, options);
+      await importLauncherItems(snapshot.items, { ...options, suppressEvents: true });
       pinnedItemIds.value = [...new Set(snapshot.pinnedItemIds ?? [])];
       recentUsedItems.value = [...(snapshot.recentUsedItems ?? [])];
       const stats = useStatsStore();
       stats.clearLaunchHistory();
-      enqueueSearchRefreshForAllItems();
     }
 
     function recordConfirmedSearch() {

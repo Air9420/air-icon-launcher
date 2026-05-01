@@ -418,7 +418,7 @@ describe("launcherStore - pure functions", () => {
   });
 
   describe("importLauncherSnapshot", () => {
-    it("replaces launcher state and resets stats tracking", () => {
+    it("replaces launcher state and resets stats tracking", async () => {
       const stats = useStatsStore();
       store.addLauncherItemsToCategory("cat-old", {
         paths: ["C:\\old.exe"],
@@ -429,7 +429,7 @@ describe("launcherStore - pure functions", () => {
       store.togglePinned("cat-old", oldItem.id);
       store.recordItemUsage("cat-old", oldItem.id);
 
-      store.importLauncherSnapshot({
+      await store.importLauncherSnapshot({
         items: {
           "cat-new": [
             {
@@ -470,6 +470,47 @@ describe("launcherStore - pure functions", () => {
       expect(stats.launchEvents).toHaveLength(0);
       expect(stats.launchTrackingStartedAt).toBeNull();
       expect(stats.totalLaunchesAllTime).toBe(2);
+    });
+
+    it("reuses the in-flight full search sync promise", async () => {
+      let releaseSync: (() => void) | null = null;
+      const invokeSpy = vi.spyOn(invokeWrapper, "invoke").mockImplementation((cmd) => {
+        if (cmd === "update_search_items") {
+          return new Promise((resolve) => {
+            releaseSync = () =>
+              resolve({
+                ok: true,
+                value: undefined,
+              } as Awaited<ReturnType<typeof invokeWrapper.invoke>>);
+          });
+        }
+
+        return Promise.resolve({
+          ok: true,
+          value: [],
+        } as Awaited<ReturnType<typeof invokeWrapper.invoke>>);
+      });
+
+      const firstSync = store.syncSearchIndex();
+      let secondResolved = false;
+      const secondSync = store.syncSearchIndex().then(() => {
+        secondResolved = true;
+      });
+
+      await Promise.resolve();
+
+      expect(invokeSpy).toHaveBeenCalledTimes(1);
+      expect(secondResolved).toBe(false);
+
+      if (!releaseSync) {
+        throw new Error("search sync gate was not initialized");
+      }
+      (releaseSync as () => void)();
+
+      await Promise.all([firstSync, secondSync]);
+
+      expect(secondResolved).toBe(true);
+      expect(store.isRustSearchReady).toBe(true);
     });
   });
 
@@ -588,14 +629,14 @@ describe("launcherStore - pure functions", () => {
       expect(invokeSpy).not.toHaveBeenCalled();
     });
 
-    it("refreshes imported non-custom file icons even when cache had a stale value", async () => {
-      setCachedLauncherIcon("C:\\a.exe", "default-icon");
+    it("reuses cached derived icons during repeated imports", async () => {
+      setCachedLauncherIcon("C:\\a.exe", "cached-icon");
       vi.spyOn(invokeWrapper, "invoke").mockResolvedValue({
         ok: true,
         value: ["real-icon"],
       } as Awaited<ReturnType<typeof invokeWrapper.invoke>>);
 
-      store.importLauncherItems(
+      await store.importLauncherItems(
         {
           "cat-1": [
             {
@@ -614,7 +655,39 @@ describe("launcherStore - pure functions", () => {
         { refreshDerivedIcons: true }
       );
 
-      expect(store.getLauncherItemsByCategoryId("cat-1")[0].iconBase64).toBe("default-icon");
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      const refreshed = store.getLauncherItemsByCategoryId("cat-1")[0];
+      expect(refreshed.iconBase64).toBe("cached-icon");
+      expect(refreshed.hasCustomIcon).toBe(false);
+      expect(getCachedLauncherIcon("C:\\a.exe")).toBe("cached-icon");
+      expect(invokeWrapper.invoke).not.toHaveBeenCalled();
+    });
+
+    it("refreshes imported derived file icons when payload still carries one", async () => {
+      vi.spyOn(invokeWrapper, "invoke").mockResolvedValue({
+        ok: true,
+        value: ["real-icon"],
+      } as Awaited<ReturnType<typeof invokeWrapper.invoke>>);
+
+      await store.importLauncherItems(
+        {
+          "cat-1": [
+            {
+              id: "item-1",
+              name: "a",
+              path: "C:\\a.exe",
+              itemType: "file",
+              isDirectory: false,
+              iconBase64: "imported-derived-icon",
+              hasCustomIcon: false,
+              launchDependencies: [],
+              launchDelaySeconds: 0,
+            },
+          ],
+        },
+        { refreshDerivedIcons: true }
+      );
 
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
@@ -630,7 +703,7 @@ describe("launcherStore - pure functions", () => {
         value: ["real-icon"],
       } as Awaited<ReturnType<typeof invokeWrapper.invoke>>);
 
-      store.importLauncherItems(
+      await store.importLauncherItems(
         {
           "cat-1": [
             {
@@ -657,8 +730,8 @@ describe("launcherStore - pure functions", () => {
       expect(invokeSpy).not.toHaveBeenCalled();
     });
 
-    it("infers legacy custom icon state from originalIconBase64 during import", () => {
-      store.importLauncherItems({
+    it("infers legacy custom icon state from originalIconBase64 during import", async () => {
+      await store.importLauncherItems({
         "cat-1": [
           {
             id: "item-1",

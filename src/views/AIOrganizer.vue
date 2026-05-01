@@ -888,7 +888,7 @@ async function applySuggestions() {
         }
 
         categoryStore.importCategories(nextCategories);
-        launcherStore.importLauncherSnapshot({
+        await launcherStore.importLauncherSnapshot({
             items: nextItemsByCategoryId,
             pinnedItemIds: [],
             recentUsedItems: [],

@@ -1,6 +1,7 @@
 const STORAGE_KEY = "__launcher_icon_cache__";
 const CACHE_VERSION = 1;
 const MAX_ICON_CACHE_ENTRIES = 300;
+const CACHE_PERSIST_TIMEOUT_MS = 1000;
 
 type LauncherIconCacheEntry = {
     path: string;
@@ -15,6 +16,11 @@ type LauncherIconCachePayload = {
 
 let cacheLoaded = false;
 let cacheEntries = new Map<string, LauncherIconCacheEntry>();
+let persistHandle:
+    | { kind: "timeout"; handle: ReturnType<typeof setTimeout> }
+    | { kind: "idle"; handle: number }
+    | null = null;
+let flushListenersRegistered = false;
 
 function normalizeBase64Value(value: unknown): string | null {
     if (typeof value !== "string") return null;
@@ -29,6 +35,7 @@ function normalizePathKey(path: string): string {
 function ensureCacheLoaded(): void {
     if (cacheLoaded) return;
     cacheLoaded = true;
+    registerFlushListeners();
 
     try {
         const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
@@ -79,6 +86,55 @@ function persistCacheEntries(): void {
     }
 }
 
+function clearScheduledPersist(): void {
+    if (!persistHandle) return;
+
+    if (persistHandle.kind === "timeout") {
+        clearTimeout(persistHandle.handle);
+    } else if (typeof globalThis.cancelIdleCallback === "function") {
+        globalThis.cancelIdleCallback(persistHandle.handle);
+    }
+
+    persistHandle = null;
+}
+
+function flushPendingPersist(): void {
+    if (!persistHandle) return;
+    clearScheduledPersist();
+    persistCacheEntries();
+}
+
+function schedulePersistCacheEntries(): void {
+    if (persistHandle) return;
+
+    if (typeof globalThis.requestIdleCallback === "function") {
+        const handle = globalThis.requestIdleCallback(
+            () => {
+                persistHandle = null;
+                persistCacheEntries();
+            },
+            { timeout: CACHE_PERSIST_TIMEOUT_MS }
+        );
+        persistHandle = { kind: "idle", handle };
+        return;
+    }
+
+    const handle = setTimeout(() => {
+        persistHandle = null;
+        persistCacheEntries();
+    }, 100);
+    persistHandle = { kind: "timeout", handle };
+}
+
+function registerFlushListeners(): void {
+    if (flushListenersRegistered) return;
+    if (typeof globalThis.addEventListener !== "function") return;
+
+    flushListenersRegistered = true;
+    globalThis.addEventListener("pagehide", flushPendingPersist);
+    globalThis.addEventListener("beforeunload", flushPendingPersist);
+}
+
 export function getCachedLauncherIcon(path: string): string | null {
     if (!path.trim()) return null;
     ensureCacheLoaded();
@@ -99,6 +155,33 @@ export function setCachedLauncherIcon(path: string, iconBase64: string): void {
         updatedAt: Date.now(),
     });
     pruneCacheEntries();
+    schedulePersistCacheEntries();
+}
+
+export function setCachedLauncherIcons(entries: Array<{ path: string; iconBase64: string }>): void {
+    if (!Array.isArray(entries) || entries.length === 0) return;
+
+    ensureCacheLoaded();
+    let changed = false;
+    const updatedAt = Date.now();
+
+    for (const entry of entries) {
+        const normalizedPath = entry?.path?.trim() ?? "";
+        const normalizedIcon = normalizeBase64Value(entry?.iconBase64);
+        if (!normalizedPath || !normalizedIcon) continue;
+
+        cacheEntries.set(normalizePathKey(normalizedPath), {
+            path: normalizedPath,
+            iconBase64: normalizedIcon,
+            updatedAt,
+        });
+        changed = true;
+    }
+
+    if (!changed) return;
+
+    pruneCacheEntries();
+    clearScheduledPersist();
     persistCacheEntries();
 }
 
@@ -115,12 +198,13 @@ export function removeCachedLauncherIcons(paths: string[]): number {
     }
 
     if (removed > 0) {
-        persistCacheEntries();
+        schedulePersistCacheEntries();
     }
     return removed;
 }
 
 export function clearLauncherIconCacheForTests(): void {
+    clearScheduledPersist();
     cacheLoaded = false;
     cacheEntries = new Map();
     try {

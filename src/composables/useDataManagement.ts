@@ -156,9 +156,6 @@ type FrontendImportSnapshot = {
     };
     categories: Category[];
     currentCategoryId: string | null;
-    launcherItemsByCategoryId: Record<string, LauncherItem[]>;
-    pinnedItemIds: string[];
-    recentUsedItems: RecentUsedItem[];
 };
 
 type BackendImportSnapshot = {
@@ -643,6 +640,12 @@ export function useDataManagement() {
     const categoryStore = useCategoryStore();
     const clipboardStore = useClipboardStore();
 
+    function scheduleSearchIndexSync() {
+        void store.syncSearchIndex().catch((error) => {
+            console.error("Failed to sync search index after data restore:", error);
+        });
+    }
+
     async function snapshotFrontendState(): Promise<FrontendImportSnapshot> {
         const pluginManager = getPluginManager();
         return {
@@ -671,18 +674,16 @@ export function useDataManagement() {
             },
             categories: cloneData(categoryStore.categories),
             currentCategoryId: categoryStore.currentCategoryId,
-            launcherItemsByCategoryId: cloneData(store.launcherItemsByCategoryId),
-            pinnedItemIds: cloneData(store.pinnedItemIds),
-            recentUsedItems: cloneData(store.recentUsedItems),
         };
     }
 
     async function snapshotBackendState(): Promise<BackendImportSnapshot> {
         return {
-            settings: cloneData(await getAppConfig()),
-            launcherData: cloneData(
-                await invokeOrThrow<PersistedLauncherData>("get_launcher_data")
-            ),
+            // Tauri IPC already returns detached plain objects here. Cloning the
+            // full launcher payload again doubles peak memory during import /
+            // restore when many custom icons are present.
+            settings: await getAppConfig(),
+            launcherData: await invokeOrThrow<PersistedLauncherData>("get_launcher_data"),
         };
     }
 
@@ -760,12 +761,32 @@ export function useDataManagement() {
         clipboardStore.setMaxRecords(snapshot.settings.clipboardMaxRecords);
         categoryStore.importCategories(snapshot.categories);
         categoryStore.setCurrentCategory(snapshot.currentCategoryId);
-        store.importLauncherSnapshot({
-            items: snapshot.launcherItemsByCategoryId,
-            pinnedItemIds: snapshot.pinnedItemIds,
-            recentUsedItems: snapshot.recentUsedItems,
-        });
-        await store.syncSearchIndex();
+
+        // Items are no longer stored in snapshot to avoid OOM from deep cloning
+        // iconBase64-heavy data. Read from Rust backend instead (rollbackToSnapshot
+        // already saved the old data to backend before calling this).
+        try {
+            const persisted = await invokeOrThrow<PersistedLauncherData>("get_launcher_data");
+            const { itemIds, itemRefs } = buildImportedItemReferenceIndex(persisted.categories);
+            const pinnedIds = persisted.favorite_item_ids || [];
+            const recentUsedItems = filterImportedRecentUsedItems(
+                itemRefs,
+                persisted.recent_used_items || []
+            ).map((item) => ({
+                categoryId: item.category_id,
+                itemId: item.item_id,
+                usedAt: item.used_at,
+                usageCount: Math.max(1, Math.floor(item.usage_count ?? 1)),
+            }));
+            await store.importLauncherSnapshot({
+                items: mapImportedLauncherItems(persisted.categories),
+                pinnedItemIds: filterImportedPinnedIds(itemIds, pinnedIds),
+                recentUsedItems,
+            });
+            scheduleSearchIndexSync();
+        } catch (e) {
+            notices.add(`恢复启动项数据失败: ${e instanceof Error ? e.message : String(e)}`);
+        }
 
         return {
             notices: [...notices],
@@ -887,7 +908,7 @@ export function useDataManagement() {
                 usedAt: item.used_at,
                 usageCount: Math.max(1, Math.floor(item.usage_count ?? 1)),
             }));
-            store.importLauncherSnapshot(
+            await store.importLauncherSnapshot(
                 {
                     items: mapImportedLauncherItems(categories),
                     pinnedItemIds: filterImportedPinnedIds(itemIds, pinnedIds),
@@ -897,9 +918,8 @@ export function useDataManagement() {
                     refreshDerivedIcons: true,
                 }
             );
+            scheduleSearchIndexSync();
         }
-
-        await store.syncSearchIndex();
 
         return {
             notices: [...notices],
