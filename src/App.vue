@@ -1,162 +1,286 @@
-<template>
-  <div
-    class="app-shell"
-    :data-color-scheme="themeClass"
-    :class="{ 'is-blur': windowEffect === 'blur', 'is-acrylic': windowEffect === 'acrylic' }"
-  >
-    <BackgroundEffect />
-    <TopBar />
-    <div class="app-body">
-      <GlobalGuide />
-      <router-view v-slot="{ Component }">
-        <transition name="page-fade" mode="out-in">
-          <component :is="Component" />
-        </transition>
-      </router-view>
-    </div>
-    <GlobalToast />
-    <CountdownRing
-      v-if="isCountingDown"
-      :countdown-seconds="autoHideCountdownSeconds"
-      :is-visible="isCountingDown"
-      @complete="handleCountdownComplete"
-    />
-  </div>
-</template>
-
 <script setup lang="ts">
-import { onMounted, provide } from "vue";
+import { computed, onMounted, onBeforeUnmount, defineAsyncComponent } from "vue";
 import { storeToRefs } from "pinia";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { safeInvoke, setPageUnloading } from "./utils/invoke-wrapper";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useRouter } from "vue-router";
-import { useSearchStore } from "./stores/searchStore";
-import { useSettingsStore } from "./stores/settingsStore";
-import { useLauncherStore } from "./stores/launcherStore";
+import { showToast } from "./composables/useGlobalToast";
+
+
+import ContextMenu from "./components/contextMenu.vue";
+import ConfirmDialog from "./components/common/ConfirmDialog.vue";
+import InputDialog from "./components/common/InputDialog.vue";
+import GlobalToast from "./components/common/GlobalToast.vue";
+import FocusIndicator from "./components/common/FocusIndicator.vue";
+import CountdownRing from "./components/common/CountdownRing.vue";
+const OnboardingGuide = defineAsyncComponent(() => import("./components/OnboardingGuide.vue"));
+import { Store, useCategoryStore, useSettingsStore, useGuideStore } from "./stores";
+import { useUIStore } from "./stores/uiStore";
+import { initOverrideLookupFromStore } from "./utils/classification/pipeline";
+
+import { useContextMenu } from "./composables/useContextMenu";
+import { useMenuActions } from "./composables/useMenuActions";
+import { useDragDrop } from "./composables/useDragDrop";
+import { useTauriEvents } from "./composables/useTauriEvents";
+import { useSearchStore } from "./stores";
+import { useGlobalEvents } from "./composables/useGlobalEvents";
+import { useTheme } from "./composables/useTheme";
+import { useWindowDrag } from "./composables/useWindowDrag";
+import { useConfirmDialog } from "./composables/useConfirmDialog";
+import { useInputDialog } from "./composables/useInputDialog";
 import { useWindowPosition } from "./composables/useWindowPosition";
 import { useAutoHideCountdown } from "./composables/useAutoHideCountdown";
-import { initializeConfigSync } from "./utils/config-sync";
-import TopBar from "./components/layout/TopBar.vue";
-import BackgroundEffect from "./components/layout/BackgroundEffect.vue";
-import GlobalGuide from "./components/guide/GlobalGuide.vue";
-import GlobalToast from "./components/common/GlobalToast.vue";
-import CountdownRing from "./components/common/CountdownRing.vue";
-import { setupClickOutside } from "./composables/useClickOutside";
+import { getPluginManager } from "./plugins";
 
-const router = useRouter();
-const searchStore = useSearchStore();
+import "./styles/themes.css";
+
+const store = Store();
+const categoryStore = useCategoryStore();
 const settingsStore = useSettingsStore();
-const launcherStore = useLauncherStore();
+const uiStore = useUIStore();
+const guideStore = useGuideStore();
+const searchStore = useSearchStore();
+const router = useRouter();
+const isDev = import.meta.env.DEV;
+
 const {
-  searchQuery,
-} = storeToRefs(searchStore);
-const {
-  themeClass,
-  windowEffect,
-  guideCompleted,
-  autoHideEnabled,
-  autoHideCountdownSeconds,
+    theme,
+    windowEffectsEnabled,
+    performanceMode,
+    showGuideOnStartup,
+    followMouseOnShow,
+    autoHideEnabled,
+    autoHideCountdownSeconds,
 } = storeToRefs(settingsStore);
 
-provide("searchQuery", searchQuery);
-provide("guideCompleted", guideCompleted);
-
-const { setupPositionListeners, cleanup: cleanupPosition } =
-  useWindowPosition();
+const {
+    categoryCols,
+    launcherCols,
+    categorySortMode,
+    homeSectionLayouts,
+} = storeToRefs(uiStore);
 
 const {
-  isCountingDown,
-  stopCountdown,
-  handleCountdownComplete,
-  setupFocusListener,
-} = useAutoHideCountdown({
-  autoHideEnabled,
-  countdownSeconds: autoHideCountdownSeconds,
+    currentCategoryId,
+    currentLauncherItemId,
+    currentHomeSection,
+    openContextMenu,
+    closeContextMenu,
+    getDropTargetInfoAtPoint,
+} = useContextMenu();
+
+const { initializeDragDrop, lastDrop, processedDropIds } = useDragDrop({
+    getDropTargetInfoAtPoint,
 });
 
-const cleanupClickOutside = setupClickOutside(searchQuery, stopCountdown);
+const { state: confirmState, confirm, handleConfirm, handleCancel } = useConfirmDialog();
+const { state: inputState, input, handleConfirm: handleInputConfirm, handleCancel: handleInputCancel } = useInputDialog();
+
+const { onMenuAction } = useMenuActions({
+    currentCategoryId,
+    currentLauncherItemId,
+    currentHomeSection,
+    lastDrop,
+    processedDropIds,
+    closeContextMenu,
+    confirm,
+    inputDialog: input,
+});
+
+const { initializeTauriEvents, cleanupTauriEvents } = useTauriEvents();
+
+const { initializeGlobalEvents, cleanupGlobalEvents } = useGlobalEvents({
+    closeContextMenu,
+});
+
+const {
+    applyTheme,
+    applyEffectsDisabled,
+    watchThemeChanges,
+    cleanupThemeWatcher,
+} = useTheme();
+
+const { initializeWindowDrag, cleanupWindowDrag } = useWindowDrag();
+
+const {
+    saveWindowPosition,
+    restoreWindowPosition,
+    initializePositionTracking,
+    cleanupPositionTracking,
+} = useWindowPosition();
+
+const {
+    isCountingDown,
+    stopCountdown,
+    handleCountdownComplete,
+    setupFocusListener,
+    cleanupFocusListener,
+} = useAutoHideCountdown({
+    autoHideEnabled,
+    countdownSeconds: autoHideCountdownSeconds,
+});
+
+const isCurrentItemPinned = computed(() => {
+    if (!currentLauncherItemId.value) return false;
+    return store.isItemPinned(currentLauncherItemId.value);
+});
+
+const hasCurrentItemCustomIcon = computed(() => {
+    if (!currentCategoryId.value || !currentLauncherItemId.value) return false;
+    return store.hasCustomIcon(currentCategoryId.value, currentLauncherItemId.value);
+});
+
+const hasCurrentCategoryCustomIcon = computed(() => {
+    if (!currentCategoryId.value) return false;
+    return !!categoryStore.getCategoryById(currentCategoryId.value)?.customIconBase64;
+});
+
+const hasLauncherItems = computed(() =>
+    Object.values(store.launcherItemsByCategoryId).some((items) => items.length > 0)
+);
+
+let unlistenWindowShown: (() => void) | null = null;
 
 onMounted(async () => {
-  searchStore.startListening();
-  if (router.currentRoute.value.path !== "/") {
-    router.replace("/");
-  }
-  await launcherStore.initialize();
-  await initializeConfigSync(settingsStore);
-  setupPositionListeners();
-  await setupFocusListener();
+    setPageUnloading(false);
+    initOverrideLookupFromStore();
+
+    await settingsStore.hydratePersistedConfig();
+    await settingsStore.refreshAutostartStatus();
+
+    const pluginManager = getPluginManager();
+    await pluginManager.refreshPlugins();
+
+    const windowEffectResult = await settingsStore.applyCurrentWindowEffectState();
+    if (windowEffectResult.changed && windowEffectResult.message) {
+        showToast(windowEffectResult.message, { type: "info", duration: 5000 });
+    }
+
+    if (showGuideOnStartup.value && !guideStore.hasSeenOnboarding && !hasLauncherItems.value) {
+        await router.replace("/ai-organizer");
+    } else if (showGuideOnStartup.value && !guideStore.hasSeenOnboarding) {
+        guideStore.startOnboarding();
+    }
+
+    initializeGlobalEvents();
+    initializeDragDrop();
+    await initializeTauriEvents();
+    initializeWindowDrag();
+    await initializePositionTracking();
+    await setupFocusListener();
+    unlistenWindowShown = await listen("window-shown", () => {
+        stopCountdown();
+    });
+    searchStore.startListening();
+
+    applyTheme(theme.value);
+    applyEffectsDisabled(!windowEffectsEnabled.value);
+    watchThemeChanges();
+
+    const isAutostart = await invoke<boolean>("check_is_autostart_launch");
+    if (!isAutostart) {
+        try {
+            const win = getCurrentWindow();
+            const restored = await restoreWindowPosition();
+            if (restored) {
+                await win.show();
+                await win.setFocus();
+            } else {
+                if (followMouseOnShow.value) {
+                    await safeInvoke("show_window_with_follow_mouse");
+                } else {
+                    await win.show();
+                    await win.setFocus();
+                }
+            }
+        } catch (e) {
+            console.error("Failed to show window:", e);
+        }
+    }
+});
+
+onBeforeUnmount(async () => {
+    setPageUnloading(true);
+    await saveWindowPosition();
+    if (unlistenWindowShown) unlistenWindowShown();
+    cleanupFocusListener();
+    cleanupPositionTracking();
+    cleanupGlobalEvents();
+    cleanupTauriEvents();
+    cleanupWindowDrag();
+    cleanupThemeWatcher();
+    searchStore.stopListening();
 });
 </script>
 
-<style>
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+<template>
+    <main class="main" :style="{ '--performance-mode': performanceMode ? 1 : 0 }" @contextmenu="openContextMenu">
+        <router-view></router-view>
+    </main>
+    <ContextMenu
+        :current-item-id="currentLauncherItemId || undefined"
+        :current-category-id="currentCategoryId || undefined"
+        :is-current-item-favorite="isCurrentItemPinned"
+        :has-custom-icon-prop="hasCurrentItemCustomIcon"
+        :has-current-category-custom-icon="hasCurrentCategoryCustomIcon"
+        :category-cols="categoryCols"
+        :launcher-cols="launcherCols"
+        :current-category-sort-mode="categorySortMode"
+        :current-home-section="currentHomeSection || undefined"
+        :pinned-layout-preset="homeSectionLayouts.pinned.preset"
+        :recent-layout-preset="homeSectionLayouts.recent.preset"
+        @action="onMenuAction"
+    />
+    <ConfirmDialog
+        :visible="confirmState.visible"
+        :title="confirmState.title"
+        :message="confirmState.message"
+        :confirm-text="confirmState.confirmText"
+        :cancel-text="confirmState.cancelText"
+        @confirm="handleConfirm"
+        @cancel="handleCancel"
+    />
+    <InputDialog
+        :visible="inputState.visible"
+        :title="inputState.title"
+        :message="inputState.message"
+        :confirm-text="inputState.confirmText"
+        :cancel-text="inputState.cancelText"
+        :default-value="inputState.defaultValue"
+        :placeholder="inputState.placeholder"
+        :input-type="inputState.inputType"
+        :second-input-label="inputState.secondInputLabel"
+        :second-input-placeholder="inputState.secondInputPlaceholder"
+        :second-input-type="inputState.secondInputType"
+        :second-default-value="inputState.secondDefaultValue"
+        @confirm="handleInputConfirm"
+        @cancel="handleInputCancel"
+    />
+    <GlobalToast />
+    <CountdownRing
+        v-if="isCountingDown"
+        :countdown-seconds="autoHideCountdownSeconds"
+        :is-visible="isCountingDown"
+        @complete="handleCountdownComplete"
+    />
+    <OnboardingGuide />
+    <FocusIndicator v-if="isDev" />
+</template>
+
+<style lang="scss" scoped>
+.main {
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
 }
 </style>
 
-<style scoped>
-.app-shell {
-  width: 100vw;
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-  border-radius: 20px;
-  position: relative;
-  color: var(--color-text-primary);
-}
-
-.app-shell[data-color-scheme="dark"] {
-  --color-bg-primary: #1e1e2e;
-  --color-bg-secondary: #2a2a3e;
-  --color-bg-hover: #363650;
-  --color-text-primary: #e0e0e0;
-  --color-text-secondary: #a0a0b0;
-  --color-accent: #6366f1;
-}
-
-.app-shell[data-color-scheme="light"] {
-  --color-bg-primary: rgb(232 232 237);
-  --color-bg-secondary: rgb(210 210 220);
-  --color-bg-hover: rgb(195 195 210);
-  --color-text-primary: #1e1e2e;
-  --color-text-secondary: #5a5a6e;
-  --color-accent: #6366f1;
-}
-
-.is-blur {
-  background: rgba(30, 30, 46, 0.75);
-}
-
-.app-shell[data-color-scheme="light"].is-blur {
-  background: rgba(230, 230, 240, 0.65);
-}
-
-.is-acrylic {
-  background: rgba(30, 30, 46, 0.88);
-  backdrop-filter: blur(30px) saturate(1.5);
-  -webkit-backdrop-filter: blur(30px) saturate(1.5);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.app-shell[data-color-scheme="light"].is-acrylic {
-  background: rgba(240, 240, 248, 0.78);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-}
-
-.app-body {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 16px 14px;
-  position: relative;
-}
-
-.page-fade-enter-active,
-.page-fade-leave-active {
-  transition: opacity 0.15s ease;
-}
-.page-fade-enter-from,
-.page-fade-leave-to {
-  opacity: 0;
+<style>
+body {
+    margin: 0;
+    width: 100vw;
+    height: 100vh;
 }
 </style>

@@ -1,19 +1,26 @@
 <template>
-  <div v-if="actualVisible" class="countdown-ring-wrapper">
-    <svg class="countdown-ring" viewBox="0 0 38 38">
+  <div
+    v-if="actualVisible"
+    class="countdown-ring-wrapper"
+    :style="{ '--animation-duration': `${props.countdownSeconds}s` }"
+  >
+    <svg class="countdown-ring" viewBox="0 0 36 36">
       <circle
         class="countdown-ring-bg"
-        cx="19"
-        cy="19"
+        cx="18"
+        cy="18"
         r="15.5"
       />
       <circle
         class="countdown-ring-progress"
-        cx="19"
-        cy="19"
+        cx="18"
+        cy="18"
         r="15.5"
+        :stroke-dasharray="circumference"
+        transform="rotate(-90 18 18)"
       />
     </svg>
+    <span class="countdown-text">{{ displaySeconds }}</span>
   </div>
 </template>
 
@@ -29,7 +36,9 @@ const emit = defineEmits<{
   complete: []
 }>()
 
+const circumference = 2 * Math.PI * 15.5
 const actualVisible = ref(false)
+const displaySeconds = ref(0)
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let countdownInterval: ReturnType<typeof setInterval> | null = null
 const DEBOUNCE_MS = 1200
@@ -46,13 +55,16 @@ function stopCountdown() {
     clearInterval(countdownInterval)
     countdownInterval = null
   }
+  displaySeconds.value = 0
 }
 
 function startCountdown() {
   stopCountdown()
   let remaining = props.countdownSeconds
+  displaySeconds.value = remaining
   countdownInterval = setInterval(() => {
     remaining--
+    displaySeconds.value = Math.max(remaining, 0)
     if (remaining <= 0) {
       stopCountdown()
       emit('complete')
@@ -86,19 +98,22 @@ onUnmounted(() => {
 
 <style scoped>
 .countdown-ring-wrapper {
+  --animation-duration: 30s;
   position: fixed;
-  bottom: 12px;
-  right: 12px;
-  width: 38px;
-  height: 38px;
+  bottom: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
   z-index: 9999;
   pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .countdown-ring {
   width: 100%;
   height: 100%;
-  transform: rotate(-90deg);
 }
 
 .countdown-ring-bg {
@@ -109,12 +124,12 @@ onUnmounted(() => {
 
 .countdown-ring-progress {
   fill: none;
-  stroke: rgba(99, 102, 241, 0.7);
+  stroke: var(--primary-color);
   stroke-width: 3;
   stroke-linecap: round;
-  stroke-dasharray: 97.4;
   stroke-dashoffset: 0;
-  animation: countdown-progress v-bind('props.countdownSeconds + "s"') linear forwards;
+  animation: countdown-progress linear forwards;
+  animation-duration: var(--animation-duration);
 }
 
 @keyframes countdown-progress {
@@ -124,5 +139,13 @@ onUnmounted(() => {
   to {
     stroke-dashoffset: 97.4;
   }
+}
+
+.countdown-text {
+  position: absolute;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-color, #fff);
 }
 </style>

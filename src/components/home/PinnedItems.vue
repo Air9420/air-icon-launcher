@@ -1,63 +1,91 @@
 <template>
-  <div v-if="items.length > 0" class="pinned-section">
-    <div class="section-label">Pinned</div>
-    <div class="pinned-grid" :style="gridStyle">
-      <HomeCard
-        v-for="(item, index) in items"
-        :key="item.id"
-        :item="item"
-        :category-id="item.categoryId || ''"
-        :shortcut-index="startIndex + index"
-        :show-shortcut-badge="showShortcutBadge"
-        @contextmenu.prevent="$emit('itemContextmenu', $event, item)"
-      />
+    <div v-if="items.length > 0" class="home-section" data-menu-type="Home-Pinned-View" data-home-section="pinned">
+        <div class="home-section-header">
+            <span class="home-section-title">固定启动项</span>
+        </div>
+        <draggable :model-value="items" item-key="key" class="home-grid" :style="{ '--cols': layout.cols }"
+            ghost-class="pinned-ghost" chosen-class="pinned-chosen" drag-class="pinned-drag" :animation="150"
+            :delay="200" :delay-on-touch-only="false" :force-fallback="true" fallback-class="pinned-drag"
+            :fallback-tolerance="5" @update:model-value="onReorder">
+            <template #item="{ element, index }">
+                <HomeCard :item-id="element.item.id" :category-id="element.primaryCategoryId" :name="element.item.name"
+                    :icon-base64="element.item.iconBase64" :item-type="element.item.itemType"
+                    :has-dependencies="element.item.launchDependencies.length > 0"
+                    :launch-status="getLaunchStatus(element.item.id)"
+                    :cols="layout.cols" menu-type="Icon-Item" home-section="pinned"
+                    :shortcut-index="(startIndex ?? 0) + index"
+                    :show-shortcut-badge="showShortcutBadge"
+                    @click="onItemClick(element)">
+                </HomeCard>
+            </template>
+        </draggable>
+
     </div>
-  </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import draggable from "vuedraggable";
 import HomeCard from "./HomeCard.vue";
-import { useSettingsStore } from "../../stores/settingsStore";
-import type { LauncherItem } from "../../types/config";
+import type { PinnedMergedItem } from "../../stores";
 
-const props = defineProps<{
-  items: LauncherItem[];
-  startIndex?: number;
-  showShortcutBadge?: boolean;
+defineProps<{
+    items: PinnedMergedItem[];
+    layout: { cols: number; rows: number };
+    getLaunchStatus: (itemId: string) => "launching" | "success" | undefined;
+    startIndex?: number;
+    showShortcutBadge?: boolean;
 }>();
 
-defineEmits<{
-  itemContextmenu: [event: MouseEvent, item: LauncherItem];
+const emit = defineEmits<{
+    (e: "select", item: PinnedMergedItem): void;
+    (e: "reorder", newOrder: string[]): void;
 }>();
 
-const settingsStore = useSettingsStore();
+function onReorder(newItems: PinnedMergedItem[]) {
+    const newOrder = newItems.map(item => item.item.id);
+    emit("reorder", newOrder);
+}
 
-const gridStyle = computed(() => {
-  const layout = settingsStore.homeSectionLayouts.pinned;
-  return {
-    gridTemplateColumns: `repeat(${layout.cols}, 1fr)`,
-  };
-});
+function onItemClick(item: PinnedMergedItem) {
+    emit("select", item);
+}
 </script>
 
-<style scoped>
-.pinned-section {
-  margin-bottom: 6px;
+<style lang="scss" scoped>
+.home-section-header {
+    margin-bottom: 8px;
 }
 
-.section-label {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 4px;
-  padding-left: 4px;
+.home-section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-color-secondary);
+    text-shadow: var(--text-shadow);
 }
 
-.pinned-grid {
-  display: grid;
-  gap: 2px;
+.home-grid {
+    --cols: 5;
+    display: grid;
+    grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+    gap: 8px;
+
+
+}
+
+.pinned-ghost {
+    opacity: 0.4;
+}
+
+.pinned-chosen {
+    cursor: grabbing;
+}
+
+.pinned-drag {
+    cursor: grabbing;
+    transition: none !important;
+
+    :deep(.home-card) {
+        transition: none !important;
+    }
 }
 </style>

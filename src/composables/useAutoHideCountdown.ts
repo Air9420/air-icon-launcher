@@ -11,15 +11,23 @@ interface AutoHideCountdownOptions {
 export function useAutoHideCountdown(options: AutoHideCountdownOptions) {
   const { autoHideEnabled, countdownSeconds } = options;
   const isCountingDown = ref(false);
-  let focusListener: (() => void) | null = null;
+  let unlistenFocus: (() => void) | null = null;
 
   function stopCountdown() {
     isCountingDown.value = false;
   }
 
-  function handleCountdownComplete() {
+  async function handleCountdownComplete() {
+    if (!isCountingDown.value || !autoHideEnabled.value) {
+      stopCountdown();
+      return;
+    }
+
+    const focused = await win.isFocused();
     stopCountdown();
-    win.hide();
+    if (!focused) {
+      await win.hide();
+    }
   }
 
   watch(autoHideEnabled, (enabled) => {
@@ -29,7 +37,9 @@ export function useAutoHideCountdown(options: AutoHideCountdownOptions) {
   });
 
   async function setupFocusListener() {
-    focusListener = await win.onFocusChanged(({ payload: focused }) => {
+    cleanupFocusListener();
+    stopCountdown();
+    unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
       if (!autoHideEnabled.value) {
         stopCountdown();
         return;
@@ -42,11 +52,19 @@ export function useAutoHideCountdown(options: AutoHideCountdownOptions) {
     });
   }
 
+  function cleanupFocusListener() {
+    if (unlistenFocus) {
+      unlistenFocus();
+      unlistenFocus = null;
+    }
+  }
+
   return {
     isCountingDown,
     countdownSeconds,
     stopCountdown,
     handleCountdownComplete,
     setupFocusListener,
+    cleanupFocusListener,
   };
 }

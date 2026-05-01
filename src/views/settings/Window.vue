@@ -200,6 +200,34 @@
                 </div>
             </div>
         </div>
+
+        <div class="section">
+            <div class="section-title">自动隐藏</div>
+            <label class="check">
+                <input
+                    v-model="autoHideEnabledDraft"
+                    type="checkbox"
+                    @change="onAutoHideEnabledChange"
+                />
+                <span>窗口失焦后自动隐藏</span>
+            </label>
+            <div class="hint">
+                当窗口失焦后，倒计时指定秒数后自动隐藏界面倒计时秒数默认为30秒，可自定义
+            </div>
+            <div v-if="autoHideEnabledDraft" class="number-input-row">
+                <label class="number-label">倒计时秒数</label>
+                <input
+                    v-model.number="autoHideCountdownDraft"
+                    type="number"
+                    min="5"
+                    max="300"
+                    step="5"
+                    class="number-input"
+                    @change="onAutoHideCountdownChange"
+                />
+                <span class="number-unit">秒</span>
+            </div>
+        </div>
     </div>
 </template>
 
@@ -222,6 +250,8 @@ const {
     cornerHotspotPosition,
     cornerHotspotSensitivity,
     hideOnCtrlRightClick,
+    autoHideEnabled,
+    autoHideCountdownSeconds,
 } = storeToRefs(settingsStore);
 
 const followMouseDraft = ref<boolean>(false);
@@ -234,6 +264,8 @@ const cornerHotspotEnabledDraft = ref<boolean>(false);
 const cornerHotspotPositionDraft = ref<string>("top-right");
 const cornerHotspotSensitivityDraft = ref<string>("medium");
 const hideOnCtrlRightClickDraft = ref<boolean>(false);
+const autoHideEnabledDraft = ref<boolean>(true);
+const autoHideCountdownDraft = ref<number>(30);
 
 const autostartMethods = [
     {
@@ -273,6 +305,8 @@ watchEffect(() => {
     cornerHotspotPositionDraft.value = cornerHotspotPosition.value;
     cornerHotspotSensitivityDraft.value = cornerHotspotSensitivity.value;
     hideOnCtrlRightClickDraft.value = hideOnCtrlRightClick.value;
+    autoHideEnabledDraft.value = autoHideEnabled.value;
+    autoHideCountdownDraft.value = autoHideCountdownSeconds.value;
 });
 
 onMounted(async () => {
@@ -325,6 +359,17 @@ async function onSetCornerSensitivity(sensitivity: string) {
 
 async function onHideOnCtrlRightClickChange() {
     await settingsStore.setHideOnCtrlRightClick(hideOnCtrlRightClickDraft.value);
+}
+
+async function onAutoHideEnabledChange() {
+    await settingsStore.setAutoHideEnabled(autoHideEnabledDraft.value);
+}
+
+async function onAutoHideCountdownChange() {
+    let value = autoHideCountdownDraft.value;
+    value = Math.max(5, Math.min(300, value));
+    autoHideCountdownDraft.value = value;
+    await settingsStore.setAutoHideCountdownSeconds(value);
 }
 </script>
 
@@ -543,5 +588,33 @@ async function onHideOnCtrlRightClickChange() {
 .sens-btn.active {
     border-color: var(--primary-color);
     background: var(--primary-bg);
+}
+
+.number-input-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.number-label {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.number-input {
+    width: 80px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color-strong);
+    background: var(--input-bg);
+    color: var(--text-color);
+    text-align: center;
+    font-size: 13px;
+}
+
+.number-unit {
+    font-size: 13px;
+    color: var(--text-hint);
 }
 </style>

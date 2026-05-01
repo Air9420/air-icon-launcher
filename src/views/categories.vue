@@ -1,341 +1,806 @@
 <template>
-  <div class="categories-page" ref="mainContainerRef" tabindex="-1">
-    <PinnedItems
-      :items="pinnedItems"
-      :start-index="0"
-      :show-shortcut-badge="showShortcutHints"
-    />
-    <RecentItems
-      :items="recentItems"
-      :start-index="pinnedCount"
-      :show-shortcut-badge="showShortcutHints"
-    />
+    <div
+        class="categorie-view"
+        :class="{ 'is-editing': isEditingCategory }"
+        tabindex="0"
+    >
+        <div class="search-header">
+            <div ref="searchShellRef" class="search-shell">
+                <SearchBox
+                    ref="searchBoxRef"
+                    v-model="searchKeyword"
+                    placeholder="搜索启动项..."
+                    :intercept-tab="true"
+                    @nav="onSearchNav"
+                >
+                    <template #actions>
+                        <button
+                            v-if="!searchKeyword.trim()"
+                            class="history-toggle-btn"
+                            type="button"
+                            @mousedown.prevent
+                            @click="toggleSearchHistoryPanel"
+                        >
+                            {{ showSearchHistoryPanel ? "收起历史" : "展示历史" }}
+                        </button>
+                    </template>
+                </SearchBox>
 
-    <div v-if="hasBothSections" class="section-divider" />
+                <div v-if="showSearchHistoryPanel" class="search-history-panel">
+                    <div class="search-history-head">
+                        <div class="search-history-title">最近搜索</div>
+                        <button
+                            v-if="searchHistoryEntries.length > 0"
+                            class="search-history-clear-btn"
+                            type="button"
+                            @mousedown.prevent
+                            @click="onClearSearchHistory"
+                        >
+                            清空
+                        </button>
+                    </div>
+                    <template v-if="searchHistoryEntries.length > 0">
+                        <div
+                            v-for="entry in searchHistoryEntries"
+                            :key="entry.keyword"
+                            class="search-history-row"
+                        >
+                            <button
+                                class="search-history-item"
+                                type="button"
+                                @mousedown.prevent
+                                @click="onSelectSearchHistory(getSearchHistoryLabel(entry))"
+                            >
+                                <span class="history-keyword">{{ getSearchHistoryLabel(entry) }}</span>
+                                <span class="history-meta">{{ entry.count }} 次</span>
+                            </button>
+                            <button
+                                class="search-history-remove-btn"
+                                type="button"
+                                :title="`删除 ${getSearchHistoryLabel(entry)}`"
+                                @mousedown.prevent
+                                @click.stop="onRemoveSearchHistory(entry.keyword)"
+                            >
+                                ×
+                            </button>
+                        </div>
+                    </template>
+                    <div v-else class="search-history-empty">暂无最近搜索</div>
+                </div>
+            </div>
+        </div>
 
-    <template v-for="category in displayCategories" :key="category.id">
-      <div class="category-group" @contextmenu.prevent="handleCategoryContextMenu($event, category)">
-        <div class="category-header" @click="toggleCategory(category.id)">
-          <span class="category-arrow" :class="{ expanded: expandedCategories.has(category.id) }">
-            <svg viewBox="0 0 24 24" width="16" height="16">
-              <path
-                d="M9 6l6 6-6 6"
-                stroke="currentColor"
-                stroke-width="2"
-                fill="none"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-          </span>
-          <div class="category-title">
-            <img
-              v-if="category.iconSrc"
-              :src="category.iconSrc"
-              class="category-icon"
-              alt=""
+        <SearchResults
+            v-if="homeSearchViewState === 'results'"
+            :results="rustSearchMergedResults"
+            :get-launch-status="getLaunchStatus"
+            :selected-index="selectedIndex"
+            :keyword="searchKeyword"
+            :show-shortcut-hints="showShortcutHints"
+            @select="launchSearchWithCd"
+        />
+
+        <template v-if="homeSearchViewState === 'home'">
+            <div
+                v-if="pinnedMergedItems.length > 0 || recentDisplayItems.length > 0"
+                class="home-sections"
+                data-menu-type="Home"
+            >
+                <PinnedItems
+                    :items="pinnedMergedItems"
+                    :layout="pinnedLayout"
+                    :get-launch-status="getLaunchStatus"
+                    :start-index="0"
+                    :show-shortcut-badge="showShortcutHints"
+                    @select="launchPinnedWithCd"
+                    @reorder="onReorderPinnedItems"
+                />
+
+                <RecentItems
+                    :items="recentDisplayItems"
+                    :layout="recentLayout"
+                    :get-launch-status="getLaunchStatus"
+                    :start-index="pinnedMergedItems.length"
+                    :show-shortcut-badge="showShortcutHints"
+                    @select="launchRecentWithCd"
+                />
+            </div>
+
+            <CategoryGrid
+                :categories="displayCategories"
+                :cols="categoryCols"
+                :is-editing="isEditingCategory"
+                :editing-category-id="editingCategoryId"
+                :editing-category-name="editingCategoryName"
+                :is-new-category="isNewCategory"
+                @update:categories="onUpdateCategories"
+                @update:editing-category-name="editingCategoryName = $event"
+                @select="onClickCategory"
+                @confirm-edit="onConfirmCategoryEdit"
+                @cancel-edit="onCancelCategoryEdit"
             />
-            <span>{{ category.displayName }}</span>
-          </div>
-        </div>
-        <div v-if="expandedCategories.has(category.id)" class="category-grid">
-          <HomeCard
-            v-for="item in category.items"
-            :key="item.id"
-            :item="item"
-            :category-id="category.id"
-            :show-shortcut-badge="false"
-            @contextmenu.prevent="handleItemContextMenu($event, item, category.id)"
-          />
-        </div>
-      </div>
-      <div
-        v-if="category !== displayCategories[displayCategories.length - 1]"
-        class="category-divider"
-      />
-    </template>
+        </template>
 
-    <ContextMenu
-      v-if="contextMenu.visible"
-      :items="contextMenu.items"
-      :x="contextMenu.x"
-      :y="contextMenu.y"
-      @close="closeContextMenu"
-    />
-  </div>
+        <SearchFallback
+            v-else-if="homeSearchViewState === 'fallback'"
+            :keyword="searchKeyword"
+            @browser-search="onBrowserSearch"
+        />
+    </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { onClickOutside, useThrottleFn } from "@vueuse/core";
 import { useRouter } from "vue-router";
-import HomeCard from "../components/home/HomeCard.vue";
+import { storeToRefs } from "pinia";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
+import { useLaunchCooldown } from "../composables/useLaunchCooldown";
+
+import SearchBox from "../components/SearchBox.vue";
+import SearchResults from "../components/home/SearchResults.vue";
+import SearchFallback from "../components/SearchFallback.vue";
 import PinnedItems from "../components/home/PinnedItems.vue";
 import RecentItems from "../components/home/RecentItems.vue";
-import ContextMenu from "../components/common/ContextMenu.vue";
-import { useLauncherStore } from "../stores/launcherStore";
-import { useSearchStore } from "../stores/searchStore";
-import { useSettingsStore } from "../stores/settingsStore";
-import { getSearchShortcutIndex, getHomeShortcutTarget } from "../utils/search-ui";
-import type { LauncherItem } from "../types/config";
-import type { CategoryDefinition } from "../types/config";
+import CategoryGrid from "../components/home/CategoryGrid.vue";
 
-const router = useRouter();
-const launcherStore = useLauncherStore();
-const searchStore = useSearchStore();
+import {
+    Store,
+    useSettingsStore,
+    useUIStore,
+    useCategoryStore,
+    type GlobalSearchMergedResult,
+    type RecentUsedMergedItem,
+    type PinnedMergedItem,
+    type Category as CategoryType,
+} from "../stores";
+import { useStatsStore, type SearchKeywordRecord } from "../stores/statsStore";
+import { useLaunchStatus } from "../composables/useLaunchStatus";
+import { useHomePageState } from "../composables/useHomePageState";
+import { showToast } from "../composables/useGlobalToast";
+import { invokeOrThrow } from "../utils/invoke-wrapper";
+import { launchStoredItem } from "../utils/launcher-service";
+import { SEARCH_THROTTLE_MS } from "../utils/search-config";
+import {
+    createSearchSelectionTarget,
+    findSearchSelectionIndex,
+    getHomeSearchViewState,
+    getSearchHistoryDisplayKeyword,
+    getRecentSearchHistoryEntries,
+    getSearchShortcutIndex,
+    getHomeShortcutTarget,
+    type SearchSelectionTarget,
+} from "../utils/search-ui";
+
+const store = Store();
 const settingsStore = useSettingsStore();
-const mainContainerRef = ref<HTMLElement | null>(null);
+const statsStore = useStatsStore();
+const uiStore = useUIStore();
+const categoryStore = useCategoryStore();
+const router = useRouter();
 
+const {
+    searchKeyword,
+    rustSearchResults,
+    rustSearchMergedResults,
+    isRustSearchReady,
+} = storeToRefs(store);
+const { categoryCols } = storeToRefs(uiStore);
+const {
+    displayCategories,
+    editingCategoryId,
+    editingCategoryName,
+    isEditingCategory,
+    isNewCategory,
+} = storeToRefs(categoryStore);
+const { autoHideAfterLaunch } = storeToRefs(settingsStore);
+
+const searchBoxRef = ref<InstanceType<typeof SearchBox> | null>(null);
+const searchShellRef = ref<HTMLElement | null>(null);
+
+const selectedIndex = ref(-1);
+const isSearchHistoryOpen = ref(false);
+const isHomeSearchPending = ref(false);
 const showShortcutHints = ref(false);
-let ctrlPressed = false;
 
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === "Control" && !e.repeat) {
-    ctrlPressed = true;
-    showShortcutHints.value = true;
-  }
+const { setLaunchStatus, clearLaunchStatus, getLaunchStatus } = useLaunchStatus({
+    autoHideAfterLaunch,
+});
 
-  if (ctrlPressed && searchStore.searchQuery.length === 0) {
-    const shortcutIndex = getSearchShortcutIndex(e.code, e.key);
-    if (shortcutIndex !== null) {
-      const target = getHomeShortcutTarget(
-        shortcutIndex,
-        pinnedItems.value.length,
-        recentItems.value.length
-      );
-      if (target) {
-        let item: LauncherItem | undefined;
-        if (target.type === "pinned") {
-          item = pinnedItems.value[target.index];
-        } else if (target.type === "recent") {
-          item = recentItems.value[target.index];
-        }
-        if (item) {
-          e.preventDefault();
-          launcherStore.launchItem(item, item.categoryId || "");
-        }
-      }
+const showSearchHistoryPanel = computed(() => (
+    isSearchHistoryOpen.value && !searchKeyword.value.trim()
+));
+const searchHistoryEntries = computed<SearchKeywordRecord[]>(() =>
+    getRecentSearchHistoryEntries<SearchKeywordRecord>(statsStore.searchHistory, 8)
+);
+const homeSearchViewState = computed(() =>
+    getHomeSearchViewState(
+        searchKeyword.value,
+        rustSearchMergedResults.value.length,
+        isHomeSearchPending.value
+    )
+);
+
+let unlistenFocus: (() => void) | null = null;
+let unlistenShow: (() => void) | null = null;
+let pendingHomeSearchSelection: (SearchSelectionTarget & { keyword: string }) | null = null;
+let homeSearchRequestId = 0;
+
+onClickOutside(searchShellRef, () => {
+    if (showSearchHistoryPanel.value) {
+        closeSearchHistoryPanel();
     }
-  }
-}
-
-function onKeyup(e: KeyboardEvent) {
-  if (e.key === "Control") {
-    ctrlPressed = false;
-    showShortcutHints.value = false;
-  }
-}
-
-onMounted(() => {
-  document.addEventListener("keydown", onKeydown);
-  document.addEventListener("keyup", onKeyup);
 });
 
-onUnmounted(() => {
-  document.removeEventListener("keydown", onKeydown);
-  document.removeEventListener("keyup", onKeyup);
-});
+onMounted(async () => {
+    const win = getCurrentWindow();
 
-const contextMenu = ref<{
-  visible: boolean;
-  x: number;
-  y: number;
-  items: { label: string; action: () => void }[];
-}>({
-  visible: false,
-  x: 0,
-  y: 0,
-  items: [],
-});
+    await store.syncSearchIndex();
+    document.addEventListener("keydown", onKeydown);
+    document.addEventListener("keyup", onKeyup);
 
-function closeContextMenu() {
-  contextMenu.value.visible = false;
-}
+    unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
+        if (!focused) {
+            showShortcutHints.value = false;
+            closeSearchHistoryPanel();
+            return;
+        }
 
-const homeSectionLayouts = computed(() => settingsStore.homeSectionLayouts);
+        nextTick(() => {
+            searchBoxRef.value?.focus();
+        });
+    });
 
-const expandedCategories = ref<Set<string>>(new Set());
+    unlistenShow = await listen("window-shown", () => {
+        closeSearchHistoryPanel();
+        isHomeSearchPending.value = false;
+        pendingHomeSearchSelection = null;
+        showShortcutHints.value = false;
+        store.clearSearch();
+        selectedIndex.value = -1;
+        nextTick(() => {
+            searchBoxRef.value?.focus();
+        });
+    });
 
-const categories = computed<CategoryDefinition[]>(() => {
-  return launcherStore.categories
-    .filter((category) => category.items.length > 0)
-    .map((category) => {
-      const trimmedName = category.name.trim();
-      const displayName = trimmedName.length > 0 ? trimmedName : "Untitled";
-      let iconSrc = "";
-      if (category.customIconBase64) {
-        iconSrc = `data:image/png;base64,${category.customIconBase64}`;
-      }
-      return {
-        ...category,
-        displayName,
-        iconSrc,
-      };
+    nextTick(() => {
+        searchBoxRef.value?.focus();
     });
 });
 
-const displayCategories = computed<CategoryDefinition[]>(() => {
-  return categories.value.map((category) => {
-    return {
-      ...category,
-      items: category.items,
-    };
-  });
+onUnmounted(() => {
+    if (unlistenFocus) unlistenFocus();
+    if (unlistenShow) unlistenShow();
+    document.removeEventListener("keydown", onKeydown);
+    document.removeEventListener("keyup", onKeyup);
 });
 
-const pinnedItems = computed<LauncherItem[]>(() => {
-  return launcherStore.favoriteItems;
-});
+const { pinnedMergedItems, recentDisplayItems } = useHomePageState();
 
-const pinnedCount = computed(() => pinnedItems.value.length);
+const pinnedLayout = computed(() => uiStore.getHomeSectionLayout("pinned"));
+const recentLayout = computed(() => uiStore.getHomeSectionLayout("recent"));
 
-const recentItems = computed<LauncherItem[]>(() => {
-  return launcherStore.recentUsedItems;
-});
-
-const hasBothSections = computed(() => {
-  return pinnedItems.value.length > 0 && recentItems.value.length > 0;
-});
-
-function toggleCategory(categoryId: string) {
-  if (expandedCategories.value.has(categoryId)) {
-    expandedCategories.value.delete(categoryId);
-  } else {
-    expandedCategories.value.add(categoryId);
-  }
+function closeSearchHistoryPanel() {
+    isSearchHistoryOpen.value = false;
 }
 
-function handleCategoryContextMenu(event: MouseEvent, category: CategoryDefinition) {
-  event.preventDefault();
-  closeContextMenu();
-  contextMenu.value = {
-    visible: true,
-    x: event.clientX,
-    y: event.clientY,
-    items: [
-      { label: "重命名分类", action: () => {
-        closeContextMenu();
-        const newName = prompt("输入新分类名", category.name);
-        if (newName && newName.trim()) {
-          launcherStore.renameCategory(category.id, newName.trim());
-        }
-      }},
-      { label: "删除分类", action: () => {
-        closeContextMenu();
-        if (confirm(`确认删除分类 "${category.name}"？`)) {
-          launcherStore.removeCategory(category.id);
-        }
-      }},
-      { label: "管理项目", action: () => {
-        closeContextMenu();
-        router.push(`/category/${encodeURIComponent(category.id)}`);
-      }},
-    ],
-  };
+function toggleSearchHistoryPanel() {
+    if (searchKeyword.value.trim()) return;
+    isSearchHistoryOpen.value = !isSearchHistoryOpen.value;
+    nextTick(() => {
+        searchBoxRef.value?.focus();
+    });
 }
 
-function handleItemContextMenu(event: MouseEvent, item: LauncherItem, categoryId: string) {
-  event.preventDefault();
-  closeContextMenu();
-  contextMenu.value = {
-    visible: true,
-    x: event.clientX,
-    y: event.clientY,
-    items: [
-      { label: "打开文件位置", action: () => {
-        closeContextMenu();
-        launcherStore.openFileLocation(item);
-      }},
-      { label: "编辑项目", action: () => {
-        closeContextMenu();
-        router.push(`/category/${encodeURIComponent(categoryId)}/edit/${encodeURIComponent(item.id)}`);
-      }},
-      { label: item.isFavorite ? "取消固定" : "固定到首页", action: () => {
-        closeContextMenu();
-        launcherStore.toggleFavorite(item.id, item.categoryId || categoryId);
-      }},
-      { label: "删除项目", action: () => {
-        closeContextMenu();
-        if (confirm(`确认删除 "${item.name}"？`)) {
-          launcherStore.removeItem(item.id, item.categoryId || categoryId);
+function onSelectSearchHistory(keyword: string) {
+    closeSearchHistoryPanel();
+    pendingHomeSearchSelection = null;
+    selectedIndex.value = -1;
+    searchKeyword.value = keyword;
+    nextTick(() => {
+        searchBoxRef.value?.focus();
+    });
+}
+
+function getSearchHistoryLabel(entry: SearchKeywordRecord) {
+    return getSearchHistoryDisplayKeyword(entry);
+}
+
+function onRemoveSearchHistory(keyword: string) {
+    statsStore.removeSearchHistory(keyword);
+    nextTick(() => {
+        searchBoxRef.value?.focus();
+    });
+}
+
+function onClearSearchHistory() {
+    statsStore.clearSearchHistory();
+    nextTick(() => {
+        searchBoxRef.value?.focus();
+    });
+}
+
+function onClickCategory(element: CategoryType) {
+    if (isEditingCategory.value) return;
+    categoryStore.setCurrentCategory(element.id);
+    router.push({ name: "category", params: { categoryId: element.id } });
+}
+
+function onUpdateCategories(newCategories: CategoryType[]) {
+    categoryStore.reorderCategories(newCategories);
+}
+
+function onConfirmCategoryEdit() {
+    if (!editingCategoryName.value.trim()) {
+        showToast("分类名称不能为空");
+        return;
+    }
+    categoryStore.confirmCategoryEdit(editingCategoryName.value);
+}
+
+function onCancelCategoryEdit() {
+    categoryStore.cancelCategoryEdit();
+}
+
+async function onBrowserSearch() {
+    const keyword = searchKeyword.value.trim();
+    if (!keyword) return;
+
+    try {
+        await invokeOrThrow("open_browser_search", { query: keyword });
+        closeSearchHistoryPanel();
+        store.recordConfirmedSearch();
+        store.clearSearch();
+        selectedIndex.value = -1;
+    } catch (error) {
+        console.error(error);
+        showToast("无法使用默认浏览器搜索", { type: "error" });
+    }
+}
+
+async function onOpenSearchResult(result: GlobalSearchMergedResult) {
+    store.recordConfirmedSearch();
+
+    if (!result?.item || !result?.primaryCategoryId) return;
+    const item = result.item;
+    closeSearchHistoryPanel();
+    store.clearSearch();
+    setLaunchStatus(item.id, "launching");
+    try {
+        await launchStoredItem(
+            {
+                categoryId: result.primaryCategoryId,
+                itemId: item.id,
+            },
+            {
+                store,
+                notifyError: true,
+            }
+        );
+        setLaunchStatus(item.id, "success");
+    } catch (e) {
+        console.error(e);
+        clearLaunchStatus(item.id);
+    }
+}
+
+async function onOpenRecentItem(item: RecentUsedMergedItem) {
+    if (!item?.item || !item?.recent?.categoryId) return;
+    setLaunchStatus(item.item.id, "launching");
+    try {
+        await launchStoredItem(
+            {
+                categoryId: item.recent.categoryId,
+                itemId: item.item.id,
+            },
+            {
+                store,
+                notifyError: true,
+            }
+        );
+        setLaunchStatus(item.item.id, "success");
+    } catch (e) {
+        console.error(e);
+        clearLaunchStatus(item.item.id);
+    }
+}
+
+async function onOpenPinnedItem(item: PinnedMergedItem) {
+    if (!item?.item || !item?.primaryCategoryId) return;
+    setLaunchStatus(item.item.id, "launching");
+    try {
+        await launchStoredItem(
+            {
+                categoryId: item.primaryCategoryId,
+                itemId: item.item.id,
+            },
+            {
+                store,
+                notifyError: true,
+            }
+        );
+        setLaunchStatus(item.item.id, "success");
+    } catch (e) {
+        console.error(e);
+        clearLaunchStatus(item.item.id);
+    }
+}
+
+function onReorderPinnedItems(newOrder: string[]) {
+    store.reorderPinnedItemIds(newOrder);
+}
+
+const { createCooldown } = useLaunchCooldown({ cooldown: 2500 });
+
+const launchSearchWithCd = createCooldown(onOpenSearchResult);
+const launchRecentWithCd = createCooldown(onOpenRecentItem);
+const launchPinnedWithCd = createCooldown(onOpenPinnedItem);
+
+watch(editingCategoryId, async (value) => {
+    if (!value) return;
+    await nextTick();
+});
+
+const throttledRustSearch = useThrottleFn(async (keyword: string, requestId: number) => {
+    try {
+        const results = await store.searchLauncherItems({ keyword });
+        if (requestId !== homeSearchRequestId) return;
+        rustSearchResults.value = results;
+    } finally {
+        if (requestId === homeSearchRequestId) {
+            isHomeSearchPending.value = false;
         }
-      }},
-    ],
-  };
+    }
+}, SEARCH_THROTTLE_MS, true);
+
+let ensureIndexPromise: Promise<void> | null = null;
+
+async function ensureRustSearchReady(): Promise<boolean> {
+    if (isRustSearchReady.value) return true;
+    if (!ensureIndexPromise) {
+        ensureIndexPromise = store.syncSearchIndex().finally(() => {
+            ensureIndexPromise = null;
+        });
+    }
+    await ensureIndexPromise;
+    return isRustSearchReady.value;
+}
+
+watch(searchKeyword, async (keyword) => {
+    const trimmedKeyword = keyword.trim();
+    const isPendingTabSelection = pendingHomeSearchSelection?.keyword === trimmedKeyword;
+    if (!isPendingTabSelection) {
+        pendingHomeSearchSelection = null;
+        selectedIndex.value = -1;
+    }
+
+    homeSearchRequestId += 1;
+    const requestId = homeSearchRequestId;
+
+    if (!trimmedKeyword) {
+        pendingHomeSearchSelection = null;
+        rustSearchResults.value = [];
+        isHomeSearchPending.value = false;
+        showShortcutHints.value = false;
+        return;
+    }
+
+    closeSearchHistoryPanel();
+    rustSearchResults.value = [];
+    isHomeSearchPending.value = true;
+    const ready = await ensureRustSearchReady();
+    if (!ready || requestId !== homeSearchRequestId) {
+        if (requestId === homeSearchRequestId) {
+            isHomeSearchPending.value = false;
+        }
+        return;
+    }
+    await throttledRustSearch(trimmedKeyword, requestId);
+});
+
+const currentSearchResults = computed(() => {
+    return rustSearchMergedResults.value;
+});
+
+watch(
+    currentSearchResults,
+    (results) => {
+        if (pendingHomeSearchSelection && !isHomeSearchPending.value) {
+            selectedIndex.value = findSearchSelectionIndex(
+                results,
+                pendingHomeSearchSelection
+            );
+            pendingHomeSearchSelection = null;
+        }
+
+        if (!searchKeyword.value.trim()) return;
+        const targets = results.map((result) => ({
+            categoryId: result.primaryCategoryId,
+            itemId: result.item.id,
+        }));
+        void store.hydrateMissingIconsForItems(targets);
+    },
+    { immediate: true }
+);
+
+watch(
+    [pinnedMergedItems, recentDisplayItems, searchKeyword],
+    ([pinned, recent, keyword]) => {
+        if (keyword.trim()) return;
+        const targets = [
+            ...pinned.map((item) => ({
+                categoryId: item.primaryCategoryId,
+                itemId: item.item.id,
+            })),
+            ...recent.map((item) => ({
+                categoryId: item.recent.categoryId,
+                itemId: item.item.id,
+            })),
+        ];
+        void store.hydrateMissingIconsForItems(targets);
+    },
+    { immediate: true }
+);
+
+function onKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape" && showSearchHistoryPanel.value) {
+        closeSearchHistoryPanel();
+        return;
+    }
+
+    if (e.key === "Control") {
+        showShortcutHints.value = true;
+        return;
+    }
+
+    if (e.ctrlKey && !e.altKey && !e.metaKey) {
+        showShortcutHints.value = true;
+        const shortcutIndex = getSearchShortcutIndex(e);
+        if (shortcutIndex !== null) {
+            if (!searchKeyword.value.trim()) {
+                e.preventDefault();
+                const target = getHomeShortcutTarget(
+                    shortcutIndex,
+                    pinnedMergedItems.value.length,
+                    recentDisplayItems.value.length
+                );
+                if (target) {
+                    if (target.type === "pinned") {
+                        launchPinnedWithCd(pinnedMergedItems.value[target.index]);
+                    } else if (target.type === "recent") {
+                        launchRecentWithCd(recentDisplayItems.value[target.index]);
+                    }
+                }
+                return;
+            }
+
+            e.preventDefault();
+            if (shortcutIndex < currentSearchResults.value.length) {
+                selectedIndex.value = shortcutIndex;
+                launchSearchWithCd(currentSearchResults.value[shortcutIndex]);
+            }
+            return;
+        }
+    }
+
+    if (!searchKeyword.value.trim() || currentSearchResults.value.length === 0) {
+        return;
+    }
+
+    if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter" || e.key === "Tab") {
+        return;
+    }
+}
+
+function onKeyup(e: KeyboardEvent) {
+    if (e.key === "Control" || !e.ctrlKey) {
+        showShortcutHints.value = false;
+    }
+}
+
+function onSearchNav(direction: "up" | "down" | "enter" | "tab") {
+    if (!searchKeyword.value.trim() || currentSearchResults.value.length === 0) {
+        return;
+    }
+
+    if (direction === "down") {
+        if (selectedIndex.value < currentSearchResults.value.length - 1) {
+            selectedIndex.value++;
+        } else {
+            selectedIndex.value = 0;
+        }
+        return;
+    }
+
+    if (direction === "up") {
+        if (selectedIndex.value > 0) {
+            selectedIndex.value--;
+        } else {
+            selectedIndex.value = currentSearchResults.value.length - 1;
+        }
+        return;
+    }
+
+    if (direction === "tab") {
+        if (currentSearchResults.value.length === 1) {
+            const result = currentSearchResults.value[0];
+            selectedIndex.value = 0;
+            pendingHomeSearchSelection = {
+                ...createSearchSelectionTarget(result),
+                keyword: result.item.name.trim(),
+            };
+            searchKeyword.value = result.item.name;
+        }
+        return;
+    }
+
+    if (selectedIndex.value >= 0 && selectedIndex.value < currentSearchResults.value.length) {
+        const result = currentSearchResults.value[selectedIndex.value];
+        launchSearchWithCd(result);
+    }
 }
 </script>
 
-<style scoped>
-.categories-page {
-  outline: none;
+<style lang="scss" scoped>
+.categorie-view {
+    width: 100vw;
+    height: 100vh;
+    background: var(--bg-color);
+    display: flex;
+    flex-direction: column;
+    user-select: none;
 }
 
-.section-divider {
-  height: 1px;
-  background: var(--color-text-secondary);
-  opacity: 0.12;
-  margin: 10px 0 14px;
+.categorie-view.is-editing {
+    pointer-events: none;
 }
 
-.category-group {
-  margin-bottom: 4px;
+.search-header {
+    padding: 12px 16px;
+    flex-shrink: 0;
 }
 
-.category-header {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  cursor: pointer;
-  user-select: none;
-  transition: background 0.15s;
+.search-shell {
+    position: relative;
+    width: min(100%, 760px);
+    margin: 0 auto;
 }
 
-.category-header:hover {
-  background: var(--color-bg-secondary);
+.history-toggle-btn {
+    height: 18px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--hover-bg);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 12px;
+    transition: background 0.15s ease, color 0.15s ease;
 }
 
-.category-arrow {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-text-secondary);
-  transition: transform 0.2s;
-  width: 20px;
+.history-toggle-btn:hover {
+    background: var(--hover-bg-strong);
+    color: var(--text-color);
 }
 
-.category-arrow.expanded {
-  transform: rotate(90deg);
+.search-history-panel {
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 0;
+    right: 0;
+    z-index: 12;
+    padding: 12px;
+    border-radius: 16px;
+    background: var(--search-history-bg);
+    border: 1px solid var(--border-color);
+    box-shadow: var(--card-shadow);
+    backdrop-filter: var(--backdrop-blur);
 }
 
-.category-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-text-primary);
+.search-history-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
 }
 
-.category-icon {
-  width: 18px;
-  height: 18px;
-  object-fit: contain;
-  flex-shrink: 0;
+.search-history-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-hint);
 }
 
-.category-grid {
-  display: grid;
-  grid-template-columns: repeat(v-bind('homeSectionLayouts.recent.cols'), 1fr);
-  gap: 4px;
-  margin-top: 4px;
-  padding-left: 8px;
+.search-history-clear-btn {
+    border: 0;
+    background: transparent;
+    color: var(--text-hint);
+    font-size: 12px;
+    cursor: pointer;
+    transition: color 0.15s ease;
 }
 
-.category-divider {
-  height: 1px;
-  background: var(--color-text-secondary);
-  opacity: 0.08;
-  margin: 10px 0;
+.search-history-clear-btn:hover {
+    color: var(--text-color);
+}
+
+.search-history-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.search-history-item {
+    flex: 1;
+    border: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--text-color);
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.search-history-item:hover {
+    background: var(--hover-bg);
+}
+
+.search-history-remove-btn {
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-hint);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.search-history-remove-btn:hover {
+    background: var(--hover-bg);
+    color: var(--text-color);
+}
+
+.history-keyword {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+}
+
+.history-meta {
+    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--text-hint);
+}
+
+.search-history-empty {
+    padding: 12px 8px 4px;
+    color: var(--text-hint);
+    font-size: 13px;
+}
+
+.no-results {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-color-secondary);
+    font-size: 14px;
+}
+
+.home-sections {
+    padding: 0 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex-shrink: 0;
 }
 </style>
