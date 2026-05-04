@@ -160,13 +160,14 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { getRecordContent, type ClipboardRecord } from "../stores/clipboardStore";
 import { useClipboardStore } from "../stores/clipboardStore";
 import { useClipboardEvents } from "../composables/useClipboardEvents";
 import { readLocalImageAsDataUrl } from "../utils/system-commands";
 
 const router = useRouter();
+const route = useRoute();
 const clipboardStore = useClipboardStore();
 const {
     history,
@@ -227,6 +228,21 @@ watch(
                 anchorFlashTimer = null;
             }
         }
+    },
+    { immediate: true }
+);
+
+watch(
+    () => route.query.anchor,
+    async (anchor) => {
+        if (typeof anchor !== "string" || !anchor) return;
+        await nextTick();
+        const target = itemRefs.value[anchor];
+        const container = contentRef.value;
+        if (!target || !container) return;
+        await triggerAnchorFlash(anchor);
+        const nextScrollTop = getAnchorScrollTop(container, target);
+        animateScrollTo(container, nextScrollTop);
     },
     { immediate: true }
 );

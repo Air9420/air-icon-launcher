@@ -10,6 +10,50 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
 const MAX_LAUNCH_EVENTS = 5000;
 const MAX_LAUNCH_EVENT_AGE_MS = 180 * DAY_MS;
+const MAX_EXTERNAL_RECENT_LAUNCHES = 50;
+const EXTERNAL_RECENT_DEDUP_WINDOW_MS = 5000;
+const NOISY_EXTERNAL_EXECUTABLE_NAMES = new Set([
+  "git.exe",
+  "git-remote-http.exe",
+  "git-remote-https.exe",
+  "git-credential-manager.exe",
+  "git-lfs.exe",
+  "cargo.exe",
+  "rustc.exe",
+  "rustup.exe",
+  "clippy-driver.exe",
+  "rls.exe",
+  "rust-analyzer.exe",
+  "vite.exe",
+  "vue-tsc.exe",
+  "esbuild.exe",
+  "node.exe",
+  "npm.exe",
+  "npx.exe",
+  "pnpm.exe",
+  "bun.exe",
+  "bunx.exe",
+  "powershell.exe",
+  "pwsh.exe",
+  "cmd.exe",
+  "conhost.exe",
+  "wsl.exe",
+  "wslhost.exe",
+  "winget.exe",
+  "msbuild.exe",
+  "dotnet.exe",
+  "java.exe",
+  "javaw.exe",
+]);
+const NOISY_EXTERNAL_PATH_PARTS = [
+  "\\windows\\system32\\",
+  "\\windows\\syswow64\\",
+  "\\windows\\winsxs\\",
+  "\\windows\\servicing\\",
+  "\\windows\\microsoft.net\\",
+  "\\windows\\assembly\\",
+  "\\users\\air\\appdata\\local\\programs\\microsoft vs code\\",
+];
 const MIN_TIME_SLOT_RECOMMENDATION_LAUNCHES = 3;
 const MIN_TIME_SLOT_RECOMMENDATION_TOTAL_LAUNCHES = 5;
 const MIN_TIME_SLOT_RECOMMENDATION_SLOT_SHARE = 0.3;
@@ -40,6 +84,15 @@ export type LaunchEventRecord = {
   categoryId: string;
   itemId: string;
   usedAt: number;
+};
+
+export type ExternalRecentLaunchRecord = {
+  path: string;
+  name: string;
+  source: string;
+  iconBase64: string | null;
+  usedAt: number;
+  usageCount: number;
 };
 
 export type LegacyUsageSnapshotRecord = {
@@ -133,6 +186,89 @@ function normalizeTimestamp(value: number, fallback: number = Date.now()): numbe
 function normalizeUsageCount(value: number | undefined): number {
   if (!Number.isFinite(value)) return 1;
   return Math.max(1, Math.floor(value ?? 1));
+}
+
+function normalizePathKey(path: string): string {
+  return path.trim().replace(/\//g, "\\").toLowerCase();
+}
+
+function getExecutableNameFromPath(path: string): string {
+  const normalized = normalizePathKey(path);
+  if (!normalized) return "";
+  const segments = normalized.split("\\");
+  return segments[segments.length - 1] || "";
+}
+
+function isNoisyExternalPath(path: string): boolean {
+  const pathKey = normalizePathKey(path);
+  if (!pathKey) return true;
+  if (!pathKey.endsWith(".exe")) return true;
+  if (NOISY_EXTERNAL_PATH_PARTS.some((part) => pathKey.includes(part))) {
+    return true;
+  }
+  const executableName = getExecutableNameFromPath(pathKey);
+  return NOISY_EXTERNAL_EXECUTABLE_NAMES.has(executableName);
+}
+
+function normalizeExternalRecentLaunchRecord(
+  record: Partial<ExternalRecentLaunchRecord> | null | undefined
+): ExternalRecentLaunchRecord | null {
+  const path = typeof record?.path === "string" ? record.path.trim() : "";
+  if (!path) return null;
+  if (isNoisyExternalPath(path)) return null;
+
+  const name = typeof record?.name === "string" && record.name.trim()
+    ? record.name.trim()
+    : path.split(/[\\/]/).pop() || path;
+
+  const source = typeof record?.source === "string" && record.source.trim()
+    ? record.source.trim()
+    : "系统启动";
+
+  return {
+    path,
+    name,
+    source,
+    iconBase64: typeof record?.iconBase64 === "string" && record.iconBase64.trim()
+      ? record.iconBase64
+      : null,
+    usedAt: normalizeTimestamp(record?.usedAt ?? Date.now()),
+    usageCount: normalizeUsageCount(record?.usageCount),
+  };
+}
+
+function sanitizeExternalRecentLaunchRecords(
+  records: Array<Partial<ExternalRecentLaunchRecord> | null | undefined>
+): ExternalRecentLaunchRecord[] {
+  const mergedByPath = new Map<string, ExternalRecentLaunchRecord>();
+
+  const sorted = [...records]
+    .map((record) => normalizeExternalRecentLaunchRecord(record))
+    .filter((record): record is ExternalRecentLaunchRecord => !!record)
+    .sort((a, b) => b.usedAt - a.usedAt);
+
+  for (const record of sorted) {
+    const pathKey = normalizePathKey(record.path);
+    if (!pathKey) continue;
+    const existing = mergedByPath.get(pathKey);
+    if (!existing) {
+      mergedByPath.set(pathKey, record);
+      continue;
+    }
+
+    mergedByPath.set(pathKey, {
+      ...existing,
+      name: existing.name || record.name,
+      source: existing.source || record.source,
+      iconBase64: existing.iconBase64 || record.iconBase64,
+      usedAt: Math.max(existing.usedAt, record.usedAt),
+      usageCount: Math.max(existing.usageCount, record.usageCount),
+    });
+  }
+
+  return [...mergedByPath.values()]
+    .sort((a, b) => b.usedAt - a.usedAt)
+    .slice(0, MAX_EXTERNAL_RECENT_LAUNCHES);
 }
 
 function normalizeLaunchEventRecord(record: Partial<LaunchEventRecord> | null | undefined): LaunchEventRecord | null {
@@ -255,6 +391,7 @@ export const useStatsStore = defineStore(
   () => {
     const searchHistory = ref<SearchKeywordRecord[]>([]);
     const launchEvents = ref<LaunchEventRecord[]>([]);
+    const externalRecentLaunches = ref<ExternalRecentLaunchRecord[]>([]);
     const launchTrackingStartedAt = ref<number | null>(null);
     const legacyUsageSnapshot = ref<LegacyUsageSnapshotRecord[]>([]);
 
@@ -332,9 +469,71 @@ export const useStatsStore = defineStore(
 
     function clearLaunchHistory(): void {
       launchEvents.value = [];
+      externalRecentLaunches.value = [];
       launchTrackingStartedAt.value = null;
       legacyUsageSnapshot.value = [];
     }
+
+    function recordExternalLaunch(record: {
+      path: string;
+      name: string;
+      source?: string;
+      iconBase64?: string | null;
+      usedAt?: number;
+    }): void {
+      const normalized = normalizeExternalRecentLaunchRecord({
+        path: record.path,
+        name: record.name,
+        source: record.source ?? "系统启动",
+        iconBase64: record.iconBase64 ?? null,
+        usedAt: record.usedAt ?? Date.now(),
+        usageCount: 1,
+      });
+      if (!normalized) return;
+
+      const pathKey = normalizePathKey(normalized.path);
+      if (!pathKey) return;
+
+      const list = [...externalRecentLaunches.value];
+      const existingIndex = list.findIndex(
+        (entry) => normalizePathKey(entry.path) === pathKey
+      );
+      const now = normalized.usedAt;
+
+      if (existingIndex >= 0) {
+        const existing = list[existingIndex];
+        const delta = now - existing.usedAt;
+        if (delta >= 0 && delta < EXTERNAL_RECENT_DEDUP_WINDOW_MS) {
+          if (!existing.iconBase64 && normalized.iconBase64) {
+            existing.iconBase64 = normalized.iconBase64;
+            externalRecentLaunches.value = [...list];
+          }
+          return;
+        }
+
+        const merged: ExternalRecentLaunchRecord = {
+          ...existing,
+          name: normalized.name || existing.name,
+          source: normalized.source || existing.source,
+          iconBase64: normalized.iconBase64 ?? existing.iconBase64,
+          usedAt: now,
+          usageCount: (existing.usageCount || 1) + 1,
+        };
+        list.splice(existingIndex, 1);
+        list.unshift(merged);
+        externalRecentLaunches.value = list.slice(0, MAX_EXTERNAL_RECENT_LAUNCHES);
+        return;
+      }
+
+      list.unshift(normalized);
+      externalRecentLaunches.value = list.slice(0, MAX_EXTERNAL_RECENT_LAUNCHES);
+    }
+
+    function sanitizeExternalRecentLaunchHistory(): void {
+      externalRecentLaunches.value = sanitizeExternalRecentLaunchRecords(externalRecentLaunches.value);
+    }
+
+    sanitizeExternalRecentLaunchHistory();
 
     function removeLaunchEventsForItems(categoryId: string, itemIds: string[]): void {
       const targetIds = new Set(itemIds);
@@ -562,6 +761,7 @@ export const useStatsStore = defineStore(
     return {
       searchHistory,
       launchEvents,
+      externalRecentLaunches,
       launchTrackingStartedAt,
       legacyUsageSnapshot,
       recordSearch,
@@ -569,6 +769,8 @@ export const useStatsStore = defineStore(
       clearSearchHistory,
       ensureLaunchTrackingStarted,
       recordLaunchEvent,
+      recordExternalLaunch,
+      sanitizeExternalRecentLaunchHistory,
       clearLaunchHistory,
       removeLaunchEventsForItems,
       removeLaunchEventsForCategory,
@@ -591,6 +793,7 @@ export const useStatsStore = defineStore(
     persist: createVersionedPersistConfig("stats", [
       "searchHistory",
       "launchEvents",
+      "externalRecentLaunches",
       "launchTrackingStartedAt",
       "legacyUsageSnapshot",
     ]),

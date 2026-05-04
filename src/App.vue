@@ -18,6 +18,7 @@ import CountdownRing from "./components/common/CountdownRing.vue";
 const OnboardingGuide = defineAsyncComponent(() => import("./components/OnboardingGuide.vue"));
 import { Store, useCategoryStore, useSettingsStore, useGuideStore } from "./stores";
 import { useUIStore } from "./stores/uiStore";
+import { useStatsStore } from "./stores/statsStore";
 import { initOverrideLookupFromStore } from "./utils/classification/pipeline";
 
 import { useContextMenu } from "./composables/useContextMenu";
@@ -40,6 +41,7 @@ const store = Store();
 const categoryStore = useCategoryStore();
 const settingsStore = useSettingsStore();
 const uiStore = useUIStore();
+const statsStore = useStatsStore();
 const guideStore = useGuideStore();
 const searchStore = useSearchStore();
 const router = useRouter();
@@ -65,6 +67,9 @@ const {
 const {
     currentCategoryId,
     currentLauncherItemId,
+    currentItemPath,
+    currentClipboardRecordId,
+    currentClipboardContentType,
     currentHomeSection,
     openContextMenu,
     closeContextMenu,
@@ -75,12 +80,15 @@ const { initializeDragDrop, lastDrop, processedDropIds } = useDragDrop({
     getDropTargetInfoAtPoint,
 });
 
-const { state: confirmState, confirm, handleConfirm, handleCancel } = useConfirmDialog();
+const { state: confirmState, confirm, handleConfirm, handleCancel, handleDismiss } = useConfirmDialog();
 const { state: inputState, input, handleConfirm: handleInputConfirm, handleCancel: handleInputCancel } = useInputDialog();
 
 const { onMenuAction } = useMenuActions({
     currentCategoryId,
     currentLauncherItemId,
+    currentItemPath,
+    currentClipboardRecordId,
+    currentClipboardContentType,
     currentHomeSection,
     lastDrop,
     processedDropIds,
@@ -146,6 +154,7 @@ let unlistenWindowShown: (() => void) | null = null;
 onMounted(async () => {
     setPageUnloading(false);
     initOverrideLookupFromStore();
+    statsStore.sanitizeExternalRecentLaunchHistory();
 
     await settingsStore.hydratePersistedConfig();
     await settingsStore.refreshAutostartStatus();
@@ -222,6 +231,9 @@ onBeforeUnmount(async () => {
     <ContextMenu
         :current-item-id="currentLauncherItemId || undefined"
         :current-category-id="currentCategoryId || undefined"
+        :current-item-path="currentItemPath || undefined"
+        :current-clipboard-record-id="currentClipboardRecordId || undefined"
+        :current-clipboard-content-type="currentClipboardContentType || undefined"
         :is-current-item-favorite="isCurrentItemPinned"
         :has-custom-icon-prop="hasCurrentItemCustomIcon"
         :has-current-category-custom-icon="hasCurrentCategoryCustomIcon"
@@ -241,6 +253,7 @@ onBeforeUnmount(async () => {
         :cancel-text="confirmState.cancelText"
         @confirm="handleConfirm"
         @cancel="handleCancel"
+        @dismiss="handleDismiss"
     />
     <InputDialog
         :visible="inputState.visible"

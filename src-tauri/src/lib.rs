@@ -12,6 +12,7 @@ mod error;
 mod keyboard_hook;
 mod pinyin;
 mod plugins;
+mod process_monitor;
 mod search;
 mod system;
 mod tray;
@@ -55,6 +56,7 @@ pub fn run() {
             );
 
             clipboard::start_clipboard_monitor(handle.clone(), clipboard_state);
+            process_monitor::start_process_monitor(handle.clone());
             if autostart_service::is_autostart_launch() {
                 if let Some(window) = handle.get_webview_window("main") {
                     let _ = window.hide();
@@ -180,10 +182,12 @@ pub fn run() {
             commands::ai_organizer::refine_installed_apps_with_ai,
             system::open_url,
             system::open_path,
+            system::reveal_in_explorer,
             system::open_browser_search,
             system::fetch_favicon_from_url,
             system::read_local_image_as_data_url,
             system::write_text_file,
+            system::get_recent_files,
             system::get_current_monitor_fingerprint,
             display::get_current_display_mode,
             display::get_display_count,

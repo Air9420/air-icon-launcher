@@ -12,14 +12,14 @@
             <HomeCard
                 v-for="(item, index) in items"
                 :key="item.key"
-                :item-id="item.recent.itemId"
-                :category-id="item.recent.categoryId"
-                :name="item.item.name"
-                :icon-base64="item.item.iconBase64"
-                :item-type="item.item.itemType"
-                :has-dependencies="item.item.launchDependencies.length > 0"
-                :feature-badge-text="item.featureBadgeText"
-                :launch-status="getLaunchStatus(item.recent.itemId)"
+                :item-id="getItemId(item)"
+                :category-id="getCategoryId(item)"
+                :name="getName(item)"
+                :icon-base64="getIconBase64(item)"
+                :item-type="getItemType(item)"
+                :has-dependencies="getHasDependencies(item)"
+                :feature-badge-text="getFeatureBadgeText(item)"
+                :launch-status="getLaunchStatusByItem(item, getLaunchStatus)"
                 :cols="layout.cols"
                 menu-type="Icon-Item"
                 :home-section="homeSection"
@@ -34,15 +34,17 @@
 <script setup lang="ts">
 import HomeCard from "./HomeCard.vue";
 import type { RecentUsedMergedItem } from "../../stores";
+import type { HomeRecentDisplayItem } from "../../composables/useHomePageState";
+import type { LaunchStatus } from "../../composables/useLaunchStatus";
 
-type RecentDisplayItem = RecentUsedMergedItem & {
+type InternalRecentDisplayItem = RecentUsedMergedItem & {
     featureBadgeText?: string;
 };
 
 withDefaults(defineProps<{
-    items: RecentDisplayItem[];
+    items: HomeRecentDisplayItem[];
     layout: { cols: number; rows: number };
-    getLaunchStatus: (itemId: string) => "launching" | "success" | undefined;
+    getLaunchStatus: (itemId: string) => LaunchStatus | undefined;
     title?: string;
     homeSection?: string;
     startIndex?: number;
@@ -53,8 +55,68 @@ withDefaults(defineProps<{
 });
 
 defineEmits<{
-    (e: "select", item: RecentDisplayItem): void;
+    (e: "select", item: HomeRecentDisplayItem): void;
 }>();
+
+function isExternalItem(item: HomeRecentDisplayItem): item is Exclude<HomeRecentDisplayItem, InternalRecentDisplayItem> {
+    return "external" in item;
+}
+
+function getItemId(item: HomeRecentDisplayItem): string {
+    if (isExternalItem(item)) {
+        return item.key;
+    }
+    return item.recent.itemId;
+}
+
+function getCategoryId(item: HomeRecentDisplayItem): string {
+    if (isExternalItem(item)) {
+        return "";
+    }
+    return item.recent.categoryId;
+}
+
+function getName(item: HomeRecentDisplayItem): string {
+    if (isExternalItem(item)) {
+        return item.external.name;
+    }
+    return item.item.name;
+}
+
+function getIconBase64(item: HomeRecentDisplayItem): string | null {
+    if (isExternalItem(item)) {
+        return item.external.iconBase64;
+    }
+    return item.item.iconBase64;
+}
+
+function getItemType(item: HomeRecentDisplayItem): "file" | "url" {
+    if (isExternalItem(item)) {
+        return "file";
+    }
+    return item.item.itemType;
+}
+
+function getHasDependencies(item: HomeRecentDisplayItem): boolean {
+    if (isExternalItem(item)) {
+        return false;
+    }
+    return item.item.launchDependencies.length > 0;
+}
+
+function getFeatureBadgeText(item: HomeRecentDisplayItem): string | undefined {
+    if (isExternalItem(item)) {
+        return item.featureBadgeText || item.external.source || "外部";
+    }
+    return item.featureBadgeText;
+}
+
+function getLaunchStatusByItem(item: HomeRecentDisplayItem, getter: (itemId: string) => LaunchStatus | undefined) {
+    if (isExternalItem(item)) {
+        return getter(item.key);
+    }
+    return getter(item.recent.itemId);
+}
 </script>
 
 <style lang="scss" scoped>

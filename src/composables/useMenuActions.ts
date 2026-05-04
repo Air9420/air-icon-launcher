@@ -40,6 +40,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Store } from "../stores";
 import { useCategoryStore } from "../stores/categoryStore";
+import { useClipboardStore } from "../stores/clipboardStore";
 import { useUIStore, type HomeLayoutPresetKey, type HomeLayoutSectionKey } from "../stores/uiStore";
 import type { MenuAction, MenuContext } from "../menus/contextMenuTypes";
 import type { DropRecord } from "./types";
@@ -52,6 +53,9 @@ import { useGlobalToast } from "./useGlobalToast";
 export interface UseMenuActionsOptions {
     currentCategoryId: Ref<string | null>;
     currentLauncherItemId: Ref<string | null>;
+    currentItemPath: Ref<string | null>;
+    currentClipboardRecordId: Ref<string | null>;
+    currentClipboardContentType: Ref<"text" | "image" | null>;
     currentHomeSection: Ref<HomeLayoutSectionKey | null>;
     lastDrop: Ref<DropRecord | null>;
     processedDropIds: Set<string>;
@@ -93,12 +97,16 @@ export function useMenuActions(options: UseMenuActionsOptions) {
     const {
         currentCategoryId,
         currentLauncherItemId,
+        currentItemPath,
+        currentClipboardRecordId,
+        currentClipboardContentType,
         closeContextMenu,
         confirm,
         inputDialog,
     } = options;
 
     const store = Store();
+    const clipboardStore = useClipboardStore();
     const uiStore = useUIStore();
     const categoryStore = useCategoryStore();
     const router = useRouter();
@@ -136,6 +144,11 @@ export function useMenuActions(options: UseMenuActionsOptions) {
             confirmText: "网址",
             cancelText: "文件",
         });
+
+        if (addType === null) {
+            closeContextMenu();
+            return;
+        }
 
         if (addType) {
             await onAddUrlItem();
@@ -633,6 +646,60 @@ export function useMenuActions(options: UseMenuActionsOptions) {
         router.push("/settings/about");
     }
 
+    async function onCopyClipboardItem() {
+        const recordId = currentClipboardRecordId.value;
+        if (!recordId) return;
+        const record = clipboardStore.clipboardHistory.find((x) => x.id === recordId);
+        if (!record) {
+            showToast("未找到剪贴板记录", { type: "error" });
+            closeContextMenu();
+            return;
+        }
+
+        try {
+            if (currentClipboardContentType.value === "image" && record.image_path) {
+                await invoke("set_clipboard_content", {
+                    content: record.image_path,
+                    isImage: true,
+                });
+            } else {
+                await invoke("set_clipboard_content", {
+                    content: record.text_content ?? "",
+                    isImage: false,
+                });
+            }
+            showToast("已复制剪贴板历史项");
+        } catch (error) {
+            console.error(error);
+            showToast("复制失败", { type: "error" });
+        } finally {
+            closeContextMenu();
+        }
+    }
+
+    async function onLocateClipboardItem() {
+        const recordId = currentClipboardRecordId.value;
+        if (!recordId) return;
+        await router.push({ path: "/clipboard", query: { anchor: recordId } });
+        closeContextMenu();
+    }
+
+    async function onOpenInExplorer() {
+        const rawPath = currentItemPath.value?.trim();
+        if (!rawPath) {
+            closeContextMenu();
+            return;
+        }
+        try {
+            await invoke("reveal_in_explorer", { path: rawPath });
+        } catch (error) {
+            console.error(error);
+            showToast("无法在资源管理器中打开", { type: "error" });
+        } finally {
+            closeContextMenu();
+        }
+    }
+
     /**
      * 菜单动作统一分发器
      * 
@@ -692,6 +759,9 @@ export function useMenuActions(options: UseMenuActionsOptions) {
         if (action.kind === "toggle-pinned" || action.kind === "toggle-favorite") {
             return onTogglePinned();
         }
+        if (action.kind === "copy-clipboard-item") return onCopyClipboardItem();
+        if (action.kind === "locate-clipboard-item") return onLocateClipboardItem();
+        if (action.kind === "open-in-explorer") return onOpenInExplorer();
         if (action.kind === "open-settings") return onOpenSettings();
         if (action.kind === "open-about") return onOpenAbout();
         if (action.kind === "open-guide") {

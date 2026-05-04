@@ -80,6 +80,41 @@ function buildBuiltinMenuModel(_ctx: MenuContext): MenuItem[] {
     },
     {
       type: "item",
+      id: "builtin:copy-clipboard-item",
+      label: "复制到剪贴板",
+      action: { kind: "copy-clipboard-item" },
+      order: 62,
+      visible: { menuType: enumContextMenuType.SearchClipboardItem },
+    },
+    {
+      type: "item",
+      id: "builtin:locate-clipboard-item",
+      label: "在剪贴板历史中定位",
+      action: { kind: "locate-clipboard-item" },
+      order: 63,
+      visible: { menuType: enumContextMenuType.SearchClipboardItem },
+    },
+    {
+      type: "item",
+      id: "builtin:open-in-explorer",
+      label: "在资源管理器中打开",
+      action: { kind: "open-in-explorer" },
+      order: 64,
+      visible: {
+        and: [
+          {
+            menuType: [
+              enumContextMenuType.IconItem,
+              enumContextMenuType.SearchRecentFileItem,
+              enumContextMenuType.SearchScannedItem,
+            ],
+          },
+          { itemPath: true },
+        ],
+      },
+    },
+    {
+      type: "item",
       id: "builtin:add-category",
       label: "添加类目",
       action: { kind: "add-category" },

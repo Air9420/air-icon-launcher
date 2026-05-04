@@ -1,3 +1,11 @@
+export type ScannedMatchType =
+  | "exact"
+  | "prefix"
+  | "substring"
+  | "pinyin_full"
+  | "pinyin_initial"
+  | "fuzzy";
+
 export interface ScannedAppEntry {
   name: string;
   path: string;
@@ -6,6 +14,9 @@ export interface ScannedAppEntry {
   iconBase64: string | null;
   namePinyinFull?: string;
   namePinyinInitial?: string;
+  matchType?: ScannedMatchType;
+  launchRisk?: "uninstall_candidate" | "installer_candidate";
+  launchRiskHint?: string;
 }
 
 export interface ScannedAppCache {

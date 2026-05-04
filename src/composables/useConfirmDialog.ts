@@ -9,7 +9,7 @@ export interface ConfirmOptions {
 
 export interface ConfirmState extends ConfirmOptions {
     visible: boolean;
-    resolve: ((value: boolean) => void) | null;
+    resolve: ((value: boolean | null) => void) | null;
 }
 
 const state = ref<ConfirmState>({
@@ -21,7 +21,7 @@ const state = ref<ConfirmState>({
     resolve: null,
 });
 
-async function confirm(options: ConfirmOptions): Promise<boolean> {
+async function confirm(options: ConfirmOptions): Promise<boolean | null> {
     state.value = {
         visible: true,
         title: options.title,
@@ -46,12 +46,18 @@ function handleCancel() {
     state.value.visible = false;
 }
 
+function handleDismiss() {
+    state.value.resolve?.(null);
+    state.value.visible = false;
+}
+
 export function useConfirmDialog() {
     return {
         state,
         confirm,
         handleConfirm,
         handleCancel,
+        handleDismiss,
     };
 }
 

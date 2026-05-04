@@ -1,5 +1,5 @@
 <template>
-    <div v-if="visible" class="confirm-overlay" @click.self="onCancel">
+    <div v-if="visible" class="confirm-overlay" @click.self="onDismiss">
         <div class="confirm-dialog">
             <div class="confirm-title">{{ title }}</div>
             <div class="confirm-message">{{ message }}</div>
@@ -27,6 +27,7 @@ defineProps<{
 const emit = defineEmits<{
     (e: "confirm"): void;
     (e: "cancel"): void;
+    (e: "dismiss"): void;
 }>();
 
 function onConfirm() {
@@ -35,6 +36,10 @@ function onConfirm() {
 
 function onCancel() {
     emit("cancel");
+}
+
+function onDismiss() {
+    emit("dismiss");
 }
 </script>
 

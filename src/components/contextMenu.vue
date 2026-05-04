@@ -86,6 +86,9 @@ const emit = defineEmits<{
 
 const props = defineProps<{
     currentItemId?: string;
+    currentItemPath?: string;
+    currentClipboardRecordId?: string;
+    currentClipboardContentType?: "text" | "image";
     isCurrentItemFavorite?: boolean;
     hasCustomIconProp?: boolean;
     hasCurrentCategoryCustomIcon?: boolean;
@@ -118,6 +121,9 @@ const menuContext = computed<MenuContext>(() => {
         menuType: ContextMenuType.value,
         categoryId: props.currentCategoryId ?? null,
         itemId: props.currentItemId ?? null,
+        itemPath: props.currentItemPath ?? null,
+        clipboardRecordId: props.currentClipboardRecordId ?? null,
+        clipboardContentType: props.currentClipboardContentType ?? null,
         homeSection: props.currentHomeSection ?? null,
         categorySortMode: props.currentCategorySortMode ?? "manual",
         item,

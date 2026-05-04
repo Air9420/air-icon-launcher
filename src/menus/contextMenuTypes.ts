@@ -15,6 +15,9 @@ export enum enumContextMenuType {
     HomeGroupView = "Home-Group-View",
     HomePinnedView = "Home-Pinned-View",
     HomeRecentUsedView = "Home-Recent-Used-View",
+    SearchClipboardItem = "Search-Clipboard-Item",
+    SearchRecentFileItem = "Search-Recent-File-Item",
+    SearchScannedItem = "Search-Scanned-Item",
     SettingsView = "Settings-View",
     ClipboardHistoryView = "Clipboard-History-View",
     IconView = "Icon-View",
@@ -45,6 +48,9 @@ export type BuiltinMenuAction =
     | { kind: "reset-category-icon" }
     | { kind: "toggle-pinned" }
     | { kind: "toggle-favorite" }
+    | { kind: "copy-clipboard-item" }
+    | { kind: "locate-clipboard-item" }
+    | { kind: "open-in-explorer" }
     | { kind: "open-settings" }
     | { kind: "open-about" }
     | { kind: "open-guide" }

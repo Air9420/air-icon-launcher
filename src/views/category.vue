@@ -12,6 +12,44 @@
             </div>
         </header>
 
+        <div class="category-status-bar">
+            <div class="status-group">
+                <span class="status-label">启动项图标</span>
+                <button
+                    v-for="cols in launcherColsOptions"
+                    :key="`launcher-cols-${cols}`"
+                    class="status-chip"
+                    :class="{ 'is-active': launcherCols === cols }"
+                    type="button"
+                    :aria-pressed="launcherCols === cols"
+                    @click="onSetLauncherColsFromStatus(cols)"
+                >
+                    {{ cols }}
+                </button>
+            </div>
+            <div class="status-group">
+                <span class="status-label">排序方式</span>
+                <button
+                    class="status-chip"
+                    :class="{ 'is-active': categorySortMode === 'manual' }"
+                    type="button"
+                    :aria-pressed="categorySortMode === 'manual'"
+                    @click="onSetCategorySortModeFromStatus('manual')"
+                >
+                    手动
+                </button>
+                <button
+                    class="status-chip"
+                    :class="{ 'is-active': categorySortMode === 'smart' }"
+                    type="button"
+                    :aria-pressed="categorySortMode === 'smart'"
+                    @click="onSetCategorySortModeFromStatus('smart')"
+                >
+                    智能
+                </button>
+            </div>
+        </div>
+
         <template v-if="isSearchActive">
             <div
                 v-if="categorySearchItems.length > 0"
@@ -32,6 +70,7 @@
                     data-menu-type="Icon-Item"
                     :data-category-id="categoryId"
                     :data-item-id="entry.item.id"
+                    :data-item-path="entry.item.path || ''"
                     @mousedown="onMouseDown(entry.item.id, $event)"
                     @pointerdown="onPointerDown(entry.item.id, $event)"
                     @pointerup="onPointerUp(entry.item.id, $event)"
@@ -111,6 +150,7 @@
                         data-menu-type="Icon-Item"
                         :data-category-id="categoryId"
                         :data-item-id="element.id"
+                        :data-item-path="element.path || ''"
                         @mousedown="onMouseDown(element.id, $event)"
                         @pointerdown="onPointerDown(element.id, $event)"
                         @pointerup="onPointerUp(element.id, $event)"
@@ -303,6 +343,7 @@ const { launcherCols, categorySortMode } = storeToRefs(uiStore);
 const localSearchKeyword = ref<string>("");
 const categorySearchResults = ref<RustSearchResult[]>([]);
 const isCategorySearchPending = ref(false);
+const launcherColsOptions = [4, 5, 6] as const;
 const searchBoxRef = ref<InstanceType<typeof SearchBox> | null>(null);
 const selectedItemIds = ref<string[]>([]);
 const activeBulkPanel = ref<"move" | "edit" | null>(null);
@@ -588,6 +629,14 @@ function onBack() {
     router.push("/categories");
 }
 
+function onSetLauncherColsFromStatus(cols: number) {
+    uiStore.setLauncherCols(cols);
+}
+
+function onSetCategorySortModeFromStatus(mode: "manual" | "smart") {
+    uiStore.setCategorySortMode(mode);
+}
+
 function isItemSelected(itemId: string): boolean {
     return selectedItemIdSet.value.has(itemId);
 }
@@ -865,6 +914,54 @@ function hasLaunchDependencies(item: LauncherItem): boolean {
     user-select: none;
 }
 
+.category-status-bar {
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 12px;
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.status-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.status-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.status-chip {
+    appearance: none;
+    border: 1px solid transparent;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--hover-bg);
+    color: var(--text-secondary);
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.status-chip:hover {
+    background: var(--hover-bg-strong);
+}
+
+.status-chip.is-active {
+    color: var(--primary-color);
+    font-weight: 700;
+    background: color-mix(in srgb, var(--primary-color) 16%, transparent);
+    border-color: color-mix(in srgb, var(--primary-color) 36%, transparent);
+}
+
 .back-btn {
     border: 0;
     padding: 8px 10px;
@@ -893,6 +990,7 @@ function hasLaunchDependencies(item: LauncherItem): boolean {
 
 .icon-container {
     flex: 1;
+    min-height: 0;
     display: grid;
     padding: 16px;
     --gap: 14px;
@@ -901,7 +999,6 @@ function hasLaunchDependencies(item: LauncherItem): boolean {
     align-content: flex-start;
     grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
     grid-auto-rows: max-content;
-    height: calc(100vh - 52px - 32px);
     overflow-y: scroll;
     -ms-overflow-style: none;
 

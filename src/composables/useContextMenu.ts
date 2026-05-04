@@ -77,6 +77,9 @@ export function useContextMenu() {
 
     const currentCategoryId = ref<string | null>(null);
     const currentLauncherItemId = ref<string | null>(null);
+    const currentItemPath = ref<string | null>(null);
+    const currentClipboardRecordId = ref<string | null>(null);
+    const currentClipboardContentType = ref<"text" | "image" | null>(null);
     const currentHomeSection = ref<HomeLayoutSectionKey | null>(null);
 
     /**
@@ -329,6 +332,11 @@ export function useContextMenu() {
             menuType === enumContextMenuType.IconItem
                 ? menuTarget.dataset.itemId || null
                 : null;
+        currentItemPath.value = menuTarget.dataset.itemPath || null;
+        currentClipboardRecordId.value = menuTarget.dataset.clipboardRecordId || null;
+        const contentType = menuTarget.dataset.clipboardContentType;
+        currentClipboardContentType.value =
+            contentType === "text" || contentType === "image" ? contentType : null;
 
         const datasetHomeSection =
             (menuTarget.dataset.homeSection as HomeLayoutSectionKey | undefined) ?? null;
@@ -375,6 +383,9 @@ export function useContextMenu() {
     return {
         currentCategoryId,
         currentLauncherItemId,
+        currentItemPath,
+        currentClipboardRecordId,
+        currentClipboardContentType,
         currentHomeSection,
         openContextMenu,
         closeContextMenu,

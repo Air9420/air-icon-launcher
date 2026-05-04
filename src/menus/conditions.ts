@@ -5,6 +5,7 @@ export type VisibilityCondition =
   | { menuType: enumContextMenuType | enumContextMenuType[] }
   | { homeSection: "pinned" | "recent" | ("pinned" | "recent")[] }
   | { categorySortMode: CategorySortMode | CategorySortMode[] }
+  | { itemPath: true }
   | { item: { pinned?: boolean; favorite?: boolean; customIcon?: boolean } }
   | { category: true | { customIcon?: boolean } }
   | { layout: { categoryCols?: number; launcherCols?: number; pinnedPreset?: string; recentPreset?: string } }
@@ -20,6 +21,9 @@ export type ResolveContext = {
   menuType: enumContextMenuType;
   itemId: string | null;
   categoryId: string | null;
+  itemPath?: string | null;
+  clipboardRecordId?: string | null;
+  clipboardContentType?: "text" | "image" | null;
   homeSection: "pinned" | "recent" | null;
   categorySortMode?: CategorySortMode;
   item?: {
@@ -69,6 +73,13 @@ function isCategorySortModeMatch(
     ? condition.categorySortMode
     : [condition.categorySortMode];
   return modes.includes(ctx.categorySortMode);
+}
+
+function isItemPathMatch(
+  _condition: { itemPath: true },
+  ctx: ResolveContext,
+): boolean {
+  return !!ctx.itemPath;
 }
 
 function isItemMatch(
@@ -131,6 +142,9 @@ export function evaluateCondition(
   }
   if ("categorySortMode" in condition) {
     return isCategorySortModeMatch(condition, ctx);
+  }
+  if ("itemPath" in condition) {
+    return isItemPathMatch(condition, ctx);
   }
   if ("item" in condition) {
     return isItemMatch(condition, ctx);

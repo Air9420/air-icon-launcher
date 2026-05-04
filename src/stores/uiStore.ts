@@ -270,12 +270,20 @@ export const useUIStore = defineStore(
   },
   {
     persist: {
-      pick: ["categoryCols", "launcherCols", "homeSectionLayouts"],
+      pick: [
+        "categoryCols",
+        "launcherCols",
+        "categorySortMode",
+        "homeSectionLayouts",
+      ],
       afterHydrate: (ctx) => {
         const targetStore = ctx.store as unknown as {
           $id: string;
+          categorySortMode: unknown;
           homeSectionLayouts: unknown;
         };
+        targetStore.categorySortMode =
+          targetStore.categorySortMode === "smart" ? "smart" : "manual";
         targetStore.homeSectionLayouts = migrateHomeSectionLayouts(
           targetStore.$id,
           targetStore.homeSectionLayouts,

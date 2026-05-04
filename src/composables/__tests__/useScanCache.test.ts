@@ -10,6 +10,7 @@ const mockApps: ScannedAppEntry[] = [
   { name: "微信", path: "C:\\Tencent\\WeChat.exe", source: "注册表", publisher: "Tencent", iconBase64: null, namePinyinFull: "weixin", namePinyinInitial: "wx" },
   { name: "网易云音乐", path: "C:\\NetEase\\CloudMusic.exe", source: "开始菜单", publisher: "NetEase", iconBase64: null, namePinyinFull: "wangyiyunyinyue", namePinyinInitial: "wyyyy" },
   { name: "Uninstall Helper", path: "C:\\Tools\\unins.exe", source: "注册表", publisher: null, iconBase64: null, namePinyinFull: "", namePinyinInitial: "" },
+  { name: "Microsoft Visual C++ 2015 2022 Redistributable (x64)", path: "C:\\ProgramData\\Package Cache\\{x}\\VC_redist.x64.exe", source: "注册表", publisher: "Microsoft Corporation", iconBase64: null, namePinyinFull: "", namePinyinInitial: "" },
 ];
 
 const launcherPaths = new Set<string>([normalizePathKey("C:\\Apps\\Code.exe")]);
@@ -56,6 +57,85 @@ describe("matchScannedApps", () => {
   it("filters noise names", () => {
     const results = matchScannedApps("unins", mockApps, new Set());
     expect(results).toHaveLength(0);
+  });
+
+  it("filters runtime component installers", () => {
+    const results = matchScannedApps("c++", mockApps, new Set());
+    expect(results).toHaveLength(0);
+  });
+
+  it("filters package-cache setup style entries", () => {
+    const setupEntry: ScannedAppEntry = {
+      name: "Intel(R) Serial IO",
+      path: "C:\\ProgramData\\Intel\\Package Cache\\{id}\\Setup.exe",
+      source: "注册表",
+      publisher: "Intel Corporation",
+      iconBase64: null,
+      namePinyinFull: "",
+      namePinyinInitial: "",
+    };
+    const results = matchScannedApps("intel", [setupEntry], new Set());
+    expect(results).toHaveLength(0);
+  });
+
+  it("filters webview runtime components", () => {
+    const webviewEntry: ScannedAppEntry = {
+      name: "Microsoft Edge WebView2 Runtime",
+      path: "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\120.0.2210.133\\msedgewebview2.exe",
+      source: "注册表",
+      publisher: "Microsoft Corporation",
+      iconBase64: null,
+      namePinyinFull: "",
+      namePinyinInitial: "",
+    };
+    const results = matchScannedApps("webview", [webviewEntry], new Set());
+    expect(results).toHaveLength(0);
+  });
+
+  it("keeps uninstall candidates but marks risk", () => {
+    const uninstallEntry: ScannedAppEntry = {
+      name: "MSI Afterburner 4.6.6 Beta 3",
+      path: "E:\\MSI Afterburner\\uninstall.exe",
+      source: "注册表",
+      publisher: "MSI Co., LTD",
+      iconBase64: null,
+      namePinyinFull: "",
+      namePinyinInitial: "",
+    };
+    const results = matchScannedApps("msi", [uninstallEntry], new Set());
+    expect(results).toHaveLength(1);
+    expect(results[0].launchRisk).toBe("uninstall_candidate");
+    expect(results[0].launchRiskHint).toContain("卸载");
+  });
+
+  it("filters non-launcher shell executables", () => {
+    const cmdEntry: ScannedAppEntry = {
+      name: "Install Additional Tools for Node.js",
+      path: "C:\\Windows\\System32\\cmd.exe",
+      source: "开始菜单",
+      publisher: null,
+      iconBase64: null,
+      namePinyinFull: "",
+      namePinyinInitial: "",
+    };
+    const results = matchScannedApps("node", [cmdEntry], new Set());
+    expect(results).toHaveLength(0);
+  });
+
+  it("marks installer candidates with warning risk", () => {
+    const setupEntry: ScannedAppEntry = {
+      name: "AntiCheatExpert",
+      path: "Z:\\wegames\\foo\\ACE-Setup64.exe",
+      source: "注册表",
+      publisher: null,
+      iconBase64: null,
+      namePinyinFull: "",
+      namePinyinInitial: "",
+    };
+    const results = matchScannedApps("anti", [setupEntry], new Set());
+    expect(results).toHaveLength(1);
+    expect(results[0].launchRisk).toBe("installer_candidate");
+    expect(results[0].launchRiskHint).toContain("安装");
   });
 
   it("returns empty for empty keyword", () => {

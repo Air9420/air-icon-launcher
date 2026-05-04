@@ -41,6 +41,15 @@ import { useWindowPosition } from "./useWindowPosition";
 import { useSettingsStore } from "../stores";
 import { storeToRefs } from "pinia";
 import { showToast } from "./useGlobalToast";
+import { useStatsStore } from "../stores/statsStore";
+
+type SystemProcessLaunchedEvent = {
+    name: string;
+    path: string;
+    iconBase64?: string | null;
+    source?: string;
+    usedAt?: number;
+};
 
 /**
  * Tauri 事件监听 Composable
@@ -147,6 +156,22 @@ export function useTauriEvents() {
             showToast("当前只有一个显示器，无法切换投影模式", { type: "info", duration: 3000 });
         });
         unlisteners.push(unlistenNoExternalMonitor);
+
+        const unlistenSystemProcessLaunched = await listen<SystemProcessLaunchedEvent>(
+            "system-process-launched",
+            ({ payload }) => {
+                if (!payload?.path || !payload?.name) return;
+                const statsStore = useStatsStore();
+                statsStore.recordExternalLaunch({
+                    path: payload.path,
+                    name: payload.name,
+                    source: payload.source ?? "系统启动",
+                    iconBase64: payload.iconBase64 ?? null,
+                    usedAt: payload.usedAt,
+                });
+            }
+        );
+        unlisteners.push(unlistenSystemProcessLaunched);
 
     }
 
