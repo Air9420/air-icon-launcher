@@ -3,6 +3,8 @@ import { useThrottleFn } from "@vueuse/core";
 import { storeToRefs } from "pinia";
 import { useLauncherStore } from "../stores/launcherStore";
 import { SEARCH_THROTTLE_MS } from "../utils/search-config";
+import { useScanCache } from "./useScanCache";
+import type { ScannedFallbackSection } from "../types/scan-cache";
 
 export type SearchResult = ReturnType<typeof useLauncherStore> extends () => infer R
     ? R extends { rustSearchResults: infer T } ? T : never
@@ -20,8 +22,10 @@ export function useSearch() {
         rustSearchMergedResults,
         isRustSearchReady,
     } = storeToRefs(launcherStore);
+    const { getFallbackSection } = useScanCache();
     const isSearching = ref(false);
     const searchError = ref<string | null>(null);
+    const scannedFallbackSection = ref<ScannedFallbackSection | null>(null);
     let ensureIndexPromise: Promise<void> | null = null;
 
     async function ensureSearchIndexReady(): Promise<boolean> {
@@ -47,6 +51,7 @@ export function useSearch() {
     async function search(query: SearchQuery) {
         if (!query.keyword.trim()) {
             launcherStore.clearSearch();
+            scannedFallbackSection.value = null;
             return;
         }
 
@@ -60,8 +65,15 @@ export function useSearch() {
                 return;
             }
             await launcherStore.rustSearch(query.keyword, query.limit || 20);
+
+            if (rustSearchResults.value.length <= 3) {
+                scannedFallbackSection.value = await getFallbackSection(query.keyword);
+            } else {
+                scannedFallbackSection.value = null;
+            }
         } catch (e: unknown) {
             searchError.value = e instanceof Error ? e.message : "搜索失败";
+            scannedFallbackSection.value = null;
         } finally {
             isSearching.value = false;
         }
@@ -82,5 +94,8 @@ export function useSearch() {
         search,
         updateSearchIndex,
         throttledSearch,
+        scannedFallbackSection,
+        rustSearchResults,
+        rustSearchMergedResults,
     };
 }

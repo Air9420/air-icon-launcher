@@ -1,34 +1,26 @@
-use std::collections::HashMap;
+use pinyin::ToPinyin;
 
-#[allow(dead_code)]
-pub struct PinyinIndex {
-    dict: HashMap<char, String>,
-}
+pub struct PinyinIndex;
 
 impl PinyinIndex {
     pub fn new() -> Self {
-        let dict = HashMap::new();
-        Self { dict }
+        Self
     }
 
     pub fn to_pinyin_full(&self, text: &str) -> String {
-        let args = pinyin::Args::new();
-        let all_pinyin: Vec<String> = pinyin::pinyin(text, &args)
-            .iter()
+        text.to_pinyin()
             .flatten()
-            .map(|py| py.to_string())
-            .collect();
-        all_pinyin.join("")
+            .map(|py| py.plain())
+            .collect::<Vec<_>>()
+            .join("")
     }
 
     pub fn to_pinyin_initial(&self, text: &str) -> String {
-        let args = pinyin::Args::new();
-        let all_pinyin: Vec<String> = pinyin::pinyin(text, &args)
-            .iter()
+        text.to_pinyin()
             .flatten()
-            .map(|py| py.chars().next().map(|c| c.to_string()).unwrap_or_default())
-            .collect();
-        all_pinyin.join("")
+            .map(|py| py.first_letter())
+            .collect::<Vec<_>>()
+            .join("")
     }
 }
 
@@ -45,19 +37,15 @@ mod tests {
     #[test]
     fn test_pinyin_conversion() {
         let index = PinyinIndex::new();
-        let full = index.to_pinyin_full("微信");
-        let initial = index.to_pinyin_initial("微信");
-        assert!(!full.is_empty());
-        assert!(!initial.is_empty());
+        assert_eq!(index.to_pinyin_full("微信"), "weixin");
+        assert_eq!(index.to_pinyin_initial("微信"), "wx");
     }
 
     #[test]
     fn test_pinyin_mixed_chinese_english() {
         let index = PinyinIndex::new();
-        let full = index.to_pinyin_full("Chrome浏览器");
-        let initial = index.to_pinyin_initial("Chrome浏览器");
-        assert!(!full.is_empty());
-        assert!(!initial.is_empty());
+        assert_eq!(index.to_pinyin_full("Chrome浏览器"), "liulanqi");
+        assert_eq!(index.to_pinyin_initial("Chrome浏览器"), "llq");
     }
 
     #[test]
@@ -77,9 +65,7 @@ mod tests {
     #[test]
     fn test_pinyin_numbers_and_symbols() {
         let index = PinyinIndex::new();
-        let full = index.to_pinyin_full("v2.0测试");
-        let initial = index.to_pinyin_initial("v2.0测试");
-        assert!(!full.is_empty());
-        assert!(!initial.is_empty());
+        assert_eq!(index.to_pinyin_full("v2.0测试"), "ceshi");
+        assert_eq!(index.to_pinyin_initial("v2.0测试"), "cs");
     }
 }

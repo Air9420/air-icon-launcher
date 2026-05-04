@@ -77,7 +77,11 @@
             :selected-index="selectedIndex"
             :keyword="searchKeyword"
             :show-shortcut-hints="showShortcutHints"
+            :is-pending="isHomeSearchPending"
+            :scanned-section="scannedFallbackSection"
             @select="launchSearchWithCd"
+            @browser-search="onBrowserSearch"
+            @select-scanned="onSelectScannedApp"
         />
 
         <template v-if="homeSearchViewState === 'home'">
@@ -165,13 +169,22 @@ import { SEARCH_THROTTLE_MS } from "../utils/search-config";
 import {
     createSearchSelectionTarget,
     findSearchSelectionIndex,
-    getHomeSearchViewState,
     getSearchHistoryDisplayKeyword,
     getRecentSearchHistoryEntries,
     getSearchShortcutIndex,
     getHomeShortcutTarget,
     type SearchSelectionTarget,
 } from "../utils/search-ui";
+import { useScanCache } from "../composables/useScanCache";
+import type { ScannedAppEntry, ScannedFallbackSection } from "../types/scan-cache";
+
+const DEBUG_SEARCH = false;
+
+function debugLog(...args: unknown[]) {
+  if (DEBUG_SEARCH) {
+    console.log("[Search]", ...args);
+  }
+}
 
 const store = Store();
 const settingsStore = useSettingsStore();
@@ -187,6 +200,8 @@ const {
     isRustSearchReady,
 } = storeToRefs(store);
 const { categoryCols } = storeToRefs(uiStore);
+const { getFallbackSection, loadCache, warmLauncherPathKeys, hydrateSectionIcons } = useScanCache();
+const scannedFallbackSection = ref<ScannedFallbackSection | null>(null);
 const {
     displayCategories,
     editingCategoryId,
@@ -214,13 +229,21 @@ const showSearchHistoryPanel = computed(() => (
 const searchHistoryEntries = computed<SearchKeywordRecord[]>(() =>
     getRecentSearchHistoryEntries<SearchKeywordRecord>(statsStore.searchHistory, 8)
 );
-const homeSearchViewState = computed(() =>
-    getHomeSearchViewState(
-        searchKeyword.value,
-        rustSearchMergedResults.value.length,
-        isHomeSearchPending.value
-    )
-);
+const homeSearchViewState = computed(() => {
+    if (searchKeyword.value.trim()) {
+        const launcherCount = rustSearchMergedResults.value?.length ?? 0;
+        const hasFallbackResults = scannedFallbackSection.value && scannedFallbackSection.value.items.length > 0;
+
+        if (launcherCount > 0 || hasFallbackResults) {
+            return "results";
+        }
+        if (launcherCount === 0 && !hasFallbackResults && !isHomeSearchPending.value) {
+            return "fallback";
+        }
+        return "results";
+    }
+    return "home";
+});
 
 let unlistenFocus: (() => void) | null = null;
 let unlistenShow: (() => void) | null = null;
@@ -237,6 +260,12 @@ onMounted(async () => {
     const win = getCurrentWindow();
 
     await store.syncSearchIndex();
+    void loadCache().catch((error) => {
+        console.warn("Failed to preload scan cache:", error);
+    });
+    void warmLauncherPathKeys().catch((error) => {
+        console.warn("Failed to warm launcher path keys:", error);
+    });
     document.addEventListener("keydown", onKeydown);
     document.addEventListener("keyup", onKeyup);
 
@@ -359,6 +388,32 @@ async function onBrowserSearch() {
     }
 }
 
+async function onSelectScannedApp(entry: ScannedAppEntry) {
+    try {
+        await invokeOrThrow("launch_scanned_app", { path: entry.path });
+    } catch (e) {
+        showToast(`无法启动 ${entry.name}，可能已被卸载`, { type: "error" });
+        return;
+    }
+
+    const itemId = await store.addScannedAppToLauncher({
+        name: entry.name,
+        path: entry.path,
+        source: entry.source,
+        publisher: entry.publisher,
+        iconBase64: entry.iconBase64,
+    });
+
+    if (itemId) {
+        invokeOrThrow("extract_icon_lazy", { path: entry.path }).catch(() => {});
+    }
+
+    closeSearchHistoryPanel();
+    store.recordConfirmedSearch();
+    store.clearSearch();
+    selectedIndex.value = -1;
+}
+
 async function onOpenSearchResult(result: GlobalSearchMergedResult) {
     store.recordConfirmedSearch();
 
@@ -443,10 +498,37 @@ watch(editingCategoryId, async (value) => {
 });
 
 const throttledRustSearch = useThrottleFn(async (keyword: string, requestId: number) => {
+    const fallbackPromise = getFallbackSection(keyword).catch((error) => {
+        console.warn("Search fallback error:", error);
+        return null;
+    });
+
     try {
         const results = await store.searchLauncherItems({ keyword });
         if (requestId !== homeSearchRequestId) return;
         rustSearchResults.value = results;
+        debugLog("results length:", results.length, "keyword:", keyword);
+
+        if (results.length <= 3) {
+            debugLog("awaiting fallback section for:", keyword);
+            const fallbackSection = await fallbackPromise;
+            if (requestId !== homeSearchRequestId) return;
+            scannedFallbackSection.value = fallbackSection;
+            if (fallbackSection) {
+                void hydrateSectionIcons(fallbackSection).then((hydratedSection) => {
+                    if (requestId !== homeSearchRequestId) return;
+                    scannedFallbackSection.value = hydratedSection;
+                });
+            }
+            debugLog("fallback result:", !!scannedFallbackSection.value, scannedFallbackSection.value?.items?.length);
+        } else {
+            scannedFallbackSection.value = null;
+        }
+    } catch (e) {
+        console.warn("Launcher search error:", e);
+        if (requestId === homeSearchRequestId) {
+            scannedFallbackSection.value = null;
+        }
     } finally {
         if (requestId === homeSearchRequestId) {
             isHomeSearchPending.value = false;
@@ -468,6 +550,7 @@ async function ensureRustSearchReady(): Promise<boolean> {
 }
 
 watch(searchKeyword, async (keyword) => {
+    debugLog("keyword changed:", keyword);
     const trimmedKeyword = keyword.trim();
     const isPendingTabSelection = pendingHomeSearchSelection?.keyword === trimmedKeyword;
     if (!isPendingTabSelection) {
@@ -481,13 +564,13 @@ watch(searchKeyword, async (keyword) => {
     if (!trimmedKeyword) {
         pendingHomeSearchSelection = null;
         rustSearchResults.value = [];
+        scannedFallbackSection.value = null;
         isHomeSearchPending.value = false;
         showShortcutHints.value = false;
         return;
     }
 
     closeSearchHistoryPanel();
-    rustSearchResults.value = [];
     isHomeSearchPending.value = true;
     const ready = await ensureRustSearchReady();
     if (!ready || requestId !== homeSearchRequestId) {
@@ -500,7 +583,23 @@ watch(searchKeyword, async (keyword) => {
 });
 
 const currentSearchResults = computed(() => {
-    return rustSearchMergedResults.value;
+    return rustSearchMergedResults.value ?? [];
+});
+
+const showBrowserSearchOption = computed(() => {
+    return searchKeyword.value.trim().length > 0
+        && (isHomeSearchPending.value || currentSearchResults.value.length <= 3);
+});
+
+const totalSearchItemCount = computed(() => {
+    let count = currentSearchResults.value.length;
+    if (showBrowserSearchOption.value) {
+        count += 1;
+    }
+    if (scannedFallbackSection.value) {
+        count += scannedFallbackSection.value.items.length;
+    }
+    return count;
 });
 
 watch(
@@ -523,6 +622,16 @@ watch(
     },
     { immediate: true }
 );
+
+watch(totalSearchItemCount, (count) => {
+    if (count <= 0) {
+        selectedIndex.value = -1;
+        return;
+    }
+    if (selectedIndex.value >= count) {
+        selectedIndex.value = count - 1;
+    }
+});
 
 watch(
     [pinnedMergedItems, recentDisplayItems, searchKeyword],
@@ -584,7 +693,7 @@ function onKeydown(e: KeyboardEvent) {
         }
     }
 
-    if (!searchKeyword.value.trim() || currentSearchResults.value.length === 0) {
+    if (!searchKeyword.value.trim() || totalSearchItemCount.value === 0) {
         return;
     }
 
@@ -600,12 +709,12 @@ function onKeyup(e: KeyboardEvent) {
 }
 
 function onSearchNav(direction: "up" | "down" | "enter" | "tab") {
-    if (!searchKeyword.value.trim() || currentSearchResults.value.length === 0) {
+    if (!searchKeyword.value.trim() || totalSearchItemCount.value === 0) {
         return;
     }
 
     if (direction === "down") {
-        if (selectedIndex.value < currentSearchResults.value.length - 1) {
+        if (selectedIndex.value < totalSearchItemCount.value - 1) {
             selectedIndex.value++;
         } else {
             selectedIndex.value = 0;
@@ -617,13 +726,13 @@ function onSearchNav(direction: "up" | "down" | "enter" | "tab") {
         if (selectedIndex.value > 0) {
             selectedIndex.value--;
         } else {
-            selectedIndex.value = currentSearchResults.value.length - 1;
+            selectedIndex.value = totalSearchItemCount.value - 1;
         }
         return;
     }
 
     if (direction === "tab") {
-        if (currentSearchResults.value.length === 1) {
+        if (totalSearchItemCount.value === 1 && currentSearchResults.value.length === 1) {
             const result = currentSearchResults.value[0];
             selectedIndex.value = 0;
             pendingHomeSearchSelection = {
@@ -635,9 +744,19 @@ function onSearchNav(direction: "up" | "down" | "enter" | "tab") {
         return;
     }
 
-    if (selectedIndex.value >= 0 && selectedIndex.value < currentSearchResults.value.length) {
-        const result = currentSearchResults.value[selectedIndex.value];
+    const idx = selectedIndex.value;
+    const launcherCount = currentSearchResults.value.length;
+
+    if (idx < launcherCount) {
+        const result = currentSearchResults.value[idx];
         launchSearchWithCd(result);
+    } else if (showBrowserSearchOption.value && idx === launcherCount) {
+        onBrowserSearch();
+    } else if (scannedFallbackSection.value) {
+        const scannedIdx = idx - launcherCount - (showBrowserSearchOption.value ? 1 : 0);
+        if (scannedIdx >= 0 && scannedIdx < scannedFallbackSection.value.items.length) {
+            onSelectScannedApp(scannedFallbackSection.value.items[scannedIdx]);
+        }
     }
 }
 </script>

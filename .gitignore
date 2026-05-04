@@ -43,6 +43,7 @@ Desktop.ini
 
 # AI 辅助设计文档（工作过程文档，无需版本控制）
 docs/superpowers/
+.superpowers
 
 # Tauri 特有构建产物
 src-tauri/binaries/

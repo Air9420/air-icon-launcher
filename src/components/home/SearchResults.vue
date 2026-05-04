@@ -1,11 +1,11 @@
 <template>
     <div class="global-search-results">
-        <div class="search-result-header">
-            搜索结果 ( {{ results.length }} )
+        <div v-if="safeResults.length > 0 || showBrowserSearch" class="search-result-header">
+            搜索结果 ( {{ safeResults.length }} )
         </div>
-        <div class="search-result-list">
+        <div v-if="safeResults.length > 0" class="search-result-list">
             <div
-                v-for="(result, index) in results"
+                v-for="(result, index) in safeResults"
                 :key="result.key"
                 :ref="el => setItemRef(el, index)"
                 class="search-result-item"
@@ -75,16 +75,66 @@
                 </div>
             </div>
         </div>
+
+        <div
+            v-if="showBrowserSearch"
+            class="browser-search-item"
+            :class="{ 'is-selected': selectedIndex === browserSearchIndex }"
+            @click.left="$emit('browser-search')"
+        >
+            <span class="browser-search-icon">🌐</span>
+            <span class="browser-search-text">用浏览器搜索 "{{ keyword }}"</span>
+        </div>
+
+        <template v-if="scannedSection && scannedSection.items && scannedSection.items.length > 0">
+            <div class="scanned-section-divider">
+                <span class="scanned-section-title">📂 {{ scannedSection.sectionTitle }}（匹配 {{ scannedSection.totalMatches }}）</span>
+            </div>
+            <div class="search-result-list">
+                <div
+                    v-for="(entry, i) in scannedSection.items"
+                    :key="entry.path"
+                    class="search-result-item scanned-item"
+                    :class="{ 'is-selected': selectedIndex === scannedStartIndex + i }"
+                    @click.left="$emit('select-scanned', entry)"
+                >
+                    <div class="result-icon">
+                        <img
+                            v-if="entry.iconBase64"
+                            class="icon-real"
+                            :src="getIconSrc(entry.iconBase64)"
+                            alt=""
+                            draggable="false"
+                        />
+                        <div v-else class="icon-fallback">
+                            {{ getFallbackText(entry.name) }}
+                        </div>
+                    </div>
+                    <div class="result-info">
+                        <div class="result-name">{{ entry.name }}</div>
+                        <div class="result-meta">
+                            <span class="scanned-source-tag" :class="getSourceClass(entry.source)">
+                                {{ entry.source }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div v-if="scannedSection.totalMatches > safeScannedItems.length" class="scanned-more-hint">
+                + {{ scannedSection.totalMatches - safeScannedItems.length }} 个匹配
+            </div>
+        </template>
     </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, type ComponentPublicInstance } from "vue";
+import { ref, watch, nextTick, computed, type ComponentPublicInstance } from "vue";
 import type { GlobalSearchMergedResult } from "../../stores";
 import {
     buildSearchHighlightSegments,
     getSearchMatchTypeLabel,
 } from "../../utils/search-ui";
+import type { ScannedAppEntry, ScannedFallbackSection } from "../../types/scan-cache";
 
 const props = defineProps<{
     results: GlobalSearchMergedResult[];
@@ -92,11 +142,28 @@ const props = defineProps<{
     selectedIndex: number;
     keyword: string;
     showShortcutHints?: boolean;
+    isPending?: boolean;
+    scannedSection?: ScannedFallbackSection | null;
 }>();
 
 defineEmits<{
     (e: "select", result: GlobalSearchMergedResult): void;
+    (e: "browser-search"): void;
+    (e: "select-scanned", entry: ScannedAppEntry): void;
 }>();
+
+const safeResults = computed(() => props.results ?? []);
+const safeScannedItems = computed(() => props.scannedSection?.items ?? []);
+
+const showBrowserSearch = computed(() => {
+    return props.keyword.trim().length > 0 && (props.isPending || safeResults.value.length <= 3);
+});
+
+const browserSearchIndex = computed(() => safeResults.value.length);
+
+const scannedStartIndex = computed(() => {
+    return safeResults.value.length + 1;
+});
 
 const itemRefs = ref<(HTMLElement | null)[]>([]);
 
@@ -105,7 +172,7 @@ function setItemRef(el: Element | ComponentPublicInstance | null, index: number)
 }
 
 watch(() => props.selectedIndex, async (newIndex) => {
-    if (newIndex >= 0 && newIndex < props.results.length) {
+    if (newIndex >= 0 && newIndex < safeResults.value.length) {
         await nextTick();
         const el = itemRefs.value[newIndex];
         if (el) {
@@ -131,6 +198,15 @@ function getNameSegments(result: GlobalSearchMergedResult) {
         props.keyword,
         result.matchType
     );
+}
+
+function getSourceClass(source: string): string {
+    const map: Record<string, string> = {
+        "注册表": "source-registry",
+        "桌面": "source-desktop",
+        "开始菜单": "source-startmenu",
+    };
+    return map[source] || "source-other";
 }
 </script>
 
@@ -356,5 +432,84 @@ function getNameSegments(result: GlobalSearchMergedResult) {
     100% {
         box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.3), var(--card-shadow-light);
     }
+}
+
+.browser-search-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    margin-top: 8px;
+    background: var(--card-bg-solid);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: background 0.15s ease, box-shadow 0.15s ease;
+    box-shadow: var(--card-shadow-light);
+
+    &:hover {
+        @media (hover: hover) {
+            background: var(--card-bg-hover);
+        }
+    }
+
+    &.is-selected {
+        background: var(--card-bg-hover);
+        box-shadow: 0 0 0 2px var(--primary-color, #0078d4), var(--card-shadow-light);
+    }
+
+    .browser-search-icon {
+        font-size: 18px;
+    }
+
+    .browser-search-text {
+        font-size: 14px;
+        color: var(--text-color);
+    }
+}
+
+.scanned-section-divider {
+    margin: 16px 0 8px;
+    padding: 6px 0;
+    border-top: 1px solid var(--border-color);
+
+    .scanned-section-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-color-secondary);
+    }
+}
+
+.scanned-source-tag {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+
+    &.source-registry {
+        background: rgba(245, 158, 11, 0.15);
+        color: #f59e0b;
+    }
+
+    &.source-desktop {
+        background: rgba(34, 197, 94, 0.15);
+        color: #22c55e;
+    }
+
+    &.source-startmenu {
+        background: rgba(168, 85, 247, 0.15);
+        color: #a855f7;
+    }
+
+    &.source-other {
+        background: var(--bg-color-secondary);
+        color: var(--text-color-tertiary);
+    }
+}
+
+.scanned-more-hint {
+    font-size: 12px;
+    color: var(--text-color-tertiary);
+    text-align: center;
+    padding: 4px 0;
 }
 </style>

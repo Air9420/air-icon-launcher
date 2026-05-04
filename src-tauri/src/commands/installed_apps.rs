@@ -1,3 +1,4 @@
+use crate::commands::scan_cache;
 use crate::drag;
 use crate::error::AppError;
 use crate::error::AppResult;
@@ -171,6 +172,9 @@ fn scan_installed_apps_windows(app: AppHandle) -> AppResult<Vec<InstalledAppEntr
     });
 
     eprintln!("[scan_installed_apps] 总耗时: {:?}", start_total.elapsed());
+
+    scan_cache::write_cache(&app, &entries, "full");
+
     Ok(entries)
 }
 
@@ -805,6 +809,36 @@ fn normalize_name_for_matching(value: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+pub fn extract_icon_for_path(icon_path: &str) -> Option<String> {
+    drag::extract_icons_from_paths(vec![icon_path.to_string()])
+        .into_iter()
+        .next()
+        .flatten()
+}
+
+#[tauri::command]
+pub fn quick_scan_registry() -> AppResult<Vec<InstalledAppEntry>> {
+    #[cfg(windows)]
+    {
+        let candidates = collect_registry_candidates();
+        let entries: Vec<InstalledAppEntry> = candidates
+            .into_iter()
+            .map(|candidate| InstalledAppEntry {
+                name: candidate.display_name,
+                path: candidate.launch_path.to_string_lossy().to_string(),
+                icon_base64: None,
+                source: candidate.source.to_string(),
+                publisher: candidate.publisher,
+            })
+            .collect();
+        Ok(entries)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(Vec::new())
+    }
 }
 
 #[cfg(all(test, windows))]

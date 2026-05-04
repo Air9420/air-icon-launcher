@@ -886,6 +886,57 @@ export const useLauncherStore = defineStore(
       }
     }
 
+    async function addScannedAppToLauncher(
+      scannedApp: { name: string; path: string; source: string; publisher: string | null; iconBase64: string | null },
+    ): Promise<string> {
+      const { classifyInstalledApp } = await import("../utils/classification/pipeline");
+      const { normalizeApp } = await import("../utils/classification/normalizer");
+
+      const normalized = normalizeApp({
+        name: scannedApp.name,
+        path: scannedApp.path,
+        icon_base64: scannedApp.iconBase64,
+        source: scannedApp.source,
+        publisher: scannedApp.publisher,
+      });
+
+      const classification = classifyInstalledApp(normalized);
+      const categoryName = classification.rule.name || "其他";
+
+      const categoryStore = useCategoryStore();
+      let targetCategoryId = categoryStore.categories.find(
+        (c) => c.name === categoryName
+      )?.id;
+
+      if (!targetCategoryId) {
+        targetCategoryId = categoryStore.createCategoryId();
+        categoryStore.categories.push({
+          id: targetCategoryId,
+          name: categoryName,
+          customIconBase64: null,
+        });
+      }
+
+      const itemId = createLauncherItemId();
+      const newItem: LauncherItem = {
+        id: itemId,
+        name: scannedApp.name,
+        path: scannedApp.path,
+        itemType: "file",
+        isDirectory: false,
+        iconBase64: scannedApp.iconBase64,
+        hasCustomIcon: false,
+        launchDependencies: [],
+        launchDelaySeconds: 0,
+      };
+
+      const existing = getLauncherItemsByCategoryId(targetCategoryId);
+      setLauncherItemsByCategoryId(targetCategoryId, [...existing, newItem]);
+      itemEventBus.emit({ type: "item:created", categoryId: targetCategoryId, item: newItem });
+
+      return itemId;
+    }
+
     return {
       searchKeyword,
       pinnedItemIds,
@@ -937,6 +988,7 @@ export const useLauncherStore = defineStore(
       getSmartSortedItems: (categoryId: string) =>
         getSmartSortedItems(categoryId, launcherItemsByCategoryId.value),
       recordConfirmedSearch,
+      addScannedAppToLauncher,
     };
   },
   {
