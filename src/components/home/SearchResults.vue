@@ -17,15 +17,16 @@
                 :data-menu-type="'Icon-Item'"
                 :data-item-id="result.item.id"
                 :data-category-id="result.categories[0]?.id || ''"
+                :data-item-path="result.item.path || ''"
                 @click.left="$emit('select', result)"
             >
                 <div
-                    v-if="index < 9"
+                    v-if="index < 10"
                     class="shortcut-hint"
                     :class="{ 'is-visible': !!showShortcutHints }"
                     aria-hidden="true"
                 >
-                    {{ index + 1 }}
+                    {{ getShortcutLabel(index) }}
                 </div>
                 <div class="result-icon">
                     <img
@@ -78,10 +79,19 @@
 
         <div
             v-if="showBrowserSearch"
+            :ref="el => setItemRef(el, browserSearchIndex)"
             class="browser-search-item"
             :class="{ 'is-selected': selectedIndex === browserSearchIndex }"
             @click.left="$emit('browser-search')"
         >
+            <div
+                v-if="browserSearchIndex < 10"
+                class="shortcut-hint browser-shortcut-hint"
+                :class="{ 'is-visible': !!showShortcutHints }"
+                aria-hidden="true"
+            >
+                {{ getShortcutLabel(browserSearchIndex) }}
+            </div>
             <span class="browser-search-icon">🌐</span>
             <span class="browser-search-text">用浏览器搜索 "{{ keyword }}"</span>
         </div>
@@ -94,10 +104,21 @@
                 <div
                     v-for="(entry, i) in scannedSection.items"
                     :key="entry.path"
+                    :ref="el => setItemRef(el, scannedStartIndex + i)"
                     class="search-result-item scanned-item"
                     :class="{ 'is-selected': selectedIndex === scannedStartIndex + i }"
+                    :data-menu-type="'Search-Scanned-Item'"
+                    :data-item-path="entry.path"
                     @click.left="$emit('select-scanned', entry)"
                 >
+                    <div
+                        v-if="scannedStartIndex + i < 10"
+                        class="shortcut-hint"
+                        :class="{ 'is-visible': !!showShortcutHints }"
+                        aria-hidden="true"
+                    >
+                        {{ getShortcutLabel(scannedStartIndex + i) }}
+                    </div>
                     <div class="result-icon">
                         <img
                             v-if="entry.iconBase64"
@@ -113,8 +134,28 @@
                     <div class="result-info">
                         <div class="result-name">{{ entry.name }}</div>
                         <div class="result-meta">
+                            <span
+                                class="match-type-chip"
+                                :class="`is-${entry.matchType || 'fuzzy'}`"
+                            >
+                                {{ getSearchMatchTypeLabel(entry.matchType || "fuzzy") }}
+                            </span>
                             <span class="scanned-source-tag" :class="getSourceClass(entry.source)">
                                 {{ entry.source }}
+                            </span>
+                            <span
+                                v-if="entry.launchRisk === 'uninstall_candidate'"
+                                class="scanned-risk-tag"
+                                :title="entry.launchRiskHint"
+                            >
+                                卸载/异常启动项
+                            </span>
+                            <span
+                                v-else-if="entry.launchRisk === 'installer_candidate'"
+                                class="scanned-risk-tag is-installer"
+                                :title="entry.launchRiskHint"
+                            >
+                                安装器/修复入口
                             </span>
                         </div>
                     </div>
@@ -122,6 +163,102 @@
             </div>
             <div v-if="scannedSection.totalMatches > safeScannedItems.length" class="scanned-more-hint">
                 + {{ scannedSection.totalMatches - safeScannedItems.length }} 个匹配
+            </div>
+        </template>
+
+        <template v-if="clipboardResults.length > 0">
+            <div class="extension-section-divider">
+                <span class="extension-section-title">📋 剪贴板匹配（{{ clipboardResults.length }}）</span>
+            </div>
+            <div class="search-result-list">
+                <div
+                    v-for="(entry, i) in clipboardResults"
+                    :key="entry.key"
+                    :ref="el => setItemRef(el, clipboardStartIndex + i)"
+                    class="search-result-item extension-item"
+                    :class="{ 'is-selected': selectedIndex === clipboardStartIndex + i }"
+                    :data-menu-type="'Search-Clipboard-Item'"
+                    :data-clipboard-record-id="entry.id"
+                    :data-clipboard-content-type="entry.contentType"
+                    @click.left="$emit('select-clipboard', entry)"
+                >
+                    <div
+                        v-if="clipboardStartIndex + i < 10"
+                        class="shortcut-hint"
+                        :class="{ 'is-visible': !!showShortcutHints }"
+                        aria-hidden="true"
+                    >
+                        {{ getShortcutLabel(clipboardStartIndex + i) }}
+                    </div>
+                    <div class="result-icon">
+                        <div class="icon-fallback extension-icon">📋</div>
+                    </div>
+                    <div class="result-info">
+                        <div class="result-name">{{ entry.preview }}</div>
+                        <div class="result-meta">
+                            <span
+                                class="match-type-chip"
+                                :class="`is-${entry.matchType || 'fuzzy'}`"
+                            >
+                                {{ getSearchMatchTypeLabel(entry.matchType || "fuzzy") }}
+                            </span>
+                            <span class="result-category-chip">
+                                {{ entry.contentType === "image" ? "图片" : "文本" }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>
+
+        <template v-if="recentFileResults.length > 0">
+            <div class="extension-section-divider">
+                <span class="extension-section-title">🗂 最近文件匹配（{{ recentFileResults.length }}）</span>
+            </div>
+            <div class="search-result-list">
+                <div
+                    v-for="(entry, i) in recentFileResults"
+                    :key="entry.key"
+                    :ref="el => setItemRef(el, recentFileStartIndex + i)"
+                    class="search-result-item extension-item"
+                    :class="{ 'is-selected': selectedIndex === recentFileStartIndex + i }"
+                    :data-menu-type="'Search-Recent-File-Item'"
+                    :data-item-path="entry.path"
+                    @click.left="$emit('select-recent-file', entry)"
+                >
+                    <div
+                        v-if="recentFileStartIndex + i < 10"
+                        class="shortcut-hint"
+                        :class="{ 'is-visible': !!showShortcutHints }"
+                        aria-hidden="true"
+                    >
+                        {{ getShortcutLabel(recentFileStartIndex + i) }}
+                    </div>
+                    <div class="result-icon">
+                        <img
+                            v-if="entry.iconBase64"
+                            class="icon-real"
+                            :src="getIconSrc(entry.iconBase64)"
+                            alt=""
+                            draggable="false"
+                        />
+                        <div v-else class="icon-fallback">
+                            {{ getFallbackText(entry.name) }}
+                        </div>
+                    </div>
+                    <div class="result-info">
+                        <div class="result-name">{{ entry.name }}</div>
+                        <div class="result-meta">
+                            <span
+                                class="match-type-chip"
+                                :class="`is-${entry.matchType || 'fuzzy'}`"
+                            >
+                                {{ getSearchMatchTypeLabel(entry.matchType || "fuzzy") }}
+                            </span>
+                            <span class="result-category-chip">{{ entry.path }}</span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </template>
     </div>
@@ -133,8 +270,10 @@ import type { GlobalSearchMergedResult } from "../../stores";
 import {
     buildSearchHighlightSegments,
     getSearchMatchTypeLabel,
+    getHotkeyForIndex,
 } from "../../utils/search-ui";
 import type { ScannedAppEntry, ScannedFallbackSection } from "../../types/scan-cache";
+import type { ClipboardSearchResult, RecentFileSearchResult } from "../../types/search-extensions";
 
 const props = defineProps<{
     results: GlobalSearchMergedResult[];
@@ -144,16 +283,22 @@ const props = defineProps<{
     showShortcutHints?: boolean;
     isPending?: boolean;
     scannedSection?: ScannedFallbackSection | null;
+    clipboardResults?: ClipboardSearchResult[];
+    recentFileResults?: RecentFileSearchResult[];
 }>();
 
 defineEmits<{
     (e: "select", result: GlobalSearchMergedResult): void;
     (e: "browser-search"): void;
     (e: "select-scanned", entry: ScannedAppEntry): void;
+    (e: "select-clipboard", entry: ClipboardSearchResult): void;
+    (e: "select-recent-file", entry: RecentFileSearchResult): void;
 }>();
 
 const safeResults = computed(() => props.results ?? []);
 const safeScannedItems = computed(() => props.scannedSection?.items ?? []);
+const clipboardResults = computed(() => props.clipboardResults ?? []);
+const recentFileResults = computed(() => props.recentFileResults ?? []);
 
 const showBrowserSearch = computed(() => {
     return props.keyword.trim().length > 0 && (props.isPending || safeResults.value.length <= 3);
@@ -162,22 +307,29 @@ const showBrowserSearch = computed(() => {
 const browserSearchIndex = computed(() => safeResults.value.length);
 
 const scannedStartIndex = computed(() => {
-    return safeResults.value.length + 1;
+    return safeResults.value.length + (showBrowserSearch.value ? 1 : 0);
 });
 
-const itemRefs = ref<(HTMLElement | null)[]>([]);
+const clipboardStartIndex = computed(() => {
+    return scannedStartIndex.value + safeScannedItems.value.length;
+});
+
+const recentFileStartIndex = computed(() => {
+    return clipboardStartIndex.value + clipboardResults.value.length;
+});
+
+const itemRefs = ref<Record<number, HTMLElement | null>>({});
 
 function setItemRef(el: Element | ComponentPublicInstance | null, index: number) {
     itemRefs.value[index] = el as HTMLElement | null;
 }
 
 watch(() => props.selectedIndex, async (newIndex) => {
-    if (newIndex >= 0 && newIndex < safeResults.value.length) {
-        await nextTick();
-        const el = itemRefs.value[newIndex];
-        if (el) {
-            el.scrollIntoView({ block: "nearest", behavior: "smooth" });
-        }
+    if (newIndex < 0) return;
+    await nextTick();
+    const el = itemRefs.value[newIndex];
+    if (el) {
+        el.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
 });
 
@@ -208,6 +360,10 @@ function getSourceClass(source: string): string {
     };
     return map[source] || "source-other";
 }
+
+function getShortcutLabel(index: number): string {
+    return getHotkeyForIndex(index);
+}
 </script>
 
 <style lang="scss" scoped>
@@ -215,6 +371,8 @@ function getSourceClass(source: string): string {
     flex: 1;
     padding: 0 16px 16px;
     overflow-y: auto;
+    scroll-padding-top: 8px;
+    scroll-padding-bottom: 8px;
     &::-webkit-scrollbar {
         display: none;
     }
@@ -236,6 +394,8 @@ function getSourceClass(source: string): string {
 
 .search-result-item {
     position: relative;
+    scroll-margin-top: 8px;
+    scroll-margin-bottom: 8px;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -435,6 +595,9 @@ function getSourceClass(source: string): string {
 }
 
 .browser-search-item {
+    position: relative;
+    scroll-margin-top: 8px;
+    scroll-margin-bottom: 8px;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -465,6 +628,10 @@ function getSourceClass(source: string): string {
         font-size: 14px;
         color: var(--text-color);
     }
+}
+
+.browser-shortcut-hint {
+    right: 10px;
 }
 
 .scanned-section-divider {
@@ -511,5 +678,41 @@ function getSourceClass(source: string): string {
     color: var(--text-color-tertiary);
     text-align: center;
     padding: 4px 0;
+}
+
+.extension-section-divider {
+    margin: 12px 0 8px;
+    padding: 6px 0;
+    border-top: 1px solid var(--border-color);
+}
+
+.extension-section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-color-secondary);
+}
+
+.extension-item .result-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.extension-icon {
+    font-size: 18px;
+}
+
+.scanned-risk-tag {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+    background: rgba(239, 68, 68, 0.18);
+    color: #ef4444;
+
+    &.is-installer {
+        background: rgba(245, 158, 11, 0.2);
+        color: #f59e0b;
+    }
 }
 </style>

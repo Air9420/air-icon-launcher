@@ -14,6 +14,7 @@ export {
 export { useCategoryStore, type Category } from "./categoryStore";
 export { useItemsStore } from "./itemsStore";
 export { useSearchStore } from "./searchStore";
+export { useSearchExtensionsStore } from "./searchExtensionsStore";
 export {
     useLauncherStore,
     type LauncherItem,

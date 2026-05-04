@@ -53,6 +53,15 @@ pub struct MonitorFingerprintInfo {
     pub scale_factor: f64,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentFileEntry {
+    pub name: String,
+    pub path: String,
+    pub used_at: u64,
+    pub icon_base64: Option<String>,
+}
+
 #[tauri::command]
 pub fn open_url(url: String) -> AppResult<()> {
     let url = url.trim();
@@ -118,6 +127,50 @@ pub fn open_path(path: String) -> AppResult<()> {
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn reveal_in_explorer(path: String) -> AppResult<()> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::invalid_input("Path cannot be empty"));
+    }
+
+    let target = PathBuf::from(trimmed);
+    if !target.exists() {
+        return Err(AppError::not_found(format!("Path: {:?}", target)));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer.exe")
+            .arg(format!("/select,{}", target.to_string_lossy()))
+            .spawn()
+            .map_err(|e| AppError::internal(format!("Failed to reveal in explorer: {}", e)))?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg("-R")
+            .arg(&target)
+            .spawn()
+            .map_err(|e| AppError::internal(format!("Failed to reveal path on macOS: {}", e)))?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(parent) = target.parent() {
+            Command::new("xdg-open")
+                .arg(parent)
+                .spawn()
+                .map_err(|e| AppError::internal(format!("Failed to reveal path on Linux: {}", e)))?;
+            return Ok(());
+        }
+        return open_path(trimmed.to_string());
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -312,6 +365,118 @@ pub fn get_current_monitor_fingerprint(
         .current_monitor()
         .map_err(|e| AppError::internal(format!("Failed to read current monitor: {}", e)))?;
     Ok(monitor.as_ref().map(monitor_to_fingerprint_info))
+}
+
+#[tauri::command]
+pub fn get_recent_files(limit: Option<u32>, include_icons: Option<bool>) -> AppResult<Vec<RecentFileEntry>> {
+    let target_limit = limit.unwrap_or(40).clamp(1, 120) as usize;
+    let should_include_icons = include_icons.unwrap_or(false);
+
+    #[cfg(target_os = "windows")]
+    {
+        return get_recent_files_windows(target_limit, should_include_icons);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = target_limit;
+        let _ = should_include_icons;
+        Ok(Vec::new())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn get_recent_files_windows(limit: usize, include_icons: bool) -> AppResult<Vec<RecentFileEntry>> {
+    let Some(app_data) = std::env::var_os("APPDATA").map(PathBuf::from) else {
+        return Ok(Vec::new());
+    };
+    let recent_dir = app_data.join("Microsoft\\Windows\\Recent");
+    if !recent_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut candidates: Vec<(PathBuf, u64)> = Vec::new();
+    let read_dir = fs::read_dir(&recent_dir)
+        .map_err(|e| AppError::io_error(format!("Failed to read Recent directory: {}", e)))?;
+
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()).map(|ext| ext.eq_ignore_ascii_case("lnk")) != Some(true) {
+            continue;
+        }
+
+        let used_at = entry
+            .metadata()
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0);
+
+        candidates.push((path, used_at));
+    }
+
+    candidates.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let mut dedupe = HashSet::<String>::new();
+    let mut entries: Vec<RecentFileEntry> = Vec::new();
+
+    for (lnk_path, used_at) in candidates {
+        let Some(target_path) = crate::drag::resolve_windows_shortcut_target_pathbuf(&lnk_path) else {
+            continue;
+        };
+
+        let target_path_str = target_path.to_string_lossy().to_string();
+        let normalized_key = target_path_str
+            .replace('/', "\\")
+            .to_ascii_lowercase();
+        if normalized_key.is_empty() || !dedupe.insert(normalized_key) {
+            continue;
+        }
+
+        if !target_path.exists() {
+            continue;
+        }
+
+        let icon_base64 = if include_icons {
+            crate::drag::extract_icons_from_paths(vec![target_path_str.clone()])
+                .into_iter()
+                .next()
+                .flatten()
+        } else {
+            None
+        };
+
+        entries.push(RecentFileEntry {
+            name: derive_display_name_from_path(&target_path),
+            path: target_path_str,
+            used_at,
+            icon_base64,
+        });
+
+        if entries.len() >= limit {
+            break;
+        }
+    }
+
+    Ok(entries)
+}
+
+fn derive_display_name_from_path(path: &Path) -> String {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .trim();
+    if file_name.is_empty() {
+        return path.to_string_lossy().to_string();
+    }
+
+    let lower = file_name.to_ascii_lowercase();
+    if lower.ends_with(".exe") || lower.ends_with(".lnk") {
+        return file_name[..file_name.len().saturating_sub(4)].to_string();
+    }
+    file_name.to_string()
 }
 
 #[cfg(target_os = "windows")]

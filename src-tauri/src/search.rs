@@ -182,6 +182,14 @@ impl SearchIndex {
             return (MatchLevel::PinyinInitial, score);
         }
 
+        if keyword.chars().count() <= 3 {
+            if self.matches_short_keyword_initialism(item, keyword) {
+                let score = 260 + keyword_len * 40;
+                return (MatchLevel::Fuzzy, score);
+            }
+            return (MatchLevel::Fuzzy, 0);
+        }
+
         let mut best_score = 0i64;
         if let Some(score) = self.match_field(&item.name, keyword) {
             best_score = best_score.max(score);
@@ -210,6 +218,20 @@ impl SearchIndex {
     fn check_pinyin_full_match(&self, name: &str, keyword: &str) -> bool {
         let p_full = self.pinyin_index.to_pinyin_full(name).to_lowercase();
         p_full.starts_with(keyword) || p_full.contains(keyword)
+    }
+
+    fn matches_short_keyword_initialism(&self, item: &SearchItem, keyword: &str) -> bool {
+        if keyword.is_empty() {
+            return false;
+        }
+        let key = keyword.to_lowercase();
+        let name_initials = build_word_initials(&item.name);
+        if !name_initials.is_empty() && (name_initials.starts_with(&key) || name_initials.contains(&key)) {
+            return true;
+        }
+
+        let path_initials = build_word_initials(&item.path);
+        !path_initials.is_empty() && (path_initials.starts_with(&key) || path_initials.contains(&key))
     }
 
     fn rank_results(
@@ -334,6 +356,32 @@ fn chrono_now() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+fn build_word_initials(text: &str) -> String {
+    let mut initials = String::new();
+    let mut prev_is_alnum = false;
+    let mut prev_is_lowercase = false;
+
+    for ch in text.chars() {
+        if !ch.is_alphanumeric() {
+            prev_is_alnum = false;
+            prev_is_lowercase = false;
+            continue;
+        }
+
+        let is_boundary = !prev_is_alnum || (prev_is_lowercase && ch.is_uppercase());
+        if is_boundary {
+            for lower in ch.to_lowercase() {
+                initials.push(lower);
+            }
+        }
+
+        prev_is_alnum = true;
+        prev_is_lowercase = ch.is_lowercase();
+    }
+
+    initials
 }
 
 #[cfg(test)]
@@ -514,6 +562,21 @@ mod tests {
         let results = index.search(&ctx);
         assert!(!results.is_empty());
         assert_eq!(results[0].match_type, SearchMatchType::Fuzzy);
+    }
+
+    #[test]
+    fn test_short_keyword_disables_loose_fuzzy_noise() {
+        let items = vec![
+            make_item("1", "MSI Afterburner", "E:\\MSI Afterburner\\MSIAfterburner.exe", "cat-system"),
+            make_item("2", "LX Music", "E:\\LX Music\\lxmusic.exe", "cat-system"),
+        ];
+        let index = build_index_with_items(items);
+        let ctx = make_ctx("msi", 20);
+        let results = index.search(&ctx);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "MSI Afterburner");
+        assert_eq!(results[0].match_type, SearchMatchType::Prefix);
     }
 
     #[test]

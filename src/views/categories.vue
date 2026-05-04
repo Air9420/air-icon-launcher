@@ -79,14 +79,18 @@
             :show-shortcut-hints="showShortcutHints"
             :is-pending="isHomeSearchPending"
             :scanned-section="scannedFallbackSection"
+            :clipboard-results="clipboardSearchResults"
+            :recent-file-results="recentFileSearchResults"
             @select="launchSearchWithCd"
             @browser-search="onBrowserSearch"
             @select-scanned="onSelectScannedApp"
+            @select-clipboard="selectClipboardWithCd"
+            @select-recent-file="openRecentFileWithCd"
         />
 
         <template v-if="homeSearchViewState === 'home'">
             <div
-                v-if="pinnedMergedItems.length > 0 || recentDisplayItems.length > 0"
+                v-if="pinnedMergedItems.length > 0 || stableRecentDisplayItems.length > 0"
                 class="home-sections"
                 data-menu-type="Home"
             >
@@ -101,7 +105,7 @@
                 />
 
                 <RecentItems
-                    :items="recentDisplayItems"
+                    :items="stableRecentDisplayItems"
                     :layout="recentLayout"
                     :get-launch-status="getLaunchStatus"
                     :start-index="pinnedMergedItems.length"
@@ -134,7 +138,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from "vue";
 import { onClickOutside, useThrottleFn } from "@vueuse/core";
 import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
@@ -151,9 +155,12 @@ import CategoryGrid from "../components/home/CategoryGrid.vue";
 
 import {
     Store,
+    useClipboardStore,
+    getRecordContent,
     useSettingsStore,
     useUIStore,
     useCategoryStore,
+    useSearchExtensionsStore,
     type GlobalSearchMergedResult,
     type RecentUsedMergedItem,
     type PinnedMergedItem,
@@ -161,11 +168,13 @@ import {
 } from "../stores";
 import { useStatsStore, type SearchKeywordRecord } from "../stores/statsStore";
 import { useLaunchStatus } from "../composables/useLaunchStatus";
-import { useHomePageState } from "../composables/useHomePageState";
+import { useHomePageState, type HomeRecentDisplayItem } from "../composables/useHomePageState";
+import { normalizeIconBase64 } from "../composables/useItemsHelper";
 import { showToast } from "../composables/useGlobalToast";
 import { invokeOrThrow } from "../utils/invoke-wrapper";
 import { launchStoredItem } from "../utils/launcher-service";
 import { SEARCH_THROTTLE_MS } from "../utils/search-config";
+import { openPathWithSystem } from "../utils/system-commands";
 import {
     createSearchSelectionTarget,
     findSearchSelectionIndex,
@@ -177,8 +186,17 @@ import {
 } from "../utils/search-ui";
 import { useScanCache } from "../composables/useScanCache";
 import type { ScannedAppEntry, ScannedFallbackSection } from "../types/scan-cache";
+import type { ClipboardSearchResult, RecentFileSearchResult } from "../types/search-extensions";
 
 const DEBUG_SEARCH = false;
+const RECENT_FILE_CACHE_KEY = "home-search-recent-file-candidates-v1";
+
+type RecentFileRow = {
+    name: string;
+    path: string;
+    usedAt: number;
+    iconBase64: string | null;
+};
 
 function debugLog(...args: unknown[]) {
   if (DEBUG_SEARCH) {
@@ -186,11 +204,79 @@ function debugLog(...args: unknown[]) {
   }
 }
 
+function normalizeRecentFileRows(rows: RecentFileRow[]): RecentFileSearchResult[] {
+    return rows
+        .map((row) => ({
+            key: `recent-file:${normalizePathKey(row.path)}`,
+            name: row.name?.trim() || row.path,
+            path: row.path,
+            usedAt: Number.isFinite(row.usedAt) ? row.usedAt : Date.now(),
+            iconBase64: row.iconBase64 || null,
+        }))
+        .filter((row) => !!row.path.trim());
+}
+
+function mergeRecentFileIcons(
+    rows: RecentFileSearchResult[],
+    iconByPath: Map<string, string>
+): RecentFileSearchResult[] {
+    return rows.map((row) => {
+        const existing = normalizeIconBase64(row.iconBase64);
+        if (existing) return row;
+        const mergedIcon = iconByPath.get(normalizePathKey(row.path));
+        if (!mergedIcon) return row;
+        return {
+            ...row,
+            iconBase64: mergedIcon,
+        };
+    });
+}
+
+function readRecentFileCandidatesCache(): RecentFileSearchResult[] {
+    if (typeof window === "undefined") return [];
+    try {
+        const raw = window.sessionStorage.getItem(RECENT_FILE_CACHE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        const rows = parsed as RecentFileSearchResult[];
+        return rows
+            .filter((row) => typeof row?.path === "string")
+            .map((row) => ({
+                key: typeof row.key === "string" ? row.key : `recent-file:${normalizePathKey(row.path)}`,
+                name: typeof row.name === "string" ? row.name : row.path,
+                path: row.path,
+                usedAt: Number.isFinite(row.usedAt) ? row.usedAt : Date.now(),
+                iconBase64: row.iconBase64 || null,
+            }));
+    } catch {
+        return [];
+    }
+}
+
+function writeRecentFileCandidatesCache(rows: RecentFileSearchResult[]): void {
+    if (typeof window === "undefined") return;
+    try {
+        const compactRows = rows.map((row) => ({
+            key: row.key,
+            name: row.name,
+            path: row.path,
+            usedAt: row.usedAt,
+            iconBase64: null,
+        }));
+        window.sessionStorage.setItem(RECENT_FILE_CACHE_KEY, JSON.stringify(compactRows));
+    } catch {
+        // ignore cache write failures
+    }
+}
+
 const store = Store();
 const settingsStore = useSettingsStore();
 const statsStore = useStatsStore();
+const clipboardStore = useClipboardStore();
 const uiStore = useUIStore();
 const categoryStore = useCategoryStore();
+const searchExtensionsStore = useSearchExtensionsStore();
 const router = useRouter();
 
 const {
@@ -218,6 +304,135 @@ const selectedIndex = ref(-1);
 const isSearchHistoryOpen = ref(false);
 const isHomeSearchPending = ref(false);
 const showShortcutHints = ref(false);
+const stableRecentDisplayItems = ref<HomeRecentDisplayItem[]>([]);
+const recentFileCandidates = ref<RecentFileSearchResult[]>(
+    searchExtensionsStore.recentFileCandidates.length > 0
+        ? [...searchExtensionsStore.recentFileCandidates]
+        : readRecentFileCandidatesCache()
+);
+let recentFileIconHydrationRequestId = 0;
+let recentStabilizeTimer: ReturnType<typeof setTimeout> | null = null;
+const RECENT_STABILIZE_DELAY_MS = 280;
+
+function hasSameRecentKeyOrder(
+    prev: HomeRecentDisplayItem[],
+    next: HomeRecentDisplayItem[]
+): boolean {
+    if (prev.length !== next.length) return false;
+    for (let i = 0; i < prev.length; i += 1) {
+        if (prev[i]?.key !== next[i]?.key) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function normalizePathKey(path: string): string {
+    return path.trim().replace(/\//g, "\\").toLowerCase();
+}
+
+function normalizeKeywordTokens(keyword: string): string[] {
+    return keyword
+        .trim()
+        .toLowerCase()
+        .split(/\s+/)
+        .map((token) => token.trim())
+        .filter((token) => token.length > 0);
+}
+
+function includesAllTokens(target: string, tokens: string[]): boolean {
+    if (tokens.length === 0) return false;
+    const haystack = target.toLowerCase();
+    return tokens.every((token) => haystack.includes(token));
+}
+
+function fuzzyMatchWithGapLimit(target: string, keyword: string, maxGap: number): boolean {
+    let lastMatchIndex = -1;
+    for (let i = 0; i < keyword.length; i += 1) {
+        const ch = keyword[i];
+        const nextIndex = target.indexOf(ch, lastMatchIndex + 1);
+        if (nextIndex === -1) return false;
+        if (lastMatchIndex >= 0 && nextIndex - lastMatchIndex - 1 > maxGap) {
+            return false;
+        }
+        lastMatchIndex = nextIndex;
+    }
+    return true;
+}
+
+function buildWordInitials(text: string): string {
+    const source = text.toLowerCase();
+    let initials = "";
+    let prevIsAlnum = false;
+
+    for (const ch of source) {
+        const isAlnum = /[a-z0-9]/.test(ch);
+        if (!isAlnum) {
+            prevIsAlnum = false;
+            continue;
+        }
+        if (!prevIsAlnum) {
+            initials += ch;
+        }
+        prevIsAlnum = true;
+    }
+
+    return initials;
+}
+
+function extensionMatchRank(type: "exact" | "prefix" | "substring" | "fuzzy"): number {
+    switch (type) {
+        case "exact":
+            return 0;
+        case "prefix":
+            return 1;
+        case "substring":
+            return 2;
+        case "fuzzy":
+        default:
+            return 3;
+    }
+}
+
+function resolveExtensionMatchType(
+    rawTarget: string,
+    tokens: string[]
+): "exact" | "prefix" | "substring" | "fuzzy" | null {
+    if (tokens.length === 0) return null;
+    const target = rawTarget.trim().toLowerCase();
+    const keyword = tokens.join(" ").trim().toLowerCase();
+    if (!target || !keyword) return null;
+    if (target === keyword) return "exact";
+    if (target.startsWith(keyword)) return "prefix";
+    if (includesAllTokens(target, tokens)) return "substring";
+    if (tokens.length !== 1) return null;
+    if (keyword.length < 3) return null;
+
+    const compactTarget = target.replace(/[\s._\\/-]+/g, "");
+    const compactKeyword = keyword.replace(/[\s._\\/-]+/g, "");
+    if (compactKeyword.length < 3) return null;
+    if (compactTarget.includes(compactKeyword)) return "substring";
+
+    if (compactKeyword.length === 3) {
+        const initials = buildWordInitials(rawTarget);
+        if (initials.includes(compactKeyword)) {
+            return "fuzzy";
+        }
+        return null;
+    }
+
+    if (fuzzyMatchWithGapLimit(compactTarget, compactKeyword, 2)) {
+        return "fuzzy";
+    }
+    return null;
+}
+
+function buildClipboardPreview(content: string): string {
+    const normalized = content.replace(/\s+/g, " ").trim();
+    if (!normalized) return "空文本";
+    if (normalized.length <= 70) return normalized;
+    return `${normalized.slice(0, 70)}...`;
+}
 
 const { setLaunchStatus, clearLaunchStatus, getLaunchStatus } = useLaunchStatus({
     autoHideAfterLaunch,
@@ -233,11 +448,12 @@ const homeSearchViewState = computed(() => {
     if (searchKeyword.value.trim()) {
         const launcherCount = rustSearchMergedResults.value?.length ?? 0;
         const hasFallbackResults = scannedFallbackSection.value && scannedFallbackSection.value.items.length > 0;
+        const hasExtensionResults = clipboardSearchResults.value.length > 0 || recentFileSearchResults.value.length > 0;
 
-        if (launcherCount > 0 || hasFallbackResults) {
+        if (launcherCount > 0 || hasFallbackResults || hasExtensionResults) {
             return "results";
         }
-        if (launcherCount === 0 && !hasFallbackResults && !isHomeSearchPending.value) {
+        if (launcherCount === 0 && !hasFallbackResults && !hasExtensionResults && !isHomeSearchPending.value) {
             return "fallback";
         }
         return "results";
@@ -259,7 +475,19 @@ onClickOutside(searchShellRef, () => {
 onMounted(async () => {
     const win = getCurrentWindow();
 
-    await store.syncSearchIndex();
+    if (searchExtensionsStore.recentFileCandidates.length > 0) {
+        recentFileCandidates.value = [...searchExtensionsStore.recentFileCandidates];
+    } else if (recentFileCandidates.value.length === 0) {
+        recentFileCandidates.value = readRecentFileCandidatesCache();
+    }
+
+    void loadRecentFileCandidates();
+    if (!ensureIndexPromise) {
+        ensureIndexPromise = store.syncSearchIndex().finally(() => {
+            ensureIndexPromise = null;
+        });
+    }
+    void ensureIndexPromise;
     void loadCache().catch((error) => {
         console.warn("Failed to preload scan cache:", error);
     });
@@ -298,14 +526,101 @@ onMounted(async () => {
     });
 });
 
+async function loadRecentFileCandidates(): Promise<void> {
+    try {
+        const rows = await invokeOrThrow<RecentFileRow[]>("get_recent_files", {
+            limit: 80,
+            includeIcons: false,
+        });
+        const normalizedRows = normalizeRecentFileRows(rows);
+        const iconByPath = new Map<string, string>();
+        for (const row of recentFileCandidates.value) {
+            const icon = normalizeIconBase64(row.iconBase64);
+            if (!icon) continue;
+            iconByPath.set(normalizePathKey(row.path), icon);
+        }
+
+        const mergedRows = mergeRecentFileIcons(normalizedRows, iconByPath);
+        recentFileCandidates.value = mergedRows;
+        searchExtensionsStore.setRecentFileCandidates(mergedRows);
+        writeRecentFileCandidatesCache(mergedRows);
+        void hydrateRecentFileCandidateIcons(mergedRows);
+    } catch (error) {
+        console.warn("Failed to load recent file candidates:", error);
+    }
+}
+
+async function hydrateRecentFileCandidateIcons(rows: RecentFileSearchResult[]): Promise<void> {
+    const missingPaths: string[] = [];
+    const seen = new Set<string>();
+    for (const row of rows) {
+        if (normalizeIconBase64(row.iconBase64)) continue;
+        const normalizedPath = normalizePathKey(row.path);
+        if (!normalizedPath || seen.has(normalizedPath)) continue;
+        seen.add(normalizedPath);
+        missingPaths.push(row.path);
+    }
+
+    if (missingPaths.length === 0) return;
+
+    const requestId = ++recentFileIconHydrationRequestId;
+    try {
+        const iconRows = await invokeOrThrow<Array<string | null>>("extract_icons_from_paths", {
+            paths: missingPaths,
+        });
+        if (requestId !== recentFileIconHydrationRequestId) return;
+
+        const iconByPath = new Map<string, string>();
+        for (let i = 0; i < missingPaths.length; i += 1) {
+            const icon = normalizeIconBase64(iconRows[i]);
+            if (!icon) continue;
+            iconByPath.set(normalizePathKey(missingPaths[i]), icon);
+        }
+        if (iconByPath.size === 0) return;
+
+        const mergedRows = mergeRecentFileIcons(recentFileCandidates.value, iconByPath);
+        recentFileCandidates.value = mergedRows;
+        searchExtensionsStore.setRecentFileCandidates(mergedRows);
+        writeRecentFileCandidatesCache(mergedRows);
+    } catch (error) {
+        console.warn("Failed to hydrate recent file icons:", error);
+    }
+}
+
 onUnmounted(() => {
     if (unlistenFocus) unlistenFocus();
     if (unlistenShow) unlistenShow();
+    if (recentStabilizeTimer) {
+        clearTimeout(recentStabilizeTimer);
+        recentStabilizeTimer = null;
+    }
     document.removeEventListener("keydown", onKeydown);
     document.removeEventListener("keyup", onKeyup);
 });
 
-const { pinnedMergedItems, recentDisplayItems } = useHomePageState();
+const { pinnedMergedItems, mergedRecentDisplayItems } = useHomePageState();
+
+watchEffect(() => {
+    const next = mergedRecentDisplayItems.value;
+    const previous = stableRecentDisplayItems.value;
+    if (recentStabilizeTimer) {
+        clearTimeout(recentStabilizeTimer);
+    }
+    if (previous.length === 0 || next.length === 0) {
+        stableRecentDisplayItems.value = [...next];
+        recentStabilizeTimer = null;
+        return;
+    }
+    if (hasSameRecentKeyOrder(previous, next)) {
+        stableRecentDisplayItems.value = [...next];
+        recentStabilizeTimer = null;
+        return;
+    }
+    recentStabilizeTimer = setTimeout(() => {
+        stableRecentDisplayItems.value = [...next];
+        recentStabilizeTimer = null;
+    }, RECENT_STABILIZE_DELAY_MS);
+});
 
 const pinnedLayout = computed(() => uiStore.getHomeSectionLayout("pinned"));
 const recentLayout = computed(() => uiStore.getHomeSectionLayout("recent"));
@@ -440,7 +755,63 @@ async function onOpenSearchResult(result: GlobalSearchMergedResult) {
     }
 }
 
-async function onOpenRecentItem(item: RecentUsedMergedItem) {
+async function onSelectClipboardResult(entry: ClipboardSearchResult) {
+    if (!entry) return;
+    try {
+        if (entry.contentType === "image" && entry.imagePath) {
+            await invokeOrThrow("set_clipboard_content", {
+                content: entry.imagePath,
+                isImage: true,
+            });
+        } else {
+            await invokeOrThrow("set_clipboard_content", {
+                content: entry.textContent,
+                isImage: false,
+            });
+        }
+        showToast("已复制剪贴板历史项");
+    } catch (error) {
+        console.error("Failed to select clipboard result:", error);
+        showToast("复制失败", { type: "error" });
+    }
+}
+
+async function onOpenRecentFileResult(entry: RecentFileSearchResult) {
+    if (!entry?.path) return;
+    try {
+        await openPathWithSystem(entry.path);
+    } catch (error) {
+        console.error("Failed to open recent file:", error);
+        showToast(`无法打开 ${entry.name}`, { type: "error" });
+    }
+}
+
+function isExternalRecentItem(item: HomeRecentDisplayItem): item is Exclude<HomeRecentDisplayItem, RecentUsedMergedItem> {
+    return "external" in item;
+}
+
+async function onOpenRecentItem(item: HomeRecentDisplayItem) {
+    if (isExternalRecentItem(item)) {
+        const statusKey = item.key;
+        setLaunchStatus(statusKey, "launching");
+        try {
+            await openPathWithSystem(item.external.path);
+            setLaunchStatus(statusKey, "success");
+            statsStore.recordExternalLaunch({
+                path: item.external.path,
+                name: item.external.name,
+                source: item.external.source,
+                iconBase64: item.external.iconBase64,
+                usedAt: Date.now(),
+            });
+        } catch (e) {
+            console.error(e);
+            clearLaunchStatus(statusKey);
+            showToast(`无法启动 ${item.external.name}`, { type: "error" });
+        }
+        return;
+    }
+
     if (!item?.item || !item?.recent?.categoryId) return;
     setLaunchStatus(item.item.id, "launching");
     try {
@@ -491,6 +862,8 @@ const { createCooldown } = useLaunchCooldown({ cooldown: 2500 });
 const launchSearchWithCd = createCooldown(onOpenSearchResult);
 const launchRecentWithCd = createCooldown(onOpenRecentItem);
 const launchPinnedWithCd = createCooldown(onOpenPinnedItem);
+const selectClipboardWithCd = createCooldown(onSelectClipboardResult);
+const openRecentFileWithCd = createCooldown(onOpenRecentFileResult);
 
 watch(editingCategoryId, async (value) => {
     if (!value) return;
@@ -586,6 +959,82 @@ const currentSearchResults = computed(() => {
     return rustSearchMergedResults.value ?? [];
 });
 
+const clipboardSearchResults = computed<ClipboardSearchResult[]>(() => {
+    const keyword = searchKeyword.value.trim();
+    if (!keyword) return [];
+    const tokens = normalizeKeywordTokens(keyword);
+    if (tokens.length === 0) return [];
+
+    const matched: ClipboardSearchResult[] = [];
+
+    for (const record of clipboardStore.clipboardHistory) {
+        const textContent = record.content_type === "text"
+            ? getRecordContent(record)
+            : (record.image_path || "");
+        const normalizedTarget = record.content_type === "image"
+            ? textContent
+            : `${textContent} ${buildClipboardPreview(textContent)}`;
+        const matchType = resolveExtensionMatchType(normalizedTarget, tokens);
+        if (!matchType) continue;
+
+        matched.push({
+            key: `clipboard:${record.id}`,
+            id: record.id,
+            hash: record.hash,
+            contentType: record.content_type,
+            textContent,
+            imagePath: record.image_path,
+            timestamp: record.timestamp,
+            preview: record.content_type === "image"
+                ? `图片：${record.image_path || "未命名图片"}`
+                : buildClipboardPreview(textContent),
+            matchType,
+        });
+    }
+    matched.sort((a, b) => {
+        const rankDiff = extensionMatchRank(a.matchType || "fuzzy") - extensionMatchRank(b.matchType || "fuzzy");
+        if (rankDiff !== 0) return rankDiff;
+        return b.timestamp - a.timestamp;
+    });
+    return matched.slice(0, 8);
+});
+
+const recentFileSearchResults = computed<RecentFileSearchResult[]>(() => {
+    const keyword = searchKeyword.value.trim();
+    if (!keyword) return [];
+    const tokens = normalizeKeywordTokens(keyword);
+    if (tokens.length === 0) return [];
+
+    const launcherPathSet = new Set<string>();
+    for (const items of Object.values(store.launcherItemsByCategoryId)) {
+        for (const item of items) {
+            if (item.itemType !== "file") continue;
+            const normalized = normalizePathKey(item.path || "");
+            if (normalized) launcherPathSet.add(normalized);
+        }
+    }
+
+    const matched: RecentFileSearchResult[] = [];
+    for (const entry of recentFileCandidates.value) {
+        const normalizedPath = normalizePathKey(entry.path);
+        if (!normalizedPath) continue;
+        if (launcherPathSet.has(normalizedPath)) continue;
+        const matchType = resolveExtensionMatchType(`${entry.name} ${entry.path}`, tokens);
+        if (!matchType) continue;
+
+        matched.push({
+            ...entry,
+            matchType,
+        });
+    }
+    matched.sort((a, b) => {
+        const rankDiff = extensionMatchRank(a.matchType || "fuzzy") - extensionMatchRank(b.matchType || "fuzzy");
+        if (rankDiff !== 0) return rankDiff;
+        return b.usedAt - a.usedAt;
+    });
+    return matched.slice(0, 10);
+});
+
 const showBrowserSearchOption = computed(() => {
     return searchKeyword.value.trim().length > 0
         && (isHomeSearchPending.value || currentSearchResults.value.length <= 3);
@@ -599,6 +1048,8 @@ const totalSearchItemCount = computed(() => {
     if (scannedFallbackSection.value) {
         count += scannedFallbackSection.value.items.length;
     }
+    count += clipboardSearchResults.value.length;
+    count += recentFileSearchResults.value.length;
     return count;
 });
 
@@ -634,7 +1085,7 @@ watch(totalSearchItemCount, (count) => {
 });
 
 watch(
-    [pinnedMergedItems, recentDisplayItems, searchKeyword],
+    [pinnedMergedItems, mergedRecentDisplayItems, searchKeyword],
     ([pinned, recent, keyword]) => {
         if (keyword.trim()) return;
         const targets = [
@@ -642,10 +1093,12 @@ watch(
                 categoryId: item.primaryCategoryId,
                 itemId: item.item.id,
             })),
-            ...recent.map((item) => ({
-                categoryId: item.recent.categoryId,
-                itemId: item.item.id,
-            })),
+            ...recent
+                .filter((item): item is Extract<HomeRecentDisplayItem, RecentUsedMergedItem> => "recent" in item)
+                .map((item) => ({
+                    categoryId: item.recent.categoryId,
+                    itemId: item.item.id,
+                })),
         ];
         void store.hydrateMissingIconsForItems(targets);
     },
@@ -653,8 +1106,19 @@ watch(
 );
 
 function onKeydown(e: KeyboardEvent) {
+    const hasBlockingDialog = !!document.querySelector(".confirm-overlay, .input-overlay");
     if (e.key === "Escape" && showSearchHistoryPanel.value) {
         closeSearchHistoryPanel();
+        return;
+    }
+
+    if (e.key === "Escape" && searchKeyword.value.trim() && !hasBlockingDialog) {
+        e.preventDefault();
+        pendingHomeSearchSelection = null;
+        store.clearSearch();
+        scannedFallbackSection.value = null;
+        isHomeSearchPending.value = false;
+        selectedIndex.value = -1;
         return;
     }
 
@@ -672,22 +1136,64 @@ function onKeydown(e: KeyboardEvent) {
                 const target = getHomeShortcutTarget(
                     shortcutIndex,
                     pinnedMergedItems.value.length,
-                    recentDisplayItems.value.length
+                    stableRecentDisplayItems.value.length
                 );
                 if (target) {
                     if (target.type === "pinned") {
                         launchPinnedWithCd(pinnedMergedItems.value[target.index]);
                     } else if (target.type === "recent") {
-                        launchRecentWithCd(recentDisplayItems.value[target.index]);
+                        launchRecentWithCd(stableRecentDisplayItems.value[target.index]);
                     }
                 }
                 return;
             }
 
             e.preventDefault();
-            if (shortcutIndex < currentSearchResults.value.length) {
+            if (shortcutIndex >= totalSearchItemCount.value) {
+                return;
+            }
+            const launcherCount = currentSearchResults.value.length;
+            if (shortcutIndex < launcherCount) {
                 selectedIndex.value = shortcutIndex;
                 launchSearchWithCd(currentSearchResults.value[shortcutIndex]);
+                return;
+            }
+
+            const browserIndex = showBrowserSearchOption.value ? launcherCount : -1;
+            if (showBrowserSearchOption.value && shortcutIndex === browserIndex) {
+                selectedIndex.value = shortcutIndex;
+                onBrowserSearch();
+                return;
+            }
+
+            const scannedCount = scannedFallbackSection.value?.items.length ?? 0;
+            const scannedStart = launcherCount + (showBrowserSearchOption.value ? 1 : 0);
+            if (
+                shortcutIndex >= scannedStart
+                && shortcutIndex < scannedStart + scannedCount
+                && scannedFallbackSection.value
+            ) {
+                selectedIndex.value = shortcutIndex;
+                onSelectScannedApp(scannedFallbackSection.value.items[shortcutIndex - scannedStart]);
+                return;
+            }
+
+            const clipboardStart = scannedStart + scannedCount;
+            const clipboardCount = clipboardSearchResults.value.length;
+            const recentFileStart = clipboardStart + clipboardCount;
+
+            if (shortcutIndex >= clipboardStart && shortcutIndex < clipboardStart + clipboardCount) {
+                selectedIndex.value = shortcutIndex;
+                selectClipboardWithCd(clipboardSearchResults.value[shortcutIndex - clipboardStart]);
+                return;
+            }
+
+            if (
+                shortcutIndex >= recentFileStart
+                && shortcutIndex < recentFileStart + recentFileSearchResults.value.length
+            ) {
+                selectedIndex.value = shortcutIndex;
+                openRecentFileWithCd(recentFileSearchResults.value[shortcutIndex - recentFileStart]);
             }
             return;
         }
@@ -746,17 +1252,37 @@ function onSearchNav(direction: "up" | "down" | "enter" | "tab") {
 
     const idx = selectedIndex.value;
     const launcherCount = currentSearchResults.value.length;
+    const scannedCount = scannedFallbackSection.value?.items.length ?? 0;
+    const clipboardCount = clipboardSearchResults.value.length;
+    const recentFileCount = recentFileSearchResults.value.length;
 
     if (idx < launcherCount) {
         const result = currentSearchResults.value[idx];
         launchSearchWithCd(result);
-    } else if (showBrowserSearchOption.value && idx === launcherCount) {
+        return;
+    }
+
+    const browserIndex = showBrowserSearchOption.value ? launcherCount : -1;
+    if (showBrowserSearchOption.value && idx === browserIndex) {
         onBrowserSearch();
-    } else if (scannedFallbackSection.value) {
-        const scannedIdx = idx - launcherCount - (showBrowserSearchOption.value ? 1 : 0);
-        if (scannedIdx >= 0 && scannedIdx < scannedFallbackSection.value.items.length) {
-            onSelectScannedApp(scannedFallbackSection.value.items[scannedIdx]);
-        }
+        return;
+    }
+
+    const scannedStart = launcherCount + (showBrowserSearchOption.value ? 1 : 0);
+    if (idx >= scannedStart && idx < scannedStart + scannedCount && scannedFallbackSection.value) {
+        onSelectScannedApp(scannedFallbackSection.value.items[idx - scannedStart]);
+        return;
+    }
+
+    const clipboardStart = scannedStart + scannedCount;
+    if (idx >= clipboardStart && idx < clipboardStart + clipboardCount) {
+        selectClipboardWithCd(clipboardSearchResults.value[idx - clipboardStart]);
+        return;
+    }
+
+    const recentFileStart = clipboardStart + clipboardCount;
+    if (idx >= recentFileStart && idx < recentFileStart + recentFileCount) {
+        openRecentFileWithCd(recentFileSearchResults.value[idx - recentFileStart]);
     }
 }
 </script>
