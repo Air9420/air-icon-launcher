@@ -25,6 +25,7 @@
                 :home-section="homeSection"
                 :shortcut-index="(startIndex ?? 0) + index"
                 :show-shortcut-badge="showShortcutBadge"
+                :is-selected="selectedIndex !== undefined && selectedIndex === index"
                 @click="$emit('select', item)"
             />
         </div>
@@ -49,6 +50,7 @@ withDefaults(defineProps<{
     homeSection?: string;
     startIndex?: number;
     showShortcutBadge?: boolean;
+    selectedIndex?: number;
 }>(), {
     title: "最近使用",
     homeSection: "recent",

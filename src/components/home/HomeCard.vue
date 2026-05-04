@@ -1,7 +1,8 @@
 <template>
     <div class="home-card" :class="{
         'is-launching': isLaunching,
-        'is-success': isSuccess
+        'is-success': isSuccess,
+        'is-selected': !!isSelected
     }" :data-menu-type="menuType" :data-home-section="homeSection" :data-category-id="categoryId"
         :data-item-id="itemId" v-on="longpressHandlers" @pointerdown="onPointerDown" @pointerup="onPointerUp"
         @pointerleave="onPointerLeave" data-no-drag>
@@ -52,6 +53,7 @@ const props = defineProps<{
     cols?: number;
     shortcutIndex?: number;
     showShortcutBadge?: boolean;
+    isSelected?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -135,6 +137,8 @@ function getIconSrc(iconBase64: string) {
     border: 1px solid var(--border-color, transparent);
     min-width: 0;
     position: relative;
+    scroll-margin-top: 8px;
+    scroll-margin-bottom: 8px;
 
     &:hover {
         background: var(--card-bg-hover);
@@ -151,6 +155,11 @@ function getIconSrc(iconBase64: string) {
 
     &.is-success {
         animation: success-shadow 1.2s ease-in-out infinite;
+    }
+
+    &.is-selected {
+        background: var(--card-bg-hover);
+        box-shadow: 0 0 0 2px var(--primary-color, #0078d4), var(--card-shadow-light);
     }
 }
 

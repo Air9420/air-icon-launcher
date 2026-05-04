@@ -22,6 +22,7 @@
                 class="categorie-item"
                 :class="{
                     editing: isEditing && element.id === editingCategoryId,
+                    'is-selected': selectedCategoryId === element.id,
                 }"
                 data-menu-type="Home-Group-Item"
                 :data-category-id="element.id"
@@ -86,6 +87,7 @@ const props = defineProps<{
     editingCategoryId: string | null;
     editingCategoryName: string;
     isNewCategory?: boolean;
+    selectedCategoryId?: string | null;
 }>();
 
 defineEmits<{
@@ -252,6 +254,8 @@ function getNameFontSize(name: string): number {
         cursor: pointer;
         box-shadow: var(--card-shadow-light);
         transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+        scroll-margin-top: 8px;
+        scroll-margin-bottom: 8px;
 
         &:hover {
             @media (hover: hover) {
@@ -265,6 +269,10 @@ function getNameFontSize(name: string): number {
         pointer-events: auto;
         cursor: text;
         animation: categorie-editing-shadow 1.2s ease-in-out infinite;
+    }
+    .categorie-item.is-selected {
+        opacity: 1;
+        box-shadow: 0 0 0 2px var(--primary-color, #0078d4), var(--card-shadow-light);
     }
     .categorie-icon-wrapper {
         width: 60%;

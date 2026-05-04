@@ -15,6 +15,7 @@
                     :cols="layout.cols" menu-type="Icon-Item" home-section="pinned"
                     :shortcut-index="(startIndex ?? 0) + index"
                     :show-shortcut-badge="showShortcutBadge"
+                    :is-selected="selectedIndex !== undefined && selectedIndex === index"
                     @click="onItemClick(element)">
                 </HomeCard>
             </template>
@@ -34,6 +35,7 @@ defineProps<{
     getLaunchStatus: (itemId: string) => "launching" | "success" | undefined;
     startIndex?: number;
     showShortcutBadge?: boolean;
+    selectedIndex?: number;
 }>();
 
 const emit = defineEmits<{

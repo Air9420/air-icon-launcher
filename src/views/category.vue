@@ -1,7 +1,14 @@
 <template>
-    <div class="category-view">
+    <div ref="categoryViewRef" class="category-view">
         <header class="category-header" data-tauri-drag-region>
-            <button class="back-btn" type="button" @click="onBack" @mousedown.stop>
+            <button
+                ref="backBtnRef"
+                class="back-btn"
+                :class="{ 'is-keyboard-focus': tabRegion === 'back' }"
+                type="button"
+                @click="onBack"
+                @mousedown.stop
+            >
                 返回
             </button>
             <div class="category-title" data-tauri-drag-region>
@@ -66,6 +73,7 @@
                     :class="{
                         'is-pinned': isItemPinned(entry.item.id),
                         'is-selected': isItemSelected(entry.item.id),
+                        'is-keyboard-focus': isLauncherKeyboardNavActive && focusedLauncherItemId === entry.item.id,
                     }"
                     data-menu-type="Icon-Item"
                     :data-category-id="categoryId"
@@ -146,6 +154,7 @@
                         :class="{
                             'is-pinned': isItemPinned(element.id),
                             'is-selected': isItemSelected(element.id),
+                            'is-keyboard-focus': isLauncherKeyboardNavActive && focusedLauncherItemId === element.id,
                         }"
                         data-menu-type="Icon-Item"
                         :data-category-id="categoryId"
@@ -345,6 +354,8 @@ const categorySearchResults = ref<RustSearchResult[]>([]);
 const isCategorySearchPending = ref(false);
 const launcherColsOptions = [4, 5, 6] as const;
 const searchBoxRef = ref<InstanceType<typeof SearchBox> | null>(null);
+const categoryViewRef = ref<HTMLElement | null>(null);
+const backBtnRef = ref<HTMLButtonElement | null>(null);
 const selectedItemIds = ref<string[]>([]);
 const activeBulkPanel = ref<"move" | "edit" | null>(null);
 const bulkMoveTargetCategoryId = ref("");
@@ -357,6 +368,10 @@ type LaunchStatus = "launching" | "success";
 const launchStatusMap = ref<Map<string, LaunchStatus>>(new Map());
 const hideName = computed(() => (launcherCols.value ?? 5) >= 6);
 const isSearchActive = computed(() => localSearchKeyword.value.trim().length > 0);
+type CategoryTabRegion = "search" | "items" | "back";
+const tabRegion = ref<CategoryTabRegion>("search");
+const isLauncherKeyboardNavActive = ref(false);
+const focusedLauncherIndex = ref(0);
 
 function setLaunchStatus(itemId: string, status: LaunchStatus) {
     launchStatusMap.value.set(itemId, status);
@@ -396,12 +411,17 @@ onMounted(async () => {
         localSearchKeyword.value = "";
         categorySearchResults.value = [];
         isCategorySearchPending.value = false;
+        resetTabCycleState();
         nextTick(() => {
             searchBoxRef.value?.focus();
         });
     });
 
+    document.addEventListener("keydown", onCategoryKeydown, true);
+    document.addEventListener("mousedown", onCategoryMouseDown, true);
+
     nextTick(() => {
+        resetTabCycleState();
         searchBoxRef.value?.focus();
     });
 });
@@ -409,6 +429,8 @@ onMounted(async () => {
 onUnmounted(() => {
     if (unlistenFocus) unlistenFocus();
     if (unlistenShow) unlistenShow();
+    document.removeEventListener("keydown", onCategoryKeydown, true);
+    document.removeEventListener("mousedown", onCategoryMouseDown, true);
 });
 
 const title = computed(() => {
@@ -461,6 +483,20 @@ const categorySearchItems = computed<CategorySearchEntry[]>(() => {
             };
         })
         .filter((entry): entry is CategorySearchEntry => entry !== null);
+});
+
+const visibleLauncherItems = computed<LauncherItem[]>(() => {
+    if (isSearchActive.value) {
+        return categorySearchItems.value.map((entry) => entry.item);
+    }
+    return items.value;
+});
+
+const focusedLauncherItemId = computed<string | null>(() => {
+    const list = visibleLauncherItems.value;
+    if (list.length === 0) return null;
+    const safeIndex = Math.max(0, Math.min(focusedLauncherIndex.value, list.length - 1));
+    return list[safeIndex]?.id ?? null;
 });
 
 watch(
@@ -589,6 +625,7 @@ watch(
 watch(
     () => props.categoryId,
     async () => {
+        resetTabCycleState();
         clearSelection();
         categorySearchContextId += 1;
         categorySearchRequestId += 1;
@@ -625,8 +662,187 @@ watchEffect(() => {
     categoryStore.setCurrentCategory(props.categoryId);
 });
 
+watch(visibleLauncherItems, (list) => {
+    if (list.length === 0) {
+        focusedLauncherIndex.value = 0;
+        if (tabRegion.value === "items") {
+            tabRegion.value = "search";
+            isLauncherKeyboardNavActive.value = false;
+            nextTick(() => {
+                searchBoxRef.value?.focus();
+            });
+        }
+        return;
+    }
+    focusedLauncherIndex.value = Math.max(0, Math.min(focusedLauncherIndex.value, list.length - 1));
+});
+
 function onBack() {
+    resetTabCycleState();
     router.push("/categories");
+}
+
+function resetTabCycleState() {
+    tabRegion.value = "search";
+    isLauncherKeyboardNavActive.value = false;
+    focusedLauncherIndex.value = 0;
+}
+
+function blurSearchInput() {
+    const input = categoryViewRef.value?.querySelector<HTMLInputElement>("input.search-input");
+    input?.blur();
+}
+
+function scrollFocusedLauncherIntoView() {
+    if (!isLauncherKeyboardNavActive.value || tabRegion.value !== "items") return;
+    const focusedId = focusedLauncherItemId.value;
+    if (!focusedId) return;
+    const node = categoryViewRef.value?.querySelector<HTMLElement>(
+        `.icon-item[data-item-id="${focusedId}"]`
+    );
+    node?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+}
+
+function rotateTabRegion(reverse = false) {
+    const order: CategoryTabRegion[] = ["search", "items", "back"];
+    const step = reverse ? -1 : 1;
+    const current = order.indexOf(tabRegion.value);
+    const nextIndex = (current + step + order.length) % order.length;
+    const nextRegion = order[nextIndex];
+
+    if (nextRegion === "search") {
+        resetTabCycleState();
+        nextTick(() => {
+            searchBoxRef.value?.focus();
+        });
+        return;
+    }
+
+    if (nextRegion === "items") {
+        tabRegion.value = "items";
+        isLauncherKeyboardNavActive.value = visibleLauncherItems.value.length > 0;
+        blurSearchInput();
+        nextTick(() => {
+            scrollFocusedLauncherIntoView();
+        });
+        return;
+    }
+
+    tabRegion.value = "back";
+    isLauncherKeyboardNavActive.value = false;
+    blurSearchInput();
+    nextTick(() => {
+        backBtnRef.value?.focus();
+    });
+}
+
+function moveLauncherFocusByArrow(key: "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight") {
+    const list = visibleLauncherItems.value;
+    if (list.length === 0) return;
+    const cols = Math.max(1, launcherCols.value || 1);
+    const current = Math.max(0, Math.min(focusedLauncherIndex.value, list.length - 1));
+    let next = current;
+
+    if (key === "ArrowLeft") next = Math.max(0, current - 1);
+    if (key === "ArrowRight") next = Math.min(list.length - 1, current + 1);
+    if (key === "ArrowUp") next = Math.max(0, current - cols);
+    if (key === "ArrowDown") next = Math.min(list.length - 1, current + cols);
+
+    focusedLauncherIndex.value = next;
+    nextTick(() => {
+        scrollFocusedLauncherIntoView();
+    });
+}
+
+function launchFocusedLauncherItem() {
+    const focusedId = focusedLauncherItemId.value;
+    if (!focusedId) return;
+    const item = itemById.value.get(focusedId);
+    if (!item) return;
+    launchItemWithCd(item);
+}
+
+function onCategoryKeydown(e: KeyboardEvent) {
+    const hasBlockingDialog = !!document.querySelector(".confirm-overlay, .input-overlay");
+    if (hasBlockingDialog) return;
+
+    if (e.key === "Tab") {
+        e.preventDefault();
+        rotateTabRegion(e.shiftKey);
+        return;
+    }
+
+    if (e.key === "Escape") {
+        const isSearchInputTarget = e.target instanceof HTMLInputElement
+            && e.target.classList.contains("search-input");
+        const targetInputValue = isSearchInputTarget ? e.target.value.trim() : "";
+
+        if (isSearchInputTarget && targetInputValue.length > 0) {
+            // 输入框有内容时，第一下 Esc 只交给 SearchBox 清空，不触发返回。
+            return;
+        }
+
+        e.preventDefault();
+        if (isSearchInputTarget && localSearchKeyword.value.trim()) {
+            localSearchKeyword.value = "";
+            return;
+        }
+        onBack();
+        return;
+    }
+
+    if (tabRegion.value === "items") {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            launchFocusedLauncherItem();
+            return;
+        }
+        if (
+            e.key === "ArrowUp"
+            || e.key === "ArrowDown"
+            || e.key === "ArrowLeft"
+            || e.key === "ArrowRight"
+        ) {
+            e.preventDefault();
+            moveLauncherFocusByArrow(
+                e.key as "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight"
+            );
+        }
+        return;
+    }
+
+    if (tabRegion.value === "back" && e.key === "Enter") {
+        e.preventDefault();
+        onBack();
+    }
+}
+
+function onCategoryMouseDown(event: MouseEvent) {
+    if (tabRegion.value === "search") return;
+    if (!(event.target instanceof Element)) return;
+
+    const clickedBackButton = !!event.target.closest(".back-btn");
+    const clickedSearch = !!event.target.closest(".header-search");
+    const clickedLauncherItem = !!event.target.closest(".icon-item[data-item-id]");
+
+    if (clickedBackButton) {
+        tabRegion.value = "back";
+        isLauncherKeyboardNavActive.value = false;
+        return;
+    }
+
+    if (clickedSearch) {
+        resetTabCycleState();
+        return;
+    }
+
+    if (clickedLauncherItem) {
+        tabRegion.value = "items";
+        isLauncherKeyboardNavActive.value = true;
+        return;
+    }
+
+    resetTabCycleState();
 }
 
 function onSetLauncherColsFromStatus(cols: number) {
@@ -976,6 +1192,10 @@ function hasLaunchDependencies(item: LauncherItem): boolean {
     background: var(--hover-bg-strong);
 }
 
+.back-btn.is-keyboard-focus {
+    box-shadow: 0 0 0 2px var(--primary-color, #0078d4) !important;
+}
+
 .category-title {
     font-size: 16px;
     font-weight: 700;
@@ -1032,14 +1252,27 @@ function hasLaunchDependencies(item: LauncherItem): boolean {
 }
 
 .icon-item.is-pinned {
-    border: 2px solid var(--primary-color);
+    border: 2px dashed color-mix(in srgb, var(--primary-color) 70%, transparent);
+    background: color-mix(in srgb, var(--primary-color) 8%, var(--card-bg));
     opacity: 1;
 }
 
 .icon-item.is-selected {
     opacity: 1;
+    border-style: solid;
+    border-color: var(--success-color, #22c55e);
+    background: color-mix(in srgb, var(--success-color, #22c55e) 12%, var(--card-bg));
+}
+
+.icon-item.is-keyboard-focus {
+    opacity: 1;
+    border-style: solid;
     border-color: var(--primary-color);
-    background: var(--hover-bg);
+    box-shadow: 0 0 0 2px var(--primary-color, #0078d4), var(--card-shadow);
+}
+
+.icon-item.is-pinned.is-selected {
+    border-style: solid;
 }
 
 .icon-img {
