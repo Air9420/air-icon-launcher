@@ -1062,6 +1062,24 @@ export const useLauncherStore = defineStore(
       options: ImportLauncherItemsOptions = {},
     ) {
       await importLauncherItems(snapshot.items, { ...options, suppressEvents: true });
+      const validItemIds = new Set(
+        Object.values(snapshot.items).flatMap((items) => items.map((item) => item.id)),
+      );
+      const filterScenarioIds = (ids: string[]) => {
+        const dedupedIds = new Set<string>();
+        return ids.filter((id) => {
+          if (!validItemIds.has(id) || dedupedIds.has(id)) {
+            return false;
+          }
+          dedupedIds.add(id);
+          return true;
+        });
+      };
+      scenarioItemIds.value = {
+        work: filterScenarioIds(scenarioItemIds.value.work ?? []),
+        dev: filterScenarioIds(scenarioItemIds.value.dev ?? []),
+        play: filterScenarioIds(scenarioItemIds.value.play ?? []),
+      };
       pinnedItemIds.value = [...new Set(snapshot.pinnedItemIds ?? [])];
       recentUsedItems.value = [...(snapshot.recentUsedItems ?? [])];
       const stats = useStatsStore();

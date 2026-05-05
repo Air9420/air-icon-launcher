@@ -217,6 +217,22 @@ describe("launcherStore - pure functions", () => {
       ).toEqual([]);
     });
 
+    it("deleteLauncherItems also cleans up scenario item ids", () => {
+      store.addLauncherItemsToCategory("cat-1", {
+        paths: ["C:\\a.exe", "C:\\b.exe", "C:\\c.exe"],
+        directories: [],
+        icon_base64s: [null, null, null],
+      });
+      const items = store.getLauncherItemsByCategoryId("cat-1");
+      store.toggleScenarioItem("work", items[0].id);
+      store.toggleScenarioItem("work", items[1].id);
+      store.toggleScenarioItem("work", items[2].id);
+
+      store.deleteLauncherItems("cat-1", [items[0].id, items[2].id]);
+
+      expect(store.scenarioItemIds.work).toEqual([items[1].id]);
+    });
+
     it("updateLauncherItem patches name", () => {
       store.addLauncherItemsToCategory("cat-1", {
         paths: ["C:\\a.exe"],
@@ -512,6 +528,60 @@ describe("launcherStore - pure functions", () => {
       expect(secondResolved).toBe(true);
       expect(store.isRustSearchReady).toBe(true);
     });
+
+    it("keeps only valid scenario item ids after import while preserving order and dedupe", async () => {
+      store.scenarioItemIds = {
+        work: ["item-ghost", "item-2", "item-1", "item-2"],
+        dev: ["item-3", "item-3", "item-missing"],
+        play: ["item-missing"],
+      };
+
+      await store.importLauncherSnapshot({
+        items: {
+          "cat-new": [
+            {
+              id: "item-1",
+              name: "new-1",
+              path: "C:\\new-1.exe",
+              itemType: "file",
+              isDirectory: false,
+              iconBase64: null,
+              hasCustomIcon: false,
+              launchDependencies: [],
+              launchDelaySeconds: 0,
+            },
+            {
+              id: "item-2",
+              name: "new-2",
+              path: "C:\\new-2.exe",
+              itemType: "file",
+              isDirectory: false,
+              iconBase64: null,
+              hasCustomIcon: false,
+              launchDependencies: [],
+              launchDelaySeconds: 0,
+            },
+            {
+              id: "item-3",
+              name: "new-3",
+              path: "C:\\new-3.exe",
+              itemType: "file",
+              isDirectory: false,
+              iconBase64: null,
+              hasCustomIcon: false,
+              launchDependencies: [],
+              launchDelaySeconds: 0,
+            },
+          ],
+        },
+      });
+
+      expect(store.scenarioItemIds).toEqual({
+        work: ["item-2", "item-1"],
+        dev: ["item-3"],
+        play: [],
+      });
+    });
   });
 
   describe("setLauncherItemIcon / resetLauncherItemIcon / hasCustomIcon", () => {
@@ -801,6 +871,35 @@ describe("launcherStore - pure functions", () => {
       expect(
         store.getLauncherItemById("cat-2", dependentItem.id)?.launchDependencies
       ).toEqual([]);
+    });
+
+    it("cleans up scenario item ids for deleted category items", () => {
+      store.addLauncherItemsToCategory("cat-1", {
+        paths: ["C:\\a.exe", "C:\\b.exe"],
+        directories: [],
+        icon_base64s: [null, null],
+      });
+      store.addLauncherItemsToCategory("cat-2", {
+        paths: ["C:\\c.exe"],
+        directories: [],
+        icon_base64s: [null],
+      });
+
+      const cat1Items = store.getLauncherItemsByCategoryId("cat-1");
+      const cat2Item = store.getLauncherItemsByCategoryId("cat-2")[0];
+      store.scenarioItemIds = {
+        work: [cat1Items[0].id, cat2Item.id, cat1Items[1].id],
+        dev: [cat1Items[1].id],
+        play: [],
+      };
+
+      store.deleteCategoryCleanup("cat-1");
+
+      expect(store.scenarioItemIds).toEqual({
+        work: [cat2Item.id],
+        dev: [],
+        play: [],
+      });
     });
   });
 
