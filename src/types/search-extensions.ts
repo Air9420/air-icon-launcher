@@ -1,5 +1,14 @@
 export type ExtensionSearchMatchType = "exact" | "prefix" | "substring" | "fuzzy";
 
+export type CommandSearchResult = {
+    key: string;
+    title: string;
+    subtitle?: string;
+    commandText: string;
+    matchType?: ExtensionSearchMatchType;
+    action: string;
+};
+
 export type ClipboardSearchResult = {
     key: string;
     id: string;

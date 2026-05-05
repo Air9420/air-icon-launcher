@@ -1,5 +1,46 @@
 <template>
     <div class="global-search-results">
+        <template v-if="commandResults.length > 0">
+            <div class="extension-section-divider">
+                <span class="extension-section-title">⚡ 场景命令（{{ commandResults.length }}）</span>
+            </div>
+            <div class="search-result-list">
+                <div
+                    v-for="(entry, i) in commandResults"
+                    :key="entry.key"
+                    :ref="el => setItemRef(el, commandStartIndex + i)"
+                    class="search-result-item extension-item command-item"
+                    :class="{ 'is-selected': selectedIndex === commandStartIndex + i }"
+                    @click.left="$emit('select-command', entry)"
+                >
+                    <div
+                        v-if="commandStartIndex + i < 10"
+                        class="shortcut-hint"
+                        :class="{ 'is-visible': !!showShortcutHints }"
+                        aria-hidden="true"
+                    >
+                        {{ getShortcutLabel(commandStartIndex + i) }}
+                    </div>
+                    <div class="result-icon">
+                        <div class="icon-fallback extension-icon">⚡</div>
+                    </div>
+                    <div class="result-info">
+                        <div class="result-name">{{ entry.title }}</div>
+                        <div class="result-meta">
+                            <span
+                                class="match-type-chip"
+                                :class="`is-${entry.matchType || 'fuzzy'}`"
+                            >
+                                {{ getSearchMatchTypeLabel(entry.matchType || "fuzzy") }}
+                            </span>
+                            <span class="result-category-chip">{{ entry.commandText }}</span>
+                            <span v-if="entry.subtitle" class="result-category-chip">{{ entry.subtitle }}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>
+
         <div v-if="safeResults.length > 0 || showBrowserSearch" class="search-result-header">
             搜索结果 ( {{ safeResults.length }} )
         </div>
@@ -7,12 +48,12 @@
             <div
                 v-for="(result, index) in safeResults"
                 :key="result.key"
-                :ref="el => setItemRef(el, index)"
+                :ref="el => setItemRef(el, launcherStartIndex + index)"
                 class="search-result-item"
                 :class="{
                     'is-launching': getLaunchStatus(result.item.id) === 'launching',
                     'is-success': getLaunchStatus(result.item.id) === 'success',
-                    'is-selected': selectedIndex === index
+                    'is-selected': selectedIndex === launcherStartIndex + index
                 }"
                 :data-menu-type="'Icon-Item'"
                 :data-item-id="result.item.id"
@@ -21,12 +62,12 @@
                 @click.left="$emit('select', result)"
             >
                 <div
-                    v-if="index < 10"
+                    v-if="launcherStartIndex + index < 10"
                     class="shortcut-hint"
                     :class="{ 'is-visible': !!showShortcutHints }"
                     aria-hidden="true"
                 >
-                    {{ getShortcutLabel(index) }}
+                    {{ getShortcutLabel(launcherStartIndex + index) }}
                 </div>
                 <div class="result-icon">
                     <img
@@ -273,7 +314,7 @@ import {
     getHotkeyForIndex,
 } from "../../utils/search-ui";
 import type { ScannedAppEntry, ScannedFallbackSection } from "../../types/scan-cache";
-import type { ClipboardSearchResult, RecentFileSearchResult } from "../../types/search-extensions";
+import type { CommandSearchResult, ClipboardSearchResult, RecentFileSearchResult } from "../../types/search-extensions";
 
 const props = defineProps<{
     results: GlobalSearchMergedResult[];
@@ -283,12 +324,14 @@ const props = defineProps<{
     showShortcutHints?: boolean;
     isPending?: boolean;
     scannedSection?: ScannedFallbackSection | null;
+    commandResults?: CommandSearchResult[];
     clipboardResults?: ClipboardSearchResult[];
     recentFileResults?: RecentFileSearchResult[];
 }>();
 
 defineEmits<{
     (e: "select", result: GlobalSearchMergedResult): void;
+    (e: "select-command", entry: CommandSearchResult): void;
     (e: "browser-search"): void;
     (e: "select-scanned", entry: ScannedAppEntry): void;
     (e: "select-clipboard", entry: ClipboardSearchResult): void;
@@ -297,6 +340,7 @@ defineEmits<{
 
 const safeResults = computed(() => props.results ?? []);
 const safeScannedItems = computed(() => props.scannedSection?.items ?? []);
+const commandResults = computed(() => props.commandResults ?? []);
 const clipboardResults = computed(() => props.clipboardResults ?? []);
 const recentFileResults = computed(() => props.recentFileResults ?? []);
 
@@ -304,7 +348,11 @@ const showBrowserSearch = computed(() => {
     return props.keyword.trim().length > 0 && (props.isPending || safeResults.value.length <= 3);
 });
 
-const browserSearchIndex = computed(() => safeResults.value.length);
+const commandStartIndex = computed(() => 0);
+
+const launcherStartIndex = computed(() => commandStartIndex.value + commandResults.value.length);
+
+const browserSearchIndex = computed(() => launcherStartIndex.value + safeResults.value.length);
 
 const scannedStartIndex = computed(() => {
     return safeResults.value.length + (showBrowserSearch.value ? 1 : 0);
