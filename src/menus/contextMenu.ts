@@ -11,7 +11,7 @@ export const SCENARIO_KEYS: readonly ScenarioKey[] = ["work", "dev", "play"];
  * 构建当前右键上下文下的菜单模型（内置 + 插件贡献项）。
  */
 export function buildContextMenuModel(ctx: MenuContext): MenuItem[] {
-  const builtin = buildBuiltinMenuModel(ctx);
+  const builtin = buildBuiltinMenuModel();
   const plugin = getContextMenuContributions(ctx.menuType).map((x) => {
     return contributionToMenuItem(x, ctx);
   });
@@ -22,7 +22,7 @@ export function buildContextMenuModel(ctx: MenuContext): MenuItem[] {
 /**
  * 构建应用内置的右键菜单模型（不含插件项）。
  */
-function buildBuiltinMenuModel(ctx: MenuContext): MenuItem[] {
+function buildBuiltinMenuModel(): MenuItem[] {
   const items: MenuItem[] = [
     {
       type: "item",

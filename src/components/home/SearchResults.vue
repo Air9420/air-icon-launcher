@@ -355,7 +355,7 @@ const launcherStartIndex = computed(() => commandStartIndex.value + commandResul
 const browserSearchIndex = computed(() => launcherStartIndex.value + safeResults.value.length);
 
 const scannedStartIndex = computed(() => {
-    return safeResults.value.length + (showBrowserSearch.value ? 1 : 0);
+    return browserSearchIndex.value + (showBrowserSearch.value ? 1 : 0);
 });
 
 const clipboardStartIndex = computed(() => {

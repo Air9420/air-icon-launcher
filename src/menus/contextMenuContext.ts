@@ -31,9 +31,10 @@ export function buildMenuContextFromProps(
   menuType: enumContextMenuType,
   isItemInScenario: ItemScenarioChecker,
 ): MenuContext {
-  const itemScenarios = props.currentItemId
+  const currentItemId = props.currentItemId;
+  const itemScenarios = currentItemId
     ? SCENARIO_KEYS.filter((scenario) =>
-        isItemInScenario(scenario, props.currentItemId),
+        isItemInScenario(scenario, currentItemId),
       )
     : [];
 
