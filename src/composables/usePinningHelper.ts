@@ -314,15 +314,29 @@ export function usePinningHelper(
         if (!raw || raw.length === 0) return [];
 
         const stats = useStatsStore();
-        const orderMap = new Map(
+        const pinnedSet = new Set(pinnedItemIds.value);
+        const pinnedItems = raw.filter((item) => pinnedSet.has(item.id));
+        const unpinnedItems = raw.filter((item) => !pinnedSet.has(item.id));
+
+        const pinnedOrderMap = new Map(
             stats
-                .getSmartSortOrder(categoryId, raw.map(i => i.id), pinnedItemIds.value)
+                .getSmartSortOrder(categoryId, pinnedItems.map((i) => i.id), pinnedItemIds.value)
+                .map((id, idx) => [id, idx] as const)
+        );
+        const unpinnedOrderMap = new Map(
+            stats
+                .getSmartSortOrder(categoryId, unpinnedItems.map((i) => i.id), pinnedItemIds.value)
                 .map((id, idx) => [id, idx] as const)
         );
 
         return [...raw].sort((a, b) => {
-            const aOrder = orderMap.get(a.id) ?? 9999;
-            const bOrder = orderMap.get(b.id) ?? 9999;
+            const aPinned = pinnedSet.has(a.id);
+            const bPinned = pinnedSet.has(b.id);
+            if (aPinned !== bPinned) return aPinned ? -1 : 1;
+
+            const orderMap = aPinned ? pinnedOrderMap : unpinnedOrderMap;
+            const aOrder = orderMap.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+            const bOrder = orderMap.get(b.id) ?? Number.MAX_SAFE_INTEGER;
             return aOrder - bOrder;
         });
     }
