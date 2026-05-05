@@ -1,5 +1,6 @@
 import { enumContextMenuType } from "./contextMenuTypes";
 import { HOME_LAYOUT_PRESETS } from "../stores";
+import { useLauncherStore, type ScenarioKey } from "../stores/launcherStore";
 import { getContextMenuContributions } from "../plugins/contextMenuRegistry";
 import type { MenuContext, MenuItem } from "./contextMenuTypes";
 import { evaluateCondition } from "./conditions";
@@ -19,7 +20,14 @@ export function buildContextMenuModel(ctx: MenuContext): MenuItem[] {
 /**
  * 构建应用内置的右键菜单模型（不含插件项）。
  */
-function buildBuiltinMenuModel(_ctx: MenuContext): MenuItem[] {
+function buildBuiltinMenuModel(ctx: MenuContext): MenuItem[] {
+  const launcherStore = useLauncherStore();
+  const scenarioKeys: ScenarioKey[] = ["work", "dev", "play"];
+  const toCheckedCondition = (checked: boolean) =>
+    checked ? { and: [] as const } : { not: { and: [] as const } };
+  const isScenarioChecked = (scenario: ScenarioKey) =>
+    !!ctx.itemId && launcherStore.isItemInScenario(scenario, ctx.itemId);
+
   const items: MenuItem[] = [
     {
       type: "item",
@@ -85,6 +93,27 @@ function buildBuiltinMenuModel(_ctx: MenuContext): MenuItem[] {
           { item: { customIcon: true } },
         ],
       },
+    },
+    {
+      type: "group",
+      id: "builtin:group:scenario-membership",
+      title: "加入场景",
+      order: 55,
+      visible: {
+        and: [
+          { menuType: enumContextMenuType.IconItem },
+          { category: true },
+        ],
+      },
+      children: scenarioKeys.map((scenario, index) => ({
+        type: "item" as const,
+        id: `builtin:toggle-scenario-membership:${scenario}`,
+        label: scenario,
+        action: { kind: "toggle-scenario-membership", scenario },
+        order: 55 + index,
+        mode: "checkbox" as const,
+        checked: toCheckedCondition(isScenarioChecked(scenario)),
+      })),
     },
     {
       type: "item",

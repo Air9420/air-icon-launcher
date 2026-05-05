@@ -30,6 +30,11 @@ export type BuiltinMenuAction =
     | { kind: "add-item" }
     | { kind: "edit-item" }
     | { kind: "delete-item" }
+    | {
+          kind: "toggle-scenario-membership";
+          scenario: "work" | "dev" | "play";
+      }
+    | { kind: "clear-scenario-membership" }
     | { kind: "add-category" }
     | { kind: "delete-category" }
     | { kind: "rename-category" }

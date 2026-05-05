@@ -616,6 +616,18 @@ export function useMenuActions(options: UseMenuActionsOptions) {
         store.togglePinned(currentCategoryId.value, currentLauncherItemId.value);
     }
 
+    function onToggleScenarioMembership(scenario: "work" | "dev" | "play") {
+        if (!currentLauncherItemId.value) return;
+        store.toggleScenarioItem(scenario, currentLauncherItemId.value);
+        closeContextMenu();
+    }
+
+    function onClearScenarioMembership() {
+        if (!currentLauncherItemId.value) return;
+        store.removeItemFromAllScenarios(currentLauncherItemId.value);
+        closeContextMenu();
+    }
+
     /**
      * 打开设置页面
      * 
@@ -854,6 +866,10 @@ export function useMenuActions(options: UseMenuActionsOptions) {
         if (action.kind === "set-category-cols") return onSetCategoryCols(action.cols);
         if (action.kind === "set-launcher-cols") return onSetLauncherCols(action.cols);
         if (action.kind === "set-category-sort-mode") return onSetCategorySortMode(action.mode);
+        if (action.kind === "toggle-scenario-membership") {
+            return onToggleScenarioMembership(action.scenario);
+        }
+        if (action.kind === "clear-scenario-membership") return onClearScenarioMembership();
         if (action.kind === "set-home-layout-preset") {
             const section = ctx.homeSection ?? action.section;
             return onSetHomeLayoutPreset(section, action.preset);
