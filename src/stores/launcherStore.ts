@@ -45,6 +45,9 @@ export type LaunchDependency = {
   delayAfterSeconds: number;
 };
 
+export type ScenarioKey = "work" | "dev" | "play";
+export type ScenarioItemIds = Record<ScenarioKey, string[]>;
+
 export type GlobalSearchResult = {
   item: LauncherItem;
   categoryId: string;
@@ -130,6 +133,11 @@ export const useLauncherStore = defineStore(
     const pinnedItemIds = ref<string[]>([]);
     const recentUsedItems = ref<RecentUsedItem[]>([]);
     const launcherItemsByCategoryId = ref<Record<string, LauncherItem[]>>({});
+    const scenarioItemIds = ref<ScenarioItemIds>({
+      work: [],
+      dev: [],
+      play: [],
+    });
 
     const rustSearchResults = ref<RustSearchResult[]>([]);
     const isRustSearchReady = ref(false);
@@ -361,6 +369,63 @@ export const useLauncherStore = defineStore(
       }
     }
 
+    function toggleScenarioItem(scenario: ScenarioKey, itemId: string) {
+      const current = scenarioItemIds.value[scenario] ?? [];
+      const exists = current.includes(itemId);
+      const nextIds = exists
+        ? current.filter((id) => id !== itemId)
+        : [...new Set([...current, itemId])];
+      scenarioItemIds.value = {
+        ...scenarioItemIds.value,
+        [scenario]: nextIds,
+      };
+    }
+
+    function removeItemFromAllScenarios(itemId: string) {
+      let changed = false;
+      const next: ScenarioItemIds = {
+        work: scenarioItemIds.value.work,
+        dev: scenarioItemIds.value.dev,
+        play: scenarioItemIds.value.play,
+      };
+
+      (["work", "dev", "play"] as const).forEach((scenario) => {
+        const filtered = next[scenario].filter((id) => id !== itemId);
+        if (filtered.length !== next[scenario].length) {
+          changed = true;
+          next[scenario] = filtered;
+        }
+      });
+
+      if (changed) {
+        scenarioItemIds.value = next;
+      }
+    }
+
+    function isItemInScenario(scenario: ScenarioKey, itemId: string) {
+      return scenarioItemIds.value[scenario].includes(itemId);
+    }
+
+    function getScenarioLaunchItems(
+      scenario: ScenarioKey,
+    ): Array<{ categoryId: string; item: LauncherItem }> {
+      const result: Array<{ categoryId: string; item: LauncherItem }> = [];
+      const ids = scenarioItemIds.value[scenario];
+
+      for (const itemId of ids) {
+        for (const [categoryId, items] of Object.entries(
+          launcherItemsByCategoryId.value,
+        )) {
+          const item = items.find((candidate) => candidate.id === itemId);
+          if (!item) continue;
+          result.push({ categoryId, item });
+          break;
+        }
+      }
+
+      return result;
+    }
+
     function deleteLauncherItem(categoryId: string, itemId: string) {
       const list = getLauncherItemsByCategoryId(categoryId);
       const index = list.findIndex((x) => x.id === itemId);
@@ -378,6 +443,7 @@ export const useLauncherStore = defineStore(
         (dependency) =>
           dependency.categoryId === categoryId && dependency.itemId === itemId,
       );
+      removeItemFromAllScenarios(itemId);
       itemEventBus.emit({ type: 'item:deleted', categoryId, itemId });
     }
 
@@ -408,6 +474,9 @@ export const useLauncherStore = defineStore(
           dependency.categoryId === categoryId &&
           targetIds.has(dependency.itemId),
       );
+      for (const itemId of targetIds) {
+        removeItemFromAllScenarios(itemId);
+      }
       for (const item of removedItems) {
         itemEventBus.emit({ type: 'item:deleted', categoryId, itemId: item.id });
       }
@@ -842,6 +911,9 @@ export const useLauncherStore = defineStore(
       removeDependenciesMatching(
         (dependency) => dependency.categoryId === categoryId,
       );
+      for (const itemId of removedItemIds) {
+        removeItemFromAllScenarios(itemId);
+      }
       if (removedItems.length > 0) {
         for (const item of removedItems) {
           itemEventBus.emit({ type: 'item:deleted', categoryId, itemId: item.id });
@@ -1061,6 +1133,7 @@ export const useLauncherStore = defineStore(
       pinnedItemIds,
       recentUsedItems,
       launcherItemsByCategoryId,
+      scenarioItemIds,
       rustSearchResults,
       isRustSearchReady,
       createLauncherItemId,
@@ -1101,6 +1174,10 @@ export const useLauncherStore = defineStore(
       getRecentUsedItemInfo,
       getRecentUsedMergedItems,
       getPinnedMergedItems,
+      toggleScenarioItem,
+      removeItemFromAllScenarios,
+      isItemInScenario,
+      getScenarioLaunchItems,
       syncSearchIndex,
       searchLauncherItems,
       rustSearch,
@@ -1116,6 +1193,7 @@ export const useLauncherStore = defineStore(
       "launcherItemsByCategoryId",
       "pinnedItemIds",
       "recentUsedItems",
+      "scenarioItemIds",
     ]),
   },
 );

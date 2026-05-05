@@ -803,4 +803,35 @@ describe("launcherStore - pure functions", () => {
       ).toEqual([]);
     });
   });
+
+  describe("scenario item ids", () => {
+    it("scenario membership can be toggled and deduped", () => {
+      store.addLauncherItemsToCategory("cat-1", {
+        paths: ["C:\\a.exe"],
+        directories: [],
+        icon_base64s: [null],
+      });
+      const item = store.getLauncherItemsByCategoryId("cat-1")[0];
+
+      store.toggleScenarioItem("work", item.id);
+      store.toggleScenarioItem("work", item.id);
+      store.toggleScenarioItem("work", item.id);
+
+      expect(store.scenarioItemIds.work).toEqual([item.id]);
+    });
+
+    it("deleting launcher item removes scenario references", () => {
+      store.addLauncherItemsToCategory("cat-1", {
+        paths: ["C:\\a.exe"],
+        directories: [],
+        icon_base64s: [null],
+      });
+      const item = store.getLauncherItemsByCategoryId("cat-1")[0];
+      store.toggleScenarioItem("dev", item.id);
+
+      store.deleteLauncherItem("cat-1", item.id);
+
+      expect(store.scenarioItemIds.dev).toEqual([]);
+    });
+  });
 });
