@@ -5,6 +5,7 @@ import { useStatsStore } from "./statsStore";
 import { createVersionedPersistConfig } from "../utils/versioned-persist";
 import { mergeRustSearchResults } from "./launcher-search";
 import { itemEventBus } from "../events/itemEvents";
+import { invoke } from "../utils/invoke-wrapper";
 import {
   normalizeIconBase64,
   normalizeHasCustomIcon,
@@ -26,6 +27,7 @@ export type LauncherItem = {
   id: string;
   name: string;
   path: string;
+  resolvedPath?: string;
   url?: string;
   itemType: "file" | "url";
   isDirectory: boolean;
@@ -109,6 +111,17 @@ type ImportLauncherSnapshotPayload = {
   pinnedItemIds?: string[];
   recentUsedItems?: RecentUsedItem[];
 };
+
+function normalizeOptionalPath(value: string | null | undefined): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function isLnkPath(path: string | null | undefined): boolean {
+  const normalizedPath = normalizeOptionalPath(path);
+  return !!normalizedPath && normalizedPath.toLowerCase().endsWith(".lnk");
+}
 
 export const useLauncherStore = defineStore(
   "launcher",
@@ -206,7 +219,12 @@ export const useLauncherStore = defineStore(
       patch: Partial<
         Pick<
           LauncherItem,
-          "name" | "url" | "path" | "launchDependencies" | "launchDelaySeconds"
+          | "name"
+          | "url"
+          | "path"
+          | "resolvedPath"
+          | "launchDependencies"
+          | "launchDelaySeconds"
         >
       >,
     ) {
@@ -214,9 +232,33 @@ export const useLauncherStore = defineStore(
       const index = list.findIndex((x) => x.id === itemId);
       if (index === -1) return;
       const next = [...list];
+      const currentItem = next[index];
+      const nextPath =
+        patch.path !== undefined
+          ? patch.path
+          : currentItem.path;
+      const explicitResolvedPath =
+        patch.resolvedPath !== undefined
+          ? normalizeOptionalPath(patch.resolvedPath)
+          : undefined;
+      let nextResolvedPath = currentItem.resolvedPath;
+      let shouldResolveLnkPath = false;
+      if (currentItem.itemType === "file") {
+        if (patch.resolvedPath !== undefined) {
+          nextResolvedPath = explicitResolvedPath;
+        } else if (patch.path !== undefined) {
+          if (isLnkPath(nextPath)) {
+            nextResolvedPath = undefined;
+            shouldResolveLnkPath = true;
+          } else {
+            nextResolvedPath = normalizeOptionalPath(nextPath);
+          }
+        }
+      }
       next[index] = {
-        ...next[index],
+        ...currentItem,
         ...patch,
+        resolvedPath: currentItem.itemType === "file" ? nextResolvedPath : undefined,
         launchDependencies:
           patch.launchDependencies !== undefined
             ? normalizeLaunchDependencies(patch.launchDependencies, {
@@ -227,10 +269,13 @@ export const useLauncherStore = defineStore(
         launchDelaySeconds:
           patch.launchDelaySeconds !== undefined
             ? normalizeDelaySeconds(patch.launchDelaySeconds)
-            : next[index].launchDelaySeconds,
+            : currentItem.launchDelaySeconds,
       };
       setLauncherItemsByCategoryId(categoryId, next);
       itemEventBus.emit({ type: 'item:updated', categoryId, item: next[index] });
+      if (shouldResolveLnkPath) {
+        queueResolveLnkTargets(categoryId, [{ itemId, path: nextPath }]);
+      }
     }
 
     function removeDependenciesMatching(
@@ -474,9 +519,10 @@ export const useLauncherStore = defineStore(
         icon_base64s: Array<string | null>;
         itemTypes?: Array<"file" | "url">;
       },
-    ) {
+    ): string[] {
       const existing = getLauncherItemsByCategoryId(categoryId);
       const directorySet = new Set(payload.directories);
+      const resolveTargets: Array<{ itemId: string; path: string }> = [];
 
       const nextItems: LauncherItem[] = payload.paths.map((path, index) => {
         const iconBase64 = normalizeIconBase64(
@@ -485,11 +531,16 @@ export const useLauncherStore = defineStore(
             : null,
         );
         const itemType = payload.itemTypes?.[index] ?? "file";
-        cacheOriginalIconForFileItem(itemType, path, iconBase64);
-        return {
+        const itemPath = itemType === "url" ? "" : path;
+        cacheOriginalIconForFileItem(itemType, itemPath, iconBase64);
+        const nextItem: LauncherItem = {
           id: createLauncherItemId(),
           name: getNameFromPath(path),
-          path: itemType === "url" ? "" : path,
+          path: itemPath,
+          resolvedPath:
+            itemType === "file" && !isLnkPath(itemPath)
+              ? normalizeOptionalPath(itemPath)
+              : undefined,
           url: itemType === "url" ? path : undefined,
           itemType,
           isDirectory: directorySet.has(path),
@@ -498,12 +549,18 @@ export const useLauncherStore = defineStore(
           launchDependencies: [],
           launchDelaySeconds: 0,
         };
+        if (itemType === "file" && isLnkPath(itemPath)) {
+          resolveTargets.push({ itemId: nextItem.id, path: itemPath });
+        }
+        return nextItem;
       });
 
       setLauncherItemsByCategoryId(categoryId, [...existing, ...nextItems]);
       for (const item of nextItems) {
         itemEventBus.emit({ type: 'item:created', categoryId, item });
       }
+      queueResolveLnkTargets(categoryId, resolveTargets);
+      return nextItems.map((item) => item.id);
     }
 
     async function addLauncherItemsToCategoryBatched(
@@ -520,6 +577,7 @@ export const useLauncherStore = defineStore(
       const directorySet = new Set(directories);
       const allIds: string[] = [];
       const totalBatches = Math.ceil(paths.length / batchSize);
+      const resolveTargets: Array<{ itemId: string; path: string }> = [];
 
       for (let batch = 0; batch < totalBatches; batch++) {
         const start = batch * batchSize;
@@ -531,13 +589,18 @@ export const useLauncherStore = defineStore(
         for (let i = start; i < end; i++) {
           const iconBase64 = normalizeIconBase64(icon_base64s[i] ?? null);
           const itemType = itemTypes?.[i] ?? "file";
-          cacheOriginalIconForFileItem(itemType, paths[i], iconBase64);
+          const itemPath = itemType === "url" ? "" : paths[i];
+          cacheOriginalIconForFileItem(itemType, itemPath, iconBase64);
           const id = createLauncherItemId();
           allIds.push(id);
           batchItems.push({
             id,
             name: getNameFromPath(paths[i]),
-            path: itemType === "url" ? "" : paths[i],
+            path: itemPath,
+            resolvedPath:
+              itemType === "file" && !isLnkPath(itemPath)
+                ? normalizeOptionalPath(itemPath)
+                : undefined,
             url: itemType === "url" ? paths[i] : undefined,
             itemType,
             isDirectory: directorySet.has(paths[i]),
@@ -546,6 +609,9 @@ export const useLauncherStore = defineStore(
             launchDependencies: [],
             launchDelaySeconds: 0,
           });
+          if (itemType === "file" && isLnkPath(itemPath)) {
+            resolveTargets.push({ itemId: id, path: itemPath });
+          }
         }
 
         setLauncherItemsByCategoryId(categoryId, [...existing, ...batchItems]);
@@ -560,6 +626,7 @@ export const useLauncherStore = defineStore(
         }
       }
 
+      queueResolveLnkTargets(categoryId, resolveTargets);
       return allIds;
     }
 
@@ -612,6 +679,7 @@ export const useLauncherStore = defineStore(
         id: createLauncherItemId(),
         name: payload.name,
         path: "",
+        resolvedPath: undefined,
         url: payload.url,
         itemType: "url",
         isDirectory: false,
@@ -654,6 +722,10 @@ export const useLauncherStore = defineStore(
         id,
         name: payload.name,
         path: payload.itemType === "url" ? "" : (payload.path ?? ""),
+        resolvedPath:
+          payload.itemType === "file" && !isLnkPath(payload.path ?? "")
+            ? normalizeOptionalPath(payload.path ?? "")
+            : undefined,
         url: payload.itemType === "url" ? payload.url : undefined,
         itemType: payload.itemType,
         isDirectory:
@@ -672,6 +744,9 @@ export const useLauncherStore = defineStore(
 
       setLauncherItemsByCategoryId(categoryId, [...existing, newItem]);
       itemEventBus.emit({ type: 'item:created', categoryId, item: newItem });
+      if (newItem.itemType === "file" && isLnkPath(newItem.path)) {
+        queueResolveLnkTargets(categoryId, [{ itemId: newItem.id, path: newItem.path }]);
+      }
 
       return id;
     }
@@ -701,6 +776,49 @@ export const useLauncherStore = defineStore(
       };
       setLauncherItemsByCategoryId(categoryId, next);
       itemEventBus.emit({ type: 'item:iconUpdated', categoryId, itemId, iconBase64: normalizedIcon });
+    }
+
+    function setLauncherItemResolvedPath(
+      categoryId: string,
+      itemId: string,
+      resolvedPath: string | null | undefined,
+    ): boolean {
+      const list = getLauncherItemsByCategoryId(categoryId);
+      const index = list.findIndex((x) => x.id === itemId);
+      if (index === -1) return false;
+      const currentItem = list[index];
+      if (currentItem.itemType !== "file") return false;
+
+      const normalized = normalizeOptionalPath(resolvedPath);
+      if ((currentItem.resolvedPath ?? undefined) === normalized) {
+        return false;
+      }
+
+      const next = [...list];
+      next[index] = {
+        ...currentItem,
+        resolvedPath: normalized,
+      };
+      setLauncherItemsByCategoryId(categoryId, next);
+      itemEventBus.emit({ type: "item:updated", categoryId, item: next[index] });
+      return true;
+    }
+
+    function queueResolveLnkTargets(
+      categoryId: string,
+      targets: Array<{ itemId: string; path: string }>,
+    ) {
+      if (targets.length === 0) return;
+      for (const target of targets) {
+        const normalizedPath = normalizeOptionalPath(target.path);
+        if (!normalizedPath || !isLnkPath(normalizedPath)) continue;
+        void invoke<string | null>("resolve_lnk_target", { path: normalizedPath })
+          .then((result) => {
+            const resolved = result.ok ? normalizeOptionalPath(result.value ?? undefined) : undefined;
+            setLauncherItemResolvedPath(categoryId, target.itemId, resolved);
+          })
+          .catch(() => {});
+      }
     }
 
     function deleteCategoryCleanup(categoryId: string) {
@@ -922,6 +1040,7 @@ export const useLauncherStore = defineStore(
         id: itemId,
         name: scannedApp.name,
         path: scannedApp.path,
+        resolvedPath: normalizeOptionalPath(scannedApp.path),
         itemType: "file",
         isDirectory: false,
         iconBase64: scannedApp.iconBase64,
@@ -960,6 +1079,7 @@ export const useLauncherStore = defineStore(
       addUrlLauncherItemToCategory,
       createLauncherItemInCategory,
       updateLauncherItemIcon,
+      setLauncherItemResolvedPath,
       deleteCategoryCleanup,
       setLauncherItemIcon,
       resetLauncherItemIcon,

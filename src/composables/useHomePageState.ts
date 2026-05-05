@@ -1,6 +1,10 @@
 import { computed, ref } from "vue";
 import { useLauncherStore, type RecentUsedMergedItem, type PinnedMergedItem } from "../stores/launcherStore";
-import { useStatsStore, type ExternalRecentLaunchRecord } from "../stores/statsStore";
+import {
+    normalizeExternalExecutableIdentity,
+    useStatsStore,
+    type ExternalRecentLaunchRecord,
+} from "../stores/statsStore";
 import { useUIStore } from "../stores/uiStore";
 import { useCategoryStore } from "../stores/categoryStore";
 import { invoke } from "../utils/invoke-wrapper";
@@ -43,7 +47,17 @@ export function useHomePageState() {
         return normalizePathKey(trimmed);
     }
 
-    function ensureLnkTargetResolved(path: string | null | undefined): void {
+    function toIdentityKey(path: string | null | undefined): string {
+        const key = toPathKey(path);
+        if (!key) return "";
+        return normalizeExternalExecutableIdentity(key);
+    }
+
+    function ensureLnkTargetResolved(
+        categoryId: string,
+        itemId: string,
+        path: string | null | undefined,
+    ): void {
         if (!path) return;
         const trimmed = path.trim();
         if (!trimmed || !trimmed.toLowerCase().endsWith(".lnk")) return;
@@ -58,6 +72,9 @@ export function useHomePageState() {
                     ...lnkTargetByPath.value,
                     [trimmed]: target,
                 };
+                if (target) {
+                    store.setLauncherItemResolvedPath(categoryId, itemId, target);
+                }
             })
             .catch(() => {
                 lnkTargetByPath.value = {
@@ -72,17 +89,35 @@ export function useHomePageState() {
 
     function collectAllLauncherPathKeys(): Set<string> {
         const keys = new Set<string>();
-        for (const items of Object.values(store.launcherItemsByCategoryId)) {
+        for (const [categoryId, items] of Object.entries(store.launcherItemsByCategoryId)) {
             for (const item of items) {
                 const rawPathKey = toPathKey(item.path);
                 if (!rawPathKey) continue;
                 keys.add(rawPathKey);
+                const rawIdentityKey = toIdentityKey(item.path);
+                if (rawIdentityKey) {
+                    keys.add(rawIdentityKey);
+                }
 
-                ensureLnkTargetResolved(item.path);
+                const persistedResolved = toPathKey(item.resolvedPath);
+                if (persistedResolved) {
+                    keys.add(persistedResolved);
+                    const persistedIdentity = toIdentityKey(item.resolvedPath);
+                    if (persistedIdentity) {
+                        keys.add(persistedIdentity);
+                    }
+                    continue;
+                }
+
+                ensureLnkTargetResolved(categoryId, item.id, item.path);
                 const resolvedTarget = item.path ? lnkTargetByPath.value[item.path.trim()] : null;
                 const resolvedKey = toPathKey(resolvedTarget);
                 if (resolvedKey) {
                     keys.add(resolvedKey);
+                }
+                const resolvedIdentityKey = toIdentityKey(resolvedTarget);
+                if (resolvedIdentityKey) {
+                    keys.add(resolvedIdentityKey);
                 }
             }
         }
@@ -169,6 +204,10 @@ export function useHomePageState() {
             if (internalPathKey) {
                 launcherPathKeys.add(internalPathKey);
             }
+            const internalIdentityKey = toIdentityKey(item.item.path);
+            if (internalIdentityKey) {
+                launcherPathKeys.add(internalIdentityKey);
+            }
         }
 
         const externalItems: ExternalRecentDisplayItem[] = statsStore.externalRecentLaunches
@@ -178,9 +217,13 @@ export function useHomePageState() {
                 external: entry,
                 featureBadgeText: "外部",
             }))
+            .filter((entry) => !statsStore.isExternalLaunchBlocked(entry.external.path))
             .filter((entry) => {
                 const externalPathKey = toPathKey(entry.external.path);
-                return !externalPathKey || !launcherPathKeys.has(externalPathKey);
+                const externalIdentityKey = toIdentityKey(entry.external.path);
+                if (externalPathKey && launcherPathKeys.has(externalPathKey)) return false;
+                if (externalIdentityKey && launcherPathKeys.has(externalIdentityKey)) return false;
+                return true;
             });
 
         return [...internalItems, ...externalItems]

@@ -46,6 +46,7 @@ type ImportedLauncherItem = {
     id: string;
     name: string;
     path?: string;
+    resolved_path?: string | null;
     url?: string;
     item_type?: 'file' | 'url';
     is_directory: boolean;
@@ -558,26 +559,36 @@ export function mapImportedLauncherItems(
 ): Record<string, LauncherItem[]> {
     const itemsMap: Record<string, LauncherItem[]> = {};
     for (const category of categories) {
-        itemsMap[category.id] = (category.items || []).map((item) => ({
-            id: item.id,
-            name: item.name,
-            path: item.path || '',
-            url: item.url,
-            itemType: item.item_type || 'file',
-            isDirectory: item.is_directory,
-            iconBase64: normalizeImportedIconBase64(item.icon_base64 ?? null),
-            hasCustomIcon: resolveImportedHasCustomIcon(item),
-            isFavorite: item.is_favorite,
-            lastUsedAt: item.last_used_at ?? undefined,
-            launchDependencies: (item.launch_dependencies || [])
-                .filter((dependency) => dependency.category_id && dependency.item_id)
-                .map((dependency) => ({
-                    categoryId: dependency.category_id,
-                    itemId: dependency.item_id,
-                    delayAfterSeconds: Math.max(0, Math.floor(dependency.delay_after_seconds ?? 0)),
-                })),
-            launchDelaySeconds: Math.max(0, Math.floor(item.launch_delay_seconds ?? 0)),
-        }));
+        itemsMap[category.id] = (category.items || []).map((item) => {
+            const itemType = item.item_type || "file";
+            const resolvedPath =
+                itemType === "file" &&
+                typeof item.resolved_path === "string" &&
+                item.resolved_path.trim().length > 0
+                    ? item.resolved_path.trim()
+                    : undefined;
+            return {
+                id: item.id,
+                name: item.name,
+                path: item.path || '',
+                resolvedPath,
+                url: item.url,
+                itemType,
+                isDirectory: item.is_directory,
+                iconBase64: normalizeImportedIconBase64(item.icon_base64 ?? null),
+                hasCustomIcon: resolveImportedHasCustomIcon(item),
+                isFavorite: item.is_favorite,
+                lastUsedAt: item.last_used_at ?? undefined,
+                launchDependencies: (item.launch_dependencies || [])
+                    .filter((dependency) => dependency.category_id && dependency.item_id)
+                    .map((dependency) => ({
+                        categoryId: dependency.category_id,
+                        itemId: dependency.item_id,
+                        delayAfterSeconds: Math.max(0, Math.floor(dependency.delay_after_seconds ?? 0)),
+                    })),
+                launchDelaySeconds: Math.max(0, Math.floor(item.launch_delay_seconds ?? 0)),
+            };
+        });
     }
     return itemsMap;
 }
@@ -603,6 +614,7 @@ export function buildLauncherExportData(
                 id: item.id,
                 name: item.name,
                 path: item.path,
+                resolved_path: item.resolvedPath ?? null,
                 url: item.url,
                 item_type: item.itemType,
                 is_directory: item.isDirectory,

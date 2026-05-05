@@ -135,6 +135,10 @@ export function normalizeImportedLauncherItem(
     item: LauncherItem & { originalIconBase64?: string | null }
 ): LauncherItem {
     const { originalIconBase64: _legacyOriginalIcon, ...rest } = item;
+    const normalizedResolvedPath =
+        typeof item.resolvedPath === "string" && item.resolvedPath.trim()
+            ? item.resolvedPath.trim()
+            : undefined;
     const normalizedIcon = normalizeIconBase64(item.iconBase64);
     const hasCustomIcon = resolveLegacyHasCustomIcon(item);
 
@@ -144,6 +148,7 @@ export function normalizeImportedLauncherItem(
 
     return {
         ...rest,
+        resolvedPath: normalizedResolvedPath,
         iconBase64: normalizedIcon,
         hasCustomIcon,
     };
