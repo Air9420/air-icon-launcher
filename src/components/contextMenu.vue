@@ -70,82 +70,6 @@
     </div>
 </template>
 
-<script lang="ts">
-import type { HomeLayoutPresetKey } from "../stores/uiStore";
-import type { ScenarioKey } from "../stores/launcherStore";
-import { enumContextMenuType, type MenuContext } from "../menus/contextMenuTypes";
-import { SCENARIO_KEYS } from "../menus/contextMenu";
-
-export interface ContextMenuViewProps {
-    currentItemId?: string;
-    currentItemPath?: string;
-    currentClipboardRecordId?: string;
-    currentClipboardContentType?: "text" | "image";
-    isCurrentItemFavorite?: boolean;
-    hasCustomIconProp?: boolean;
-    hasCurrentCategoryCustomIcon?: boolean;
-    categoryCols?: number;
-    launcherCols?: number;
-    currentHomeSection?: "pinned" | "recent";
-    currentCategorySortMode?: "manual" | "smart";
-    pinnedLayoutPreset?: HomeLayoutPresetKey;
-    recentLayoutPreset?: HomeLayoutPresetKey;
-    currentCategoryId?: string;
-}
-
-export type ItemScenarioChecker = (
-    scenario: ScenarioKey,
-    itemId: string,
-) => boolean;
-
-export function buildMenuContextFromProps(
-    props: ContextMenuViewProps,
-    menuType: enumContextMenuType,
-    isItemInScenario: ItemScenarioChecker,
-): MenuContext {
-    const itemScenarios = props.currentItemId
-        ? SCENARIO_KEYS.filter((scenario) =>
-              isItemInScenario(scenario, props.currentItemId),
-          )
-        : [];
-
-    const item = props.currentItemId
-        ? {
-              pinned: !!props.isCurrentItemFavorite,
-              favorite: !!props.isCurrentItemFavorite,
-              customIcon: !!props.hasCustomIconProp,
-              scenarios: itemScenarios,
-          }
-        : undefined;
-
-    const layout = {
-        categoryCols: props.categoryCols ?? 5,
-        launcherCols: props.launcherCols ?? 5,
-        pinnedPreset: props.pinnedLayoutPreset ?? "1x5",
-        recentPreset: props.recentLayoutPreset ?? "1x5",
-    };
-
-    return {
-        menuType,
-        categoryId: props.currentCategoryId ?? null,
-        itemId: props.currentItemId ?? null,
-        itemPath: props.currentItemPath ?? null,
-        clipboardRecordId: props.currentClipboardRecordId ?? null,
-        clipboardContentType: props.currentClipboardContentType ?? null,
-        homeSection: props.currentHomeSection ?? null,
-        categorySortMode: props.currentCategorySortMode ?? "manual",
-        item,
-        category: props.currentCategoryId
-            ? {
-                  id: props.currentCategoryId,
-                  customIcon: !!props.hasCurrentCategoryCustomIcon,
-              }
-            : undefined,
-        layout,
-    };
-}
-</script>
-
 <script setup lang="ts">
 import { useUIStore } from "../stores/uiStore";
 import { storeToRefs } from "pinia";
@@ -155,6 +79,7 @@ import { buildContextMenuModel } from "../menus/contextMenu";
 import { useLauncherStore } from "../stores/launcherStore";
 import type { MenuContext, MenuItem, MenuAction } from "../menus/contextMenuTypes";
 import { resolveLabel as resolveMenuLabel, resolveConditionValue, evaluateCondition } from "../menus/contextMenuTypes";
+import { buildMenuContextFromProps, emitContextMenuItemAction, type ContextMenuViewProps } from "../menus/contextMenuContext";
 
 const uiStore = useUIStore();
 const launcherStore = useLauncherStore();
@@ -192,7 +117,7 @@ let convertLongPressTriggered = false;
  */
 function onSelectItem(item: Extract<MenuItem, { type: "item" }>) {
     uiStore.closeContextMenu();
-    emit("action", item.action, menuContext.value);
+    void emitContextMenuItemAction(item, menuContext.value, emit);
 }
 
 /**

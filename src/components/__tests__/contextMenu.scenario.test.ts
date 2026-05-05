@@ -2,7 +2,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it } from "vitest";
 import { buildContextMenuModel } from "../../menus/contextMenu";
 import { enumContextMenuType, evaluateCondition, resolveConditionValue } from "../../menus/contextMenuTypes";
-import { buildMenuContextFromProps, type ContextMenuViewProps } from "../contextMenu.vue";
+import { buildMenuContextFromProps, type ContextMenuViewProps } from "../../menus/contextMenuContext";
 import { useLauncherStore } from "../../stores/launcherStore";
 
 function createProps(overrides: Partial<ContextMenuViewProps> = {}): ContextMenuViewProps {
