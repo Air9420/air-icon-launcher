@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { buildContextMenuModel } from "../contextMenu";
 import { enumContextMenuType, resolveConditionValue, evaluateCondition, type MenuContext } from "../contextMenuTypes";
-import { useLauncherStore } from "../../stores/launcherStore";
 
 function createIconItemContext(overrides: Partial<MenuContext> = {}): MenuContext {
   return {
@@ -15,6 +14,7 @@ function createIconItemContext(overrides: Partial<MenuContext> = {}): MenuContex
       pinned: false,
       favorite: false,
       customIcon: false,
+      scenarios: [],
     },
     category: {
       id: "cat-1",
@@ -36,24 +36,16 @@ describe("contextMenu scenario membership group", () => {
   });
 
   it("shows scenario membership group for IconItem in category", () => {
-    const store = useLauncherStore();
-    store.addLauncherItemsToCategory("cat-1", {
-      paths: ["C:\\demo.exe"],
-      directories: [],
-      icon_base64s: [null],
-    });
-    const itemId = store.getLauncherItemsByCategoryId("cat-1")[0]?.id;
-    expect(itemId).toBeTruthy();
-
-    if (!itemId) {
-      throw new Error("missing item id");
-    }
-
-    store.toggleScenarioItem("work", itemId);
-
+    const itemId = "item-1";
     const menuModel = buildContextMenuModel(
       createIconItemContext({
         itemId,
+        item: {
+          pinned: false,
+          favorite: false,
+          customIcon: false,
+          scenarios: ["work"],
+        },
       }),
     );
 
@@ -88,7 +80,16 @@ describe("contextMenu scenario membership group", () => {
     expect(
       group.children.map((child) => {
         if (child.type !== "item") return null;
-        return !!evaluateCondition(resolveConditionValue(child.checked, createIconItemContext({ itemId })), createIconItemContext({ itemId }));
+        const context = createIconItemContext({
+          itemId,
+          item: {
+            pinned: false,
+            favorite: false,
+            customIcon: false,
+            scenarios: ["work"],
+          },
+        });
+        return !!evaluateCondition(resolveConditionValue(child.checked, context), context);
       }),
     ).toEqual([true, false, false]);
   });

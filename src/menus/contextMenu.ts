@@ -1,6 +1,6 @@
 import { enumContextMenuType } from "./contextMenuTypes";
 import { HOME_LAYOUT_PRESETS } from "../stores";
-import { useLauncherStore, type ScenarioKey } from "../stores/launcherStore";
+import type { ScenarioKey } from "../stores/launcherStore";
 import { getContextMenuContributions } from "../plugins/contextMenuRegistry";
 import type { MenuContext, MenuItem } from "./contextMenuTypes";
 import { evaluateCondition } from "./conditions";
@@ -21,12 +21,7 @@ export function buildContextMenuModel(ctx: MenuContext): MenuItem[] {
  * 构建应用内置的右键菜单模型（不含插件项）。
  */
 function buildBuiltinMenuModel(ctx: MenuContext): MenuItem[] {
-  const launcherStore = useLauncherStore();
   const scenarioKeys: ScenarioKey[] = ["work", "dev", "play"];
-  const toCheckedCondition = (checked: boolean) =>
-    checked ? { and: [] as const } : { not: { and: [] as const } };
-  const isScenarioChecked = (scenario: ScenarioKey) =>
-    !!ctx.itemId && launcherStore.isItemInScenario(scenario, ctx.itemId);
 
   const items: MenuItem[] = [
     {
@@ -112,7 +107,7 @@ function buildBuiltinMenuModel(ctx: MenuContext): MenuItem[] {
         action: { kind: "toggle-scenario-membership", scenario },
         order: 55 + index,
         mode: "checkbox" as const,
-        checked: toCheckedCondition(isScenarioChecked(scenario)),
+        checked: { item: { scenario } },
       })),
     },
     {

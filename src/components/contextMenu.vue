@@ -76,10 +76,12 @@ import { storeToRefs } from "pinia";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { computed } from "vue";
 import { buildContextMenuModel } from "../menus/contextMenu";
+import { useLauncherStore } from "../stores/launcherStore";
 import type { MenuContext, MenuItem, MenuAction } from "../menus/contextMenuTypes";
 import { resolveLabel as resolveMenuLabel, resolveConditionValue, evaluateCondition } from "../menus/contextMenuTypes";
 
 const uiStore = useUIStore();
+const launcherStore = useLauncherStore();
 const { ContextMenu, ContextMenuType } = storeToRefs(uiStore);
 
 const emit = defineEmits<{
@@ -108,11 +110,18 @@ const props = defineProps<{
 }>();
 
 const menuContext = computed<MenuContext>(() => {
+    const itemScenarios = props.currentItemId
+        ? (["work", "dev", "play"] as const).filter((scenario) =>
+              launcherStore.isItemInScenario(scenario, props.currentItemId as string)
+          )
+        : [];
+
     const item = props.currentItemId
         ? {
               pinned: !!props.isCurrentItemFavorite,
               favorite: !!props.isCurrentItemFavorite,
               customIcon: !!props.hasCustomIconProp,
+              scenarios: itemScenarios,
           }
         : undefined;
 

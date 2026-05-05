@@ -3,6 +3,7 @@ import type {
     HomeLayoutPresetKey,
     HomeLayoutSectionKey,
 } from "../stores";
+import type { ScenarioKey } from "../stores/launcherStore";
 import type { VisibilityCondition, ResolveContext, LabelValue, ConditionValue } from "./conditions";
 
 export type { VisibilityCondition, ResolveContext, LabelValue, ConditionValue };
@@ -32,7 +33,7 @@ export type BuiltinMenuAction =
     | { kind: "delete-item" }
     | {
           kind: "toggle-scenario-membership";
-          scenario: "work" | "dev" | "play";
+          scenario: ScenarioKey;
       }
     | { kind: "clear-scenario-membership" }
     | { kind: "add-category" }

@@ -1,12 +1,20 @@
 import { enumContextMenuType } from "./contextMenuTypes";
 import type { CategorySortMode, HomeLayoutPresetKey } from "../stores";
+import type { ScenarioKey } from "../stores/launcherStore";
 
 export type VisibilityCondition =
   | { menuType: enumContextMenuType | enumContextMenuType[] }
   | { homeSection: "pinned" | "recent" | ("pinned" | "recent")[] }
   | { categorySortMode: CategorySortMode | CategorySortMode[] }
   | { itemPath: true }
-  | { item: { pinned?: boolean; favorite?: boolean; customIcon?: boolean } }
+  | {
+      item: {
+        pinned?: boolean;
+        favorite?: boolean;
+        customIcon?: boolean;
+        scenario?: ScenarioKey | ScenarioKey[];
+      };
+    }
   | { category: true | { customIcon?: boolean } }
   | { layout: { categoryCols?: number; launcherCols?: number; pinnedPreset?: string; recentPreset?: string } }
   | { and: VisibilityCondition[] }
@@ -30,6 +38,7 @@ export type ResolveContext = {
     pinned: boolean;
     favorite: boolean;
     customIcon: boolean;
+    scenarios?: ScenarioKey[];
   };
   category?: {
     id: string;
@@ -84,16 +93,26 @@ function isItemPathMatch(
 
 function isItemMatch(
   condition: {
-    item: { pinned?: boolean; favorite?: boolean; customIcon?: boolean };
+    item: {
+      pinned?: boolean;
+      favorite?: boolean;
+      customIcon?: boolean;
+      scenario?: ScenarioKey | ScenarioKey[];
+    };
   },
   ctx: ResolveContext,
 ): boolean {
   if (!ctx.item) return false;
-  const { pinned, favorite, customIcon } = condition.item;
+  const { pinned, favorite, customIcon, scenario } = condition.item;
   if (pinned !== undefined && ctx.item.pinned !== pinned) return false;
   if (favorite !== undefined && ctx.item.favorite !== favorite) return false;
   if (customIcon !== undefined && ctx.item.customIcon !== customIcon)
     return false;
+  if (scenario !== undefined) {
+    const scenarios = Array.isArray(scenario) ? scenario : [scenario];
+    const itemScenarios = ctx.item.scenarios ?? [];
+    if (!scenarios.some((key) => itemScenarios.includes(key))) return false;
+  }
   return true;
 }
 

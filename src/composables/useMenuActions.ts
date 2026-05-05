@@ -43,6 +43,7 @@ import { useCategoryStore } from "../stores/categoryStore";
 import { useClipboardStore } from "../stores/clipboardStore";
 import { useStatsStore } from "../stores/statsStore";
 import { useUIStore, type HomeLayoutPresetKey, type HomeLayoutSectionKey } from "../stores/uiStore";
+import type { ScenarioKey } from "../stores/launcherStore";
 import type { MenuAction, MenuContext } from "../menus/contextMenuTypes";
 import type { DropRecord } from "./types";
 import { selectAndConvertIcon } from "../utils/iconUtils";
@@ -616,7 +617,7 @@ export function useMenuActions(options: UseMenuActionsOptions) {
         store.togglePinned(currentCategoryId.value, currentLauncherItemId.value);
     }
 
-    function onToggleScenarioMembership(scenario: "work" | "dev" | "play") {
+    function onToggleScenarioMembership(scenario: ScenarioKey) {
         if (!currentLauncherItemId.value) return;
         store.toggleScenarioItem(scenario, currentLauncherItemId.value);
         closeContextMenu();
