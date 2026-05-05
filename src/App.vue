@@ -37,6 +37,23 @@ import { getPluginManager } from "./plugins";
 
 import "./styles/themes.css";
 
+const WINDOW_EFFECT_BOOT_MARK_KEY = "__air_window_effect_boot_mark__";
+
+function shouldSkipWindowEffectApplyOnThisBoot(): boolean {
+    if (typeof window === "undefined" || typeof sessionStorage === "undefined") {
+        return false;
+    }
+    try {
+        if (sessionStorage.getItem(WINDOW_EFFECT_BOOT_MARK_KEY) === "1") {
+            return true;
+        }
+        sessionStorage.setItem(WINDOW_EFFECT_BOOT_MARK_KEY, "1");
+        return false;
+    } catch {
+        return false;
+    }
+}
+
 const store = Store();
 const categoryStore = useCategoryStore();
 const settingsStore = useSettingsStore();
@@ -130,6 +147,23 @@ const {
     countdownSeconds: autoHideCountdownSeconds,
 });
 
+function onStartExternalConvertDrag(payload: {
+    itemPath: string;
+    clientX: number;
+    clientY: number;
+}) {
+    if (!payload.itemPath?.trim()) return;
+    window.dispatchEvent(
+        new CustomEvent("external-convert-drag-start", {
+            detail: {
+                itemPath: payload.itemPath.trim(),
+                clientX: payload.clientX,
+                clientY: payload.clientY,
+            },
+        })
+    );
+}
+
 const isCurrentItemPinned = computed(() => {
     if (!currentLauncherItemId.value) return false;
     return store.isItemPinned(currentLauncherItemId.value);
@@ -162,9 +196,12 @@ onMounted(async () => {
     const pluginManager = getPluginManager();
     await pluginManager.refreshPlugins();
 
-    const windowEffectResult = await settingsStore.applyCurrentWindowEffectState();
-    if (windowEffectResult.changed && windowEffectResult.message) {
-        showToast(windowEffectResult.message, { type: "info", duration: 5000 });
+    const skipEffectApplyForReloadBoot = shouldSkipWindowEffectApplyOnThisBoot();
+    if (!skipEffectApplyForReloadBoot) {
+        const windowEffectResult = await settingsStore.applyCurrentWindowEffectState();
+        if (windowEffectResult.changed && windowEffectResult.message) {
+            showToast(windowEffectResult.message, { type: "info", duration: 5000 });
+        }
     }
 
     if (showGuideOnStartup.value && !guideStore.hasSeenOnboarding && !hasLauncherItems.value) {
@@ -244,6 +281,7 @@ onBeforeUnmount(async () => {
         :pinned-layout-preset="homeSectionLayouts.pinned.preset"
         :recent-layout-preset="homeSectionLayouts.recent.preset"
         @action="onMenuAction"
+        @start-external-convert-drag="onStartExternalConvertDrag"
     />
     <ConfirmDialog
         :visible="confirmState.visible"
@@ -268,6 +306,7 @@ onBeforeUnmount(async () => {
         :second-input-placeholder="inputState.secondInputPlaceholder"
         :second-input-type="inputState.secondInputType"
         :second-default-value="inputState.secondDefaultValue"
+        :select-options="inputState.selectOptions"
         @confirm="handleInputConfirm"
         @cancel="handleInputCancel"
     />

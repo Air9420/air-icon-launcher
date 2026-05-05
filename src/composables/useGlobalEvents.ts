@@ -91,6 +91,8 @@ export function useGlobalEvents(options: UseGlobalEventsOptions) {
      * - 同时调用 preventDefault 和 stopPropagation
      */
     function preventRefreshShortcuts(e: KeyboardEvent) {
+        if (import.meta.env.DEV) return;
+
         const key = e.key.toLowerCase();
         if ((key === "r" && e.ctrlKey) || key === "f5") {
             e.preventDefault();

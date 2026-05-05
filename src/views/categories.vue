@@ -137,6 +137,18 @@
             :keyword="searchKeyword"
             @browser-search="onBrowserSearch"
         />
+
+        <div
+            v-if="externalConvertDragVisible"
+            class="external-convert-drag-overlay"
+        >
+            <div
+                class="external-convert-drag-ghost"
+                :style="externalConvertGhostStyle"
+            >
+                {{ externalConvertDragName || "添加到分类" }}
+            </div>
+        </div>
     </div>
 </template>
 
@@ -193,12 +205,19 @@ import type { ClipboardSearchResult, RecentFileSearchResult } from "../types/sea
 
 const DEBUG_SEARCH = false;
 const RECENT_FILE_CACHE_KEY = "home-search-recent-file-candidates-v1";
+const EXTERNAL_CONVERT_DRAG_EVENT = "external-convert-drag-start";
 
 type RecentFileRow = {
     name: string;
     path: string;
     usedAt: number;
     iconBase64: string | null;
+};
+
+type ExternalConvertDragPayload = {
+    itemPath: string;
+    clientX: number;
+    clientY: number;
 };
 
 function debugLog(...args: unknown[]) {
@@ -322,6 +341,18 @@ const recentFileCandidates = ref<RecentFileSearchResult[]>(
 let recentFileIconHydrationRequestId = 0;
 let recentStabilizeTimer: ReturnType<typeof setTimeout> | null = null;
 const RECENT_STABILIZE_DELAY_MS = 280;
+const externalConvertDragVisible = ref(false);
+const externalConvertDragPath = ref("");
+const externalConvertDragName = ref("");
+const externalConvertDragIconBase64 = ref<string | null>(null);
+const externalConvertPointerId = ref<number | null>(null);
+const externalConvertPointerX = ref(0);
+const externalConvertPointerY = ref(0);
+
+const externalConvertGhostStyle = computed(() => ({
+    left: `${externalConvertPointerX.value}px`,
+    top: `${externalConvertPointerY.value}px`,
+}));
 
 function hasSameRecentKeyOrder(
     prev: HomeRecentDisplayItem[],
@@ -334,6 +365,40 @@ function hasSameRecentKeyOrder(
         }
     }
     return true;
+}
+
+function isExternalToInternalPathReplacement(
+    prev: HomeRecentDisplayItem[],
+    next: HomeRecentDisplayItem[]
+): boolean {
+    if (prev.length !== next.length || prev.length === 0) {
+        return false;
+    }
+
+    let replacementCount = 0;
+    for (let i = 0; i < prev.length; i += 1) {
+        const prevItem = prev[i];
+        const nextItem = next[i];
+        if (!prevItem || !nextItem) {
+            return false;
+        }
+        if (prevItem.key === nextItem.key) {
+            continue;
+        }
+
+        if (!("external" in prevItem) || !("recent" in nextItem)) {
+            return false;
+        }
+
+        const prevPath = normalizePathForCompare(prevItem.external.path);
+        const nextPath = normalizePathForCompare(nextItem.item.path);
+        if (!prevPath || !nextPath || prevPath !== nextPath) {
+            return false;
+        }
+        replacementCount += 1;
+    }
+
+    return replacementCount > 0;
 }
 
 function normalizePathKey(path: string): string {
@@ -535,6 +600,14 @@ onMounted(async () => {
     nextTick(() => {
         searchBoxRef.value?.focus();
     });
+
+    window.addEventListener(
+        EXTERNAL_CONVERT_DRAG_EVENT,
+        onExternalConvertDragStart as EventListener
+    );
+    window.addEventListener("pointermove", onExternalConvertPointerMove, true);
+    window.addEventListener("pointerup", onExternalConvertPointerUp, true);
+    window.addEventListener("pointercancel", cancelExternalConvertDrag, true);
 });
 
 async function loadRecentFileCandidates(): Promise<void> {
@@ -608,6 +681,14 @@ onUnmounted(() => {
     document.removeEventListener("keydown", onKeydown);
     document.removeEventListener("keyup", onKeyup);
     document.removeEventListener("mousedown", onDocumentMouseDown, true);
+    window.removeEventListener(
+        EXTERNAL_CONVERT_DRAG_EVENT,
+        onExternalConvertDragStart as EventListener
+    );
+    window.removeEventListener("pointermove", onExternalConvertPointerMove, true);
+    window.removeEventListener("pointerup", onExternalConvertPointerUp, true);
+    window.removeEventListener("pointercancel", cancelExternalConvertDrag, true);
+    cancelExternalConvertDrag();
 });
 
 const { pinnedMergedItems, mergedRecentDisplayItems } = useHomePageState();
@@ -618,12 +699,24 @@ watchEffect(() => {
     if (recentStabilizeTimer) {
         clearTimeout(recentStabilizeTimer);
     }
+    if (next.length < previous.length) {
+        // Dedup/cleanup updates (e.g. lnk target resolution) should be immediate
+        // to avoid showing transient duplicate recent items on startup.
+        stableRecentDisplayItems.value = [...next];
+        recentStabilizeTimer = null;
+        return;
+    }
     if (previous.length === 0 || next.length === 0) {
         stableRecentDisplayItems.value = [...next];
         recentStabilizeTimer = null;
         return;
     }
     if (hasSameRecentKeyOrder(previous, next)) {
+        stableRecentDisplayItems.value = [...next];
+        recentStabilizeTimer = null;
+        return;
+    }
+    if (isExternalToInternalPathReplacement(previous, next)) {
         stableRecentDisplayItems.value = [...next];
         recentStabilizeTimer = null;
         return;
@@ -765,6 +858,123 @@ async function onOpenSearchResult(result: GlobalSearchMergedResult) {
         console.error(e);
         clearLaunchStatus(item.id);
     }
+}
+
+function normalizePathForCompare(path: string): string {
+    return path.replace(/\//g, "\\").trim().toLowerCase();
+}
+
+function findExternalRecordByPath(path: string) {
+    const normalized = normalizePathForCompare(path);
+    return statsStore.externalRecentLaunches.find(
+        (entry) => normalizePathForCompare(entry.path) === normalized
+    );
+}
+
+function tryResolveCategoryIdFromPoint(x: number, y: number): string | null {
+    const elements = document.elementsFromPoint(x, y);
+    for (const element of elements) {
+        if (!(element instanceof HTMLElement)) continue;
+        const target = element.closest(".categorie-item[data-category-id]");
+        if (!(target instanceof HTMLElement)) continue;
+        const categoryId = target.dataset.categoryId || null;
+        if (categoryId) return categoryId;
+    }
+    return null;
+}
+
+function addExternalPathToCategory(path: string, categoryId: string): boolean {
+    const category = categoryStore.getCategoryById(categoryId);
+    if (!category) return false;
+
+    const normalizedPath = normalizePathForCompare(path);
+    const duplicateExists = store
+        .getLauncherItemsByCategoryId(categoryId)
+        .some((item) => item.itemType === "file" && normalizePathForCompare(item.path) === normalizedPath);
+    if (duplicateExists) {
+        showToast(`「${category.name}」中已存在该启动项`);
+        return false;
+    }
+
+    const externalRecord = findExternalRecordByPath(path);
+    const createdItemIds = store.addLauncherItemsToCategory(categoryId, {
+        paths: [path],
+        directories: [],
+        icon_base64s: [externalRecord?.iconBase64 ?? null],
+        itemTypes: ["file"],
+    });
+    const createdItemId = createdItemIds[0];
+    if (createdItemId) {
+        store.recordItemUsage(
+            categoryId,
+            createdItemId,
+            externalRecord?.usedAt ?? Date.now()
+        );
+    }
+    showToast(`已添加到「${category.name}」`);
+    return true;
+}
+
+function onExternalConvertDragStart(event: CustomEvent<ExternalConvertDragPayload>) {
+    const payload = event.detail;
+    const rawPath = payload?.itemPath?.trim() || "";
+    if (!rawPath) return;
+
+    const record = findExternalRecordByPath(rawPath);
+    externalConvertDragPath.value = rawPath;
+    externalConvertDragName.value =
+        record?.name ||
+        rawPath.split(/[\\/]/).pop() ||
+        rawPath;
+    externalConvertDragIconBase64.value = record?.iconBase64 || null;
+    externalConvertDragVisible.value = true;
+    externalConvertPointerId.value = null;
+    externalConvertPointerX.value = Number.isFinite(payload.clientX)
+        ? payload.clientX
+        : window.innerWidth / 2;
+    externalConvertPointerY.value = Number.isFinite(payload.clientY)
+        ? payload.clientY
+        : window.innerHeight / 2;
+}
+
+function onExternalConvertPointerMove(event: PointerEvent) {
+    if (!externalConvertDragVisible.value) return;
+    if (
+        externalConvertPointerId.value !== null &&
+        event.pointerId !== externalConvertPointerId.value
+    ) {
+        return;
+    }
+    externalConvertPointerId.value = event.pointerId;
+    externalConvertPointerX.value = event.clientX;
+    externalConvertPointerY.value = event.clientY;
+}
+
+function onExternalConvertPointerUp(event: PointerEvent) {
+    if (!externalConvertDragVisible.value) return;
+    if (
+        externalConvertPointerId.value !== null &&
+        event.pointerId !== externalConvertPointerId.value
+    ) {
+        return;
+    }
+
+    const targetCategoryId = tryResolveCategoryIdFromPoint(event.clientX, event.clientY);
+    if (!targetCategoryId) {
+        cancelExternalConvertDrag();
+        return;
+    }
+
+    addExternalPathToCategory(externalConvertDragPath.value, targetCategoryId);
+    cancelExternalConvertDrag();
+}
+
+function cancelExternalConvertDrag() {
+    externalConvertDragVisible.value = false;
+    externalConvertDragPath.value = "";
+    externalConvertDragName.value = "";
+    externalConvertDragIconBase64.value = null;
+    externalConvertPointerId.value = null;
 }
 
 async function onSelectClipboardResult(entry: ClipboardSearchResult) {
@@ -1768,5 +1978,30 @@ function onSearchNav(direction: "up" | "down" | "enter" | "tab") {
     flex-direction: column;
     gap: 12px;
     flex-shrink: 0;
+}
+
+.external-convert-drag-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    pointer-events: none;
+}
+
+.external-convert-drag-ghost {
+    position: fixed;
+    transform: translate(-50%, -130%);
+    max-width: 280px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: var(--card-bg-solid);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    box-shadow: var(--menu-shadow);
+    backdrop-filter: var(--backdrop-blur);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 </style>

@@ -51,6 +51,8 @@ export type BuiltinMenuAction =
     | { kind: "copy-clipboard-item" }
     | { kind: "locate-clipboard-item" }
     | { kind: "open-in-explorer" }
+    | { kind: "block-external-item" }
+    | { kind: "convert-external-item" }
     | { kind: "open-settings" }
     | { kind: "open-about" }
     | { kind: "open-guide" }

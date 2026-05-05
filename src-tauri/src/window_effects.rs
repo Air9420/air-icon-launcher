@@ -3,6 +3,16 @@ use serde::Serialize;
 use std::time::Duration;
 use tauri::window::{Color, Effect, EffectsBuilder};
 use tauri::{AppHandle, Manager, PhysicalSize};
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::HWND;
+#[cfg(target_os = "windows")]
+use windows::Win32::Graphics::Gdi::{
+    RedrawWindow, RDW_ALLCHILDREN, RDW_ERASE, RDW_FRAME, RDW_INVALIDATE,
+};
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::{
+    SetWindowPos, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,12 +58,6 @@ pub async fn set_window_effect_type(app: AppHandle, effect_type: String) -> AppR
 }
 
 async fn apply_window_effect(window: &tauri::WebviewWindow, effect: Effect) -> AppResult<()> {
-    if apply_window_effect_direct(window, effect).is_ok() {
-        tokio::time::sleep(Duration::from_millis(1)).await;
-        force_window_refresh(window);
-        return Ok(());
-    }
-
     window
         .set_effects(None)
         .map_err(|e| AppError::internal(format!("clear effects error: {}", e)))?;
@@ -100,6 +104,53 @@ fn unsupported_effect_error(support: &WindowEffectSupportInfo, fallback_message:
 }
 
 fn force_window_refresh(window: &tauri::WebviewWindow) {
+    #[cfg(target_os = "windows")]
+    {
+        force_window_refresh_windows(window);
+        return;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Non-Windows fallback: keep previous behavior.
+        if window.is_visible().unwrap_or(false) {
+            return;
+        }
+        if let Ok(original_size) = window.outer_size() {
+            let new_size = PhysicalSize::new(original_size.width + 1, original_size.height + 1);
+            let _ = window.set_size(new_size);
+            std::thread::sleep(Duration::from_millis(30));
+            let _ = window.set_size(original_size);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn force_window_refresh_windows(window: &tauri::WebviewWindow) {
+    if let Ok(hwnd_raw) = window.hwnd() {
+        let hwnd = HWND(hwnd_raw.0 as isize);
+        // Trigger non-client + client redraw without resizing, avoiding visible 1px jitter.
+        unsafe {
+            let _ = SetWindowPos(
+                hwnd,
+                HWND(0),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
+            );
+            let _ = RedrawWindow(
+                hwnd,
+                None,
+                None,
+                RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN,
+            );
+        }
+        return;
+    }
+
+    // Fallback when HWND is unavailable.
     if let Ok(original_size) = window.outer_size() {
         let new_size = PhysicalSize::new(original_size.width + 1, original_size.height + 1);
         let _ = window.set_size(new_size);

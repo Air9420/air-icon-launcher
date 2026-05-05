@@ -4,7 +4,7 @@
         'is-success': isSuccess,
         'is-selected': !!isSelected
     }" :data-menu-type="menuType" :data-home-section="homeSection" :data-category-id="categoryId"
-        :data-item-id="itemId" v-on="longpressHandlers" @pointerdown="onPointerDown" @pointerup="onPointerUp"
+        :data-item-id="itemId" :data-item-path="itemPath || ''" v-on="longpressHandlers" @pointerdown="onPointerDown" @pointerup="onPointerUp"
         @pointerleave="onPointerLeave" data-no-drag>
         <div
             v-if="cornerBadgeText"
@@ -42,6 +42,7 @@ import { useLongPress } from "../../composables/useLongPress";
 const props = defineProps<{
     itemId: string;
     categoryId: string;
+    itemPath?: string | null;
     name: string;
     iconBase64?: string | null;
     itemType?: 'file' | 'url';

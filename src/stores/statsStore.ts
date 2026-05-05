@@ -12,6 +12,10 @@ const MAX_LAUNCH_EVENTS = 5000;
 const MAX_LAUNCH_EVENT_AGE_MS = 180 * DAY_MS;
 const MAX_EXTERNAL_RECENT_LAUNCHES = 50;
 const EXTERNAL_RECENT_DEDUP_WINDOW_MS = 5000;
+const VOLATILE_EXTERNAL_PATH_SEGMENTS = new Set(["current"]);
+const VOLATILE_EXTERNAL_PATH_SEGMENT_PATTERNS = [
+  /^app-\d+(?:\.\d+){1,4}(?:[-_.a-z0-9]+)?$/i,
+];
 const NOISY_EXTERNAL_EXECUTABLE_NAMES = new Set([
   "git.exe",
   "git-remote-http.exe",
@@ -73,6 +77,16 @@ const TIME_BASED_RECOMMENDATION_RECENT_DAY_SCORE = 50;
 const TIME_BASED_RECOMMENDATION_RECENT_THREE_DAYS_SCORE = 30;
 const TIME_BASED_RECOMMENDATION_RECENT_WEEK_SCORE = 10;
 
+const SMART_SORT_STREAK_EVENT_WINDOW = 120;
+const SMART_SORT_STREAK_RECENCY_MIN_FACTOR = 0.3;
+const SMART_SORT_WEIGHTS = {
+  recentFrequency: 0.4,
+  longTermFrequency: 0.2,
+  currentTimeSlot: 0.2,
+  recentConsecutive: 0.1,
+  pinned: 0.1,
+} as const;
+
 export type SearchKeywordRecord = {
   keyword: string;
   displayKeyword?: string;
@@ -93,6 +107,13 @@ export type ExternalRecentLaunchRecord = {
   iconBase64: string | null;
   usedAt: number;
   usageCount: number;
+};
+
+export type BlockedExternalLaunchRecord = {
+  path: string;
+  name: string;
+  source: string;
+  blockedAt: number;
 };
 
 export type LegacyUsageSnapshotRecord = {
@@ -192,6 +213,40 @@ function normalizePathKey(path: string): string {
   return path.trim().replace(/\//g, "\\").toLowerCase();
 }
 
+function normalizeExecutableIdentityKey(path: string): string {
+  const pathKey = normalizePathKey(path);
+  if (!pathKey) return "";
+
+  const segments = pathKey.split("\\");
+  if (segments.length <= 1) return pathKey;
+
+  const executableName = segments[segments.length - 1] || "";
+  if (!executableName.endsWith(".exe")) {
+    return pathKey;
+  }
+
+  const normalizedSegments: string[] = [];
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    if (!segment) continue;
+    if (index === segments.length - 1) {
+      normalizedSegments.push(segment);
+      continue;
+    }
+    if (VOLATILE_EXTERNAL_PATH_SEGMENTS.has(segment)) continue;
+    if (VOLATILE_EXTERNAL_PATH_SEGMENT_PATTERNS.some((pattern) => pattern.test(segment))) {
+      continue;
+    }
+    normalizedSegments.push(segment);
+  }
+
+  return normalizedSegments.join("\\");
+}
+
+export function normalizeExternalExecutableIdentity(path: string): string {
+  return normalizeExecutableIdentityKey(path);
+}
+
 function getExecutableNameFromPath(path: string): string {
   const normalized = normalizePathKey(path);
   if (!normalized) return "";
@@ -237,15 +292,37 @@ function normalizeExternalRecentLaunchRecord(
   };
 }
 
-function sanitizeExternalRecentLaunchRecords(
-  records: Array<Partial<ExternalRecentLaunchRecord> | null | undefined>
-): ExternalRecentLaunchRecord[] {
-  const mergedByPath = new Map<string, ExternalRecentLaunchRecord>();
+function normalizeBlockedExternalLaunchRecord(
+  record: Partial<BlockedExternalLaunchRecord> | null | undefined
+): BlockedExternalLaunchRecord | null {
+  const path = typeof record?.path === "string" ? record.path.trim() : "";
+  if (!path) return null;
+
+  const name = typeof record?.name === "string" && record.name.trim()
+    ? record.name.trim()
+    : path.split(/[\\/]/).pop() || path;
+
+  const source = typeof record?.source === "string" && record.source.trim()
+    ? record.source.trim()
+    : "系统启动";
+
+  return {
+    path,
+    name,
+    source,
+    blockedAt: normalizeTimestamp(record?.blockedAt ?? Date.now()),
+  };
+}
+
+function sanitizeBlockedExternalLaunchRecords(
+  records: Array<Partial<BlockedExternalLaunchRecord> | null | undefined>
+): BlockedExternalLaunchRecord[] {
+  const mergedByPath = new Map<string, BlockedExternalLaunchRecord>();
 
   const sorted = [...records]
-    .map((record) => normalizeExternalRecentLaunchRecord(record))
-    .filter((record): record is ExternalRecentLaunchRecord => !!record)
-    .sort((a, b) => b.usedAt - a.usedAt);
+    .map((record) => normalizeBlockedExternalLaunchRecord(record))
+    .filter((record): record is BlockedExternalLaunchRecord => !!record)
+    .sort((a, b) => b.blockedAt - a.blockedAt);
 
   for (const record of sorted) {
     const pathKey = normalizePathKey(record.path);
@@ -260,13 +337,49 @@ function sanitizeExternalRecentLaunchRecords(
       ...existing,
       name: existing.name || record.name,
       source: existing.source || record.source,
+      blockedAt: Math.max(existing.blockedAt, record.blockedAt),
+    });
+  }
+
+  return [...mergedByPath.values()].sort((a, b) => b.blockedAt - a.blockedAt);
+}
+
+function sanitizeExternalRecentLaunchRecords(
+  records: Array<Partial<ExternalRecentLaunchRecord> | null | undefined>,
+  blockedPathKeys: Set<string> = new Set(),
+  blockedIdentityKeys: Set<string> = new Set()
+): ExternalRecentLaunchRecord[] {
+  const mergedByIdentity = new Map<string, ExternalRecentLaunchRecord>();
+
+  const sorted = [...records]
+    .map((record) => normalizeExternalRecentLaunchRecord(record))
+    .filter((record): record is ExternalRecentLaunchRecord => !!record)
+    .sort((a, b) => b.usedAt - a.usedAt);
+
+  for (const record of sorted) {
+    const pathKey = normalizePathKey(record.path);
+    if (!pathKey) continue;
+    const identityKey = normalizeExecutableIdentityKey(pathKey) || pathKey;
+    if (blockedPathKeys.has(pathKey)) continue;
+    if (blockedIdentityKeys.has(identityKey)) continue;
+
+    const existing = mergedByIdentity.get(identityKey);
+    if (!existing) {
+      mergedByIdentity.set(identityKey, record);
+      continue;
+    }
+
+    mergedByIdentity.set(identityKey, {
+      ...existing,
+      name: existing.name || record.name,
+      source: existing.source || record.source,
       iconBase64: existing.iconBase64 || record.iconBase64,
       usedAt: Math.max(existing.usedAt, record.usedAt),
       usageCount: Math.max(existing.usageCount, record.usageCount),
     });
   }
 
-  return [...mergedByPath.values()]
+  return [...mergedByIdentity.values()]
     .sort((a, b) => b.usedAt - a.usedAt)
     .slice(0, MAX_EXTERNAL_RECENT_LAUNCHES);
 }
@@ -364,6 +477,61 @@ function getUsageAccumulator(
   return entry;
 }
 
+function buildRecentConsecutiveScoreMap(
+  launcher: ReturnType<typeof useLauncherStore>,
+  launchEvents: LaunchEventRecord[],
+  legacyUsageSnapshot: LegacyUsageSnapshotRecord[],
+  trackingStartedAt: number | null
+): Map<string, number> {
+  const scoreMap = new Map<string, number>();
+  const now = Date.now();
+
+  const relevantEvents = launchEvents
+    .slice(-SMART_SORT_STREAK_EVENT_WINDOW)
+    .map((event) => normalizeLaunchEventRecord(event))
+    .filter((event): event is LaunchEventRecord => !!event)
+    .sort((a, b) => b.usedAt - a.usedAt);
+
+  for (let index = 0; index < relevantEvents.length; index += 1) {
+    const event = relevantEvents[index];
+    const item = launcher.getLauncherItemById(event.categoryId, event.itemId);
+    if (!item) continue;
+
+    const key = `${event.categoryId}:${event.itemId}`;
+    const eventWeight = (SMART_SORT_STREAK_EVENT_WINDOW - index) / SMART_SORT_STREAK_EVENT_WINDOW;
+    const ageDays = Math.max(0, (now - event.usedAt) / DAY_MS);
+    const recencyDecay = Math.max(
+      SMART_SORT_STREAK_RECENCY_MIN_FACTOR,
+      1 - ageDays / 30
+    );
+    const score = eventWeight * recencyDecay;
+    scoreMap.set(key, (scoreMap.get(key) ?? 0) + score);
+  }
+
+  if (scoreMap.size > 0 || trackingStartedAt !== null) {
+    return scoreMap;
+  }
+
+  // Compatibility fallback for users without launch-event tracking yet.
+  const sortedLegacy = [...legacyUsageSnapshot]
+    .map((record) => normalizeLegacyUsageRecord(record))
+    .filter((record): record is LegacyUsageSnapshotRecord => !!record)
+    .sort((a, b) => b.usedAt - a.usedAt)
+    .slice(0, SMART_SORT_STREAK_EVENT_WINDOW);
+
+  for (let index = 0; index < sortedLegacy.length; index += 1) {
+    const record = sortedLegacy[index];
+    const item = launcher.getLauncherItemById(record.categoryId, record.itemId);
+    if (!item) continue;
+
+    const key = `${record.categoryId}:${record.itemId}`;
+    const eventWeight = (SMART_SORT_STREAK_EVENT_WINDOW - index) / SMART_SORT_STREAK_EVENT_WINDOW;
+    scoreMap.set(key, (scoreMap.get(key) ?? 0) + eventWeight);
+  }
+
+  return scoreMap;
+}
+
 function applyUsageCount(
   usageMap: Map<string, UsageAccumulator>,
   launcher: ReturnType<typeof useLauncherStore>,
@@ -392,8 +560,31 @@ export const useStatsStore = defineStore(
     const searchHistory = ref<SearchKeywordRecord[]>([]);
     const launchEvents = ref<LaunchEventRecord[]>([]);
     const externalRecentLaunches = ref<ExternalRecentLaunchRecord[]>([]);
+    const blockedExternalLaunches = ref<BlockedExternalLaunchRecord[]>([]);
     const launchTrackingStartedAt = ref<number | null>(null);
     const legacyUsageSnapshot = ref<LegacyUsageSnapshotRecord[]>([]);
+
+    const blockedExternalPathKeys = computed(() => {
+      const keys = new Set<string>();
+      for (const record of blockedExternalLaunches.value) {
+        const pathKey = normalizePathKey(record.path);
+        if (pathKey) {
+          keys.add(pathKey);
+        }
+      }
+      return keys;
+    });
+
+    const blockedExternalIdentityKeys = computed(() => {
+      const keys = new Set<string>();
+      for (const record of blockedExternalLaunches.value) {
+        const identityKey = normalizeExecutableIdentityKey(record.path);
+        if (identityKey) {
+          keys.add(identityKey);
+        }
+      }
+      return keys;
+    });
 
     function recordSearch(keyword: string) {
       const displayKeyword = keyword.trim();
@@ -474,6 +665,15 @@ export const useStatsStore = defineStore(
       legacyUsageSnapshot.value = [];
     }
 
+    function isExternalLaunchBlocked(path: string): boolean {
+      const pathKey = normalizePathKey(path);
+      if (!pathKey) return false;
+      if (blockedExternalPathKeys.value.has(pathKey)) return true;
+
+      const identityKey = normalizeExecutableIdentityKey(path);
+      return !!identityKey && blockedExternalIdentityKeys.value.has(identityKey);
+    }
+
     function recordExternalLaunch(record: {
       path: string;
       name: string;
@@ -493,11 +693,18 @@ export const useStatsStore = defineStore(
 
       const pathKey = normalizePathKey(normalized.path);
       if (!pathKey) return;
+      if (isExternalLaunchBlocked(normalized.path)) return;
+
+      const identityKey = normalizeExecutableIdentityKey(normalized.path) || pathKey;
 
       const list = [...externalRecentLaunches.value];
-      const existingIndex = list.findIndex(
-        (entry) => normalizePathKey(entry.path) === pathKey
-      );
+      const existingIndex = list.findIndex((entry) => {
+        const existingPathKey = normalizePathKey(entry.path);
+        if (!existingPathKey) return false;
+        if (existingPathKey === pathKey) return true;
+        const existingIdentityKey = normalizeExecutableIdentityKey(entry.path) || existingPathKey;
+        return existingIdentityKey === identityKey;
+      });
       const now = normalized.usedAt;
 
       if (existingIndex >= 0) {
@@ -529,8 +736,76 @@ export const useStatsStore = defineStore(
       externalRecentLaunches.value = list.slice(0, MAX_EXTERNAL_RECENT_LAUNCHES);
     }
 
+    function blockExternalLaunchPath(record: {
+      path: string;
+      name?: string;
+      source?: string;
+    }): void {
+      const normalized = normalizeBlockedExternalLaunchRecord({
+        path: record.path,
+        name: record.name,
+        source: record.source,
+        blockedAt: Date.now(),
+      });
+      if (!normalized) return;
+
+      const pathKey = normalizePathKey(normalized.path);
+      const identityKey = normalizeExecutableIdentityKey(normalized.path);
+      if (!pathKey || !identityKey) return;
+
+      const nextBlocked = [...blockedExternalLaunches.value];
+      const existingIndex = nextBlocked.findIndex((entry) => {
+        const existingPathKey = normalizePathKey(entry.path);
+        if (!existingPathKey) return false;
+        if (existingPathKey === pathKey) return true;
+        const existingIdentityKey = normalizeExecutableIdentityKey(entry.path);
+        return !!existingIdentityKey && existingIdentityKey === identityKey;
+      });
+
+      if (existingIndex >= 0) {
+        const existing = nextBlocked[existingIndex];
+        nextBlocked[existingIndex] = {
+          ...existing,
+          path: normalized.path,
+          name: normalized.name || existing.name,
+          source: normalized.source || existing.source,
+          blockedAt: Math.max(existing.blockedAt, normalized.blockedAt),
+        };
+      } else {
+        nextBlocked.unshift(normalized);
+      }
+
+      blockedExternalLaunches.value = sanitizeBlockedExternalLaunchRecords(nextBlocked);
+      sanitizeExternalRecentLaunchHistory();
+    }
+
+    function unblockExternalLaunchPath(path: string): void {
+      const pathKey = normalizePathKey(path);
+      if (!pathKey) return;
+      const identityKey = normalizeExecutableIdentityKey(path);
+
+      blockedExternalLaunches.value = sanitizeBlockedExternalLaunchRecords(
+        blockedExternalLaunches.value.filter((entry) => {
+          const existingPathKey = normalizePathKey(entry.path);
+          if (existingPathKey === pathKey) return false;
+          if (identityKey) {
+            const existingIdentityKey = normalizeExecutableIdentityKey(entry.path);
+            if (existingIdentityKey === identityKey) {
+              return false;
+            }
+          }
+          return true;
+        })
+      );
+    }
+
     function sanitizeExternalRecentLaunchHistory(): void {
-      externalRecentLaunches.value = sanitizeExternalRecentLaunchRecords(externalRecentLaunches.value);
+      blockedExternalLaunches.value = sanitizeBlockedExternalLaunchRecords(blockedExternalLaunches.value);
+      externalRecentLaunches.value = sanitizeExternalRecentLaunchRecords(
+        externalRecentLaunches.value,
+        blockedExternalPathKeys.value,
+        blockedExternalIdentityKeys.value
+      );
     }
 
     sanitizeExternalRecentLaunchHistory();
@@ -734,34 +1009,92 @@ export const useStatsStore = defineStore(
       return appUsageStats.value.find((s) => s.itemId === itemId);
     }
 
-    function getSmartSortOrder(categoryId: string, itemIds: string[]): string[] {
+    function getSmartSortOrder(
+      categoryId: string,
+      itemIds: string[],
+      pinnedItemIds: string[] = []
+    ): string[] {
+      const launcher = useLauncherStore();
       const currentSlot = getCurrentTimeSlot();
-      const now = Date.now();
-      const dayAgo = now - 24 * 60 * 60 * 1000;
-      const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+      const pinnedSet = new Set(pinnedItemIds);
+      const categoryStatsMap = new Map(
+        appUsageStats.value
+          .filter((stats) => stats.categoryId === categoryId)
+          .map((stats) => [stats.itemId, stats] as const)
+      );
 
-      const scored = itemIds.map((id) => {
-        const stats = appUsageStats.value.find(
-          (s) => s.itemId === id && s.categoryId === categoryId
+      const recentConsecutiveScoreMap = buildRecentConsecutiveScoreMap(
+        launcher,
+        launchEvents.value,
+        legacyUsageSnapshot.value,
+        launchTrackingStartedAt.value
+      );
+
+      let maxRecentFrequency = 0;
+      let maxLongTermFrequency = 0;
+      let maxCurrentSlotFrequency = 0;
+      let maxRecentConsecutiveScore = 0;
+
+      for (const itemId of itemIds) {
+        const stats = categoryStatsMap.get(itemId);
+        if (stats) {
+          maxRecentFrequency = Math.max(maxRecentFrequency, stats.weekLaunches);
+          maxLongTermFrequency = Math.max(maxLongTermFrequency, stats.totalLaunches);
+          maxCurrentSlotFrequency = Math.max(
+            maxCurrentSlotFrequency,
+            stats.timeSlotCounts[currentSlot]
+          );
+        }
+        maxRecentConsecutiveScore = Math.max(
+          maxRecentConsecutiveScore,
+          recentConsecutiveScoreMap.get(`${categoryId}:${itemId}`) ?? 0
         );
-        if (!stats) return { id, score: 0 };
+      }
 
-        let score = 0;
-        score += Math.min(stats.weekLaunches * 10, 500);
-        score += Math.min(stats.timeSlotCounts[currentSlot] * 20, 200);
-        if (stats.lastUsedAt >= dayAgo) score += 100;
-        if (stats.lastUsedAt >= weekAgo) score += 50;
+      const safeRecentMax = maxRecentFrequency || 1;
+      const safeLongTermMax = maxLongTermFrequency || 1;
+      const safeSlotMax = maxCurrentSlotFrequency || 1;
+      const safeConsecutiveMax = maxRecentConsecutiveScore || 1;
 
-        return { id, score };
+      const scored = itemIds.map((id, originalIndex) => {
+        const stats = categoryStatsMap.get(id);
+        const recentFrequencyNorm = stats ? stats.weekLaunches / safeRecentMax : 0;
+        const longTermFrequencyNorm = stats ? stats.totalLaunches / safeLongTermMax : 0;
+        const currentSlotNorm = stats
+          ? (stats.timeSlotCounts[currentSlot] || 0) / safeSlotMax
+          : 0;
+        const recentConsecutiveNorm =
+          (recentConsecutiveScoreMap.get(`${categoryId}:${id}`) ?? 0) / safeConsecutiveMax;
+        const pinnedNorm = pinnedSet.has(id) ? 1 : 0;
+
+        const score =
+          recentFrequencyNorm * SMART_SORT_WEIGHTS.recentFrequency +
+          longTermFrequencyNorm * SMART_SORT_WEIGHTS.longTermFrequency +
+          currentSlotNorm * SMART_SORT_WEIGHTS.currentTimeSlot +
+          recentConsecutiveNorm * SMART_SORT_WEIGHTS.recentConsecutive +
+          pinnedNorm * SMART_SORT_WEIGHTS.pinned;
+
+        return {
+          id,
+          score,
+          originalIndex,
+        };
       });
 
-      return scored.sort((a, b) => b.score - a.score).map((s) => s.id);
+      return scored
+        .sort((a, b) => {
+          const scoreDiff = b.score - a.score;
+          if (scoreDiff !== 0) return scoreDiff;
+          return a.originalIndex - b.originalIndex;
+        })
+        .map((entry) => entry.id);
     }
 
     return {
       searchHistory,
       launchEvents,
       externalRecentLaunches,
+      blockedExternalLaunches,
       launchTrackingStartedAt,
       legacyUsageSnapshot,
       recordSearch,
@@ -770,6 +1103,9 @@ export const useStatsStore = defineStore(
       ensureLaunchTrackingStarted,
       recordLaunchEvent,
       recordExternalLaunch,
+      blockExternalLaunchPath,
+      unblockExternalLaunchPath,
+      isExternalLaunchBlocked,
       sanitizeExternalRecentLaunchHistory,
       clearLaunchHistory,
       removeLaunchEventsForItems,
@@ -794,6 +1130,7 @@ export const useStatsStore = defineStore(
       "searchHistory",
       "launchEvents",
       "externalRecentLaunches",
+      "blockedExternalLaunches",
       "launchTrackingStartedAt",
       "legacyUsageSnapshot",
     ]),

@@ -50,7 +50,9 @@
                 type="button"
                 :disabled="!!evaluateCondition(resolveConditionValue(item.disabled, menuContext), menuContext)"
                 @click="onClickItem(item)"
-                @mousedown="onMouseDownItem(item)"
+                @mousedown="onMouseDownItem(item, $event)"
+                @mouseup="onMouseUpItem(item)"
+                @mouseleave="onMouseLeaveItem(item)"
             >
                 <span>{{ resolveMenuLabel(item.label, menuContext) }}</span>
                 <span
@@ -82,6 +84,10 @@ const { ContextMenu, ContextMenuType } = storeToRefs(uiStore);
 
 const emit = defineEmits<{
     (e: "action", action: MenuAction, ctx: MenuContext): void;
+    (
+        e: "start-external-convert-drag",
+        payload: { itemPath: string; clientX: number; clientY: number }
+    ): void;
 }>();
 
 const props = defineProps<{
@@ -141,6 +147,11 @@ const menuModel = computed<MenuItem[]>(() => {
     return buildContextMenuModel(menuContext.value);
 });
 
+const CONVERT_LONG_PRESS_MS = 320;
+let convertLongPressTimer: ReturnType<typeof setTimeout> | null = null;
+let suppressConvertClick = false;
+let convertLongPressTriggered = false;
+
 /**
  * 点击菜单项后执行动作分发（内置/插件统一）。
  */
@@ -161,6 +172,11 @@ function handleChildClick(child: MenuItem) {
  * 处理菜单项点击：拖拽窗口项不走 action 分发。
  */
 function onClickItem(item: Extract<MenuItem, { type: "item" }>) {
+    if (item.action.kind === "convert-external-item" && suppressConvertClick) {
+        suppressConvertClick = false;
+        convertLongPressTriggered = false;
+        return;
+    }
     if (item.action.kind === "start-dragging-window") return;
     onSelectItem(item);
 }
@@ -168,9 +184,54 @@ function onClickItem(item: Extract<MenuItem, { type: "item" }>) {
 /**
  * 处理菜单项按下：用于触发“拖拽窗口”。
  */
-function onMouseDownItem(item: Extract<MenuItem, { type: "item" }>) {
+function onMouseDownItem(item: Extract<MenuItem, { type: "item" }>, event: MouseEvent) {
     if (item.action.kind === "start-dragging-window") {
         startDragging();
+        return;
+    }
+
+    if (item.action.kind === "convert-external-item" && menuContext.value.itemPath) {
+        clearConvertLongPressTimer();
+        suppressConvertClick = false;
+        convertLongPressTriggered = false;
+        convertLongPressTimer = setTimeout(() => {
+            suppressConvertClick = true;
+            convertLongPressTriggered = true;
+            emit("start-external-convert-drag", {
+                itemPath: menuContext.value.itemPath as string,
+                clientX: event.clientX,
+                clientY: event.clientY,
+            });
+            uiStore.closeContextMenu();
+            clearConvertLongPressTimer();
+        }, CONVERT_LONG_PRESS_MS);
+    }
+}
+
+function onMouseUpItem(item: Extract<MenuItem, { type: "item" }>) {
+    if (item.action.kind === "convert-external-item") {
+        clearConvertLongPressTimer();
+        if (convertLongPressTriggered) {
+            suppressConvertClick = true;
+            convertLongPressTriggered = false;
+        }
+    }
+}
+
+function onMouseLeaveItem(item: Extract<MenuItem, { type: "item" }>) {
+    if (item.action.kind === "convert-external-item") {
+        clearConvertLongPressTimer();
+        if (convertLongPressTriggered) {
+            suppressConvertClick = true;
+            convertLongPressTriggered = false;
+        }
+    }
+}
+
+function clearConvertLongPressTimer() {
+    if (convertLongPressTimer) {
+        clearTimeout(convertLongPressTimer);
+        convertLongPressTimer = null;
     }
 }
 

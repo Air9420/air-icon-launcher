@@ -10,4 +10,5 @@ export interface InputOptions {
     secondInputPlaceholder?: string;
     secondInputType?: string;
     secondDefaultValue?: string;
+    selectOptions?: string[];
 }

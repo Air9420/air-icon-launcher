@@ -5,6 +5,7 @@
             <div class="input-message">{{ message }}</div>
             <div class="input-field">
                 <input
+                    v-if="!hasSelectOptions"
                     ref="inputRef"
                     v-model="localInputValue"
                     :type="inputType"
@@ -13,6 +14,22 @@
                     @keyup.enter="onConfirm"
                     @keyup.escape="onCancel"
                 />
+                <select
+                    v-else
+                    ref="selectRef"
+                    v-model="localInputValue"
+                    class="input input-select"
+                    @keyup.enter="onConfirm"
+                    @keyup.escape="onCancel"
+                >
+                    <option
+                        v-for="option in selectOptions"
+                        :key="option"
+                        :value="option"
+                    >
+                        {{ option }}
+                    </option>
+                </select>
             </div>
             <div v-if="secondInputLabel" class="input-field">
                 <input
@@ -37,7 +54,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from "vue";
+import { computed, ref, watch, nextTick } from "vue";
 
 interface InputOptions {
     visible: boolean;
@@ -52,6 +69,7 @@ interface InputOptions {
     secondInputPlaceholder?: string;
     secondInputType?: string;
     secondDefaultValue?: string;
+    selectOptions?: string[];
 }
 
 const props = withDefaults(defineProps<InputOptions>(), {
@@ -64,6 +82,7 @@ const props = withDefaults(defineProps<InputOptions>(), {
     secondInputPlaceholder: "",
     secondInputType: "text",
     secondDefaultValue: "",
+    selectOptions: () => [],
 });
 
 const emit = defineEmits<{
@@ -72,8 +91,10 @@ const emit = defineEmits<{
 }>();
 
 const inputRef = ref<HTMLInputElement | null>(null);
+const selectRef = ref<HTMLSelectElement | null>(null);
 const localInputValue = ref("");
 const localSecondInputValue = ref("");
+const hasSelectOptions = computed(() => (props.selectOptions?.length ?? 0) > 0);
 
 watch(() => props.defaultValue, (val) => {
     localInputValue.value = val || "";
@@ -88,7 +109,11 @@ watch(() => props.visible, async (isVisible) => {
         localInputValue.value = props.defaultValue || "";
         localSecondInputValue.value = props.secondDefaultValue || "";
         await nextTick();
-        inputRef.value?.focus();
+        if (hasSelectOptions.value) {
+            selectRef.value?.focus();
+        } else {
+            inputRef.value?.focus();
+        }
     }
 });
 
@@ -167,6 +192,10 @@ function onCancel() {
     &::placeholder {
         color: var(--text-tertiary);
     }
+}
+
+.input-select {
+    appearance: auto;
 }
 
 .input-actions {

@@ -52,3 +52,5 @@ src-tauri/*.msi
 src-tauri/*.appimage
 src-tauri/*.deb
 src-tauri/*.rpm
+
+CLAUDE.md

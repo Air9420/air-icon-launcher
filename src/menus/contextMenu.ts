@@ -35,7 +35,12 @@ function buildBuiltinMenuModel(_ctx: MenuContext): MenuItem[] {
       label: "编辑",
       action: { kind: "edit-item" },
       order: 20,
-      visible: { menuType: enumContextMenuType.IconItem },
+      visible: {
+        and: [
+          { menuType: enumContextMenuType.IconItem },
+          { category: true },
+        ],
+      },
     },
     {
       type: "item",
@@ -47,7 +52,12 @@ function buildBuiltinMenuModel(_ctx: MenuContext): MenuItem[] {
       },
       action: { kind: "toggle-pinned" },
       order: 30,
-      visible: { menuType: enumContextMenuType.IconItem },
+      visible: {
+        and: [
+          { menuType: enumContextMenuType.IconItem },
+          { category: true },
+        ],
+      },
     },
     {
       type: "item",
@@ -55,7 +65,12 @@ function buildBuiltinMenuModel(_ctx: MenuContext): MenuItem[] {
       label: "更换图标",
       action: { kind: "change-icon" },
       order: 40,
-      visible: { menuType: enumContextMenuType.IconItem },
+      visible: {
+        and: [
+          { menuType: enumContextMenuType.IconItem },
+          { category: true },
+        ],
+      },
     },
     {
       type: "item",
@@ -66,6 +81,7 @@ function buildBuiltinMenuModel(_ctx: MenuContext): MenuItem[] {
       visible: {
         and: [
           { menuType: enumContextMenuType.IconItem },
+          { category: true },
           { item: { customIcon: true } },
         ],
       },
@@ -76,7 +92,12 @@ function buildBuiltinMenuModel(_ctx: MenuContext): MenuItem[] {
       label: "删除",
       action: { kind: "delete-item" },
       order: 60,
-      visible: { menuType: enumContextMenuType.IconItem },
+      visible: {
+        and: [
+          { menuType: enumContextMenuType.IconItem },
+          { category: true },
+        ],
+      },
     },
     {
       type: "item",
@@ -110,6 +131,36 @@ function buildBuiltinMenuModel(_ctx: MenuContext): MenuItem[] {
             ],
           },
           { itemPath: true },
+        ],
+      },
+    },
+    {
+      type: "item",
+      id: "builtin:block-external-item",
+      label: "屏蔽此外部项",
+      action: { kind: "block-external-item" },
+      order: 65,
+      visible: {
+        and: [
+          { menuType: enumContextMenuType.IconItem },
+          { homeSection: "recent" },
+          { itemPath: true },
+          { not: { category: true } },
+        ],
+      },
+    },
+    {
+      type: "item",
+      id: "builtin:convert-external-item",
+      label: "添加到分类---长按或点击",
+      action: { kind: "convert-external-item" },
+      order: 66,
+      visible: {
+        and: [
+          { menuType: enumContextMenuType.IconItem },
+          { homeSection: "recent" },
+          { itemPath: true },
+          { not: { category: true } },
         ],
       },
     },

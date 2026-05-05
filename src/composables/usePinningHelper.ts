@@ -58,8 +58,10 @@ export function usePinningHelper(
         return pinnedItemIds.value.includes(itemId);
     }
 
-    function recordItemUsage(categoryId: string, itemId: string) {
-        const now = Date.now();
+    function recordItemUsage(categoryId: string, itemId: string, usedAtOverride?: number) {
+        const now = Number.isFinite(usedAtOverride)
+            ? Math.floor(usedAtOverride as number)
+            : Date.now();
         const stats = useStatsStore();
         stats.ensureLaunchTrackingStarted(recentUsedItems.value, now);
         const existingIndex = recentUsedItems.value.findIndex(
@@ -312,15 +314,13 @@ export function usePinningHelper(
         if (!raw || raw.length === 0) return [];
 
         const stats = useStatsStore();
-        const pinnedSet = new Set(pinnedItemIds.value);
-        const orderMap = new Map(stats.getSmartSortOrder(categoryId, raw.map(i => i.id)).map((id, idx) => [id, idx]));
+        const orderMap = new Map(
+            stats
+                .getSmartSortOrder(categoryId, raw.map(i => i.id), pinnedItemIds.value)
+                .map((id, idx) => [id, idx] as const)
+        );
 
         return [...raw].sort((a, b) => {
-            const aPinned = pinnedSet.has(a.id);
-            const bPinned = pinnedSet.has(b.id);
-            if (aPinned && !bPinned) return -1;
-            if (!aPinned && bPinned) return 1;
-
             const aOrder = orderMap.get(a.id) ?? 9999;
             const bOrder = orderMap.get(b.id) ?? 9999;
             return aOrder - bOrder;

@@ -14,6 +14,7 @@
                 :key="item.key"
                 :item-id="getItemId(item)"
                 :category-id="getCategoryId(item)"
+                :item-path="getItemPath(item)"
                 :name="getName(item)"
                 :icon-base64="getIconBase64(item)"
                 :item-type="getItemType(item)"
@@ -83,6 +84,13 @@ function getName(item: HomeRecentDisplayItem): string {
         return item.external.name;
     }
     return item.item.name;
+}
+
+function getItemPath(item: HomeRecentDisplayItem): string | null {
+    if (isExternalItem(item)) {
+        return item.external.path;
+    }
+    return item.item.path;
 }
 
 function getIconBase64(item: HomeRecentDisplayItem): string | null {

@@ -18,6 +18,7 @@ const state = ref({
     secondInputPlaceholder: "",
     secondInputType: "text",
     secondDefaultValue: "",
+    selectOptions: [] as string[],
     resolve: null as ((value: string[] | null) => void) | null,
 });
 
@@ -38,6 +39,7 @@ export function useInputDialog() {
             secondInputPlaceholder: options.secondInputPlaceholder || "",
             secondInputType: options.secondInputType || "text",
             secondDefaultValue: options.secondDefaultValue || "",
+            selectOptions: options.selectOptions || [],
             resolve: null,
         };
         inputValues.value = [options.defaultValue || "", options.secondDefaultValue || ""];

@@ -41,6 +41,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { Store } from "../stores";
 import { useCategoryStore } from "../stores/categoryStore";
 import { useClipboardStore } from "../stores/clipboardStore";
+import { useStatsStore } from "../stores/statsStore";
 import { useUIStore, type HomeLayoutPresetKey, type HomeLayoutSectionKey } from "../stores/uiStore";
 import type { MenuAction, MenuContext } from "../menus/contextMenuTypes";
 import type { DropRecord } from "./types";
@@ -107,6 +108,7 @@ export function useMenuActions(options: UseMenuActionsOptions) {
 
     const store = Store();
     const clipboardStore = useClipboardStore();
+    const statsStore = useStatsStore();
     const uiStore = useUIStore();
     const categoryStore = useCategoryStore();
     const router = useRouter();
@@ -700,6 +702,106 @@ export function useMenuActions(options: UseMenuActionsOptions) {
         }
     }
 
+    function onBlockExternalItem() {
+        const rawPath = currentItemPath.value?.trim();
+        if (!rawPath) {
+            closeContextMenu();
+            return;
+        }
+
+        statsStore.blockExternalLaunchPath({
+            path: rawPath,
+            name: rawPath.split(/[\\/]/).pop() || rawPath,
+            source: "系统启动",
+        });
+        showToast("已屏蔽该外部项");
+        closeContextMenu();
+    }
+
+    async function onConvertExternalItem() {
+        const rawPath = currentItemPath.value?.trim();
+        if (!rawPath) {
+            closeContextMenu();
+            return;
+        }
+
+        const preferredCategory =
+            categoryStore.categories.find((category) => category.name === "工具") ??
+            categoryStore.categories[0];
+        if (!preferredCategory) {
+            showToast("未找到可用分类", { type: "error" });
+            closeContextMenu();
+            return;
+        }
+
+        const values = await inputDialog({
+            title: "转为应用内启动项",
+            message: "请选择目标分类（长按菜单项可拖拽到分类图标直接导入）",
+            confirmText: "添加",
+            cancelText: "取消",
+            defaultValue: preferredCategory.name,
+            placeholder: "选择分类",
+            inputType: "text",
+            selectOptions: categoryStore.categories.map((category) => category.name),
+        });
+
+        if (!values) {
+            closeContextMenu();
+            return;
+        }
+
+        const [targetRaw] = values;
+        const targetValue = (targetRaw || "").trim();
+        if (!targetValue) {
+            showToast("分类不能为空", { type: "error" });
+            closeContextMenu();
+            return;
+        }
+
+        const targetCategory = categoryStore.categories.find(
+            (category) =>
+                category.id === targetValue ||
+                category.name.localeCompare(targetValue, "zh-CN", { sensitivity: "accent" }) === 0
+        );
+        if (!targetCategory) {
+            showToast(`未找到分类：${targetValue}`, { type: "error" });
+            closeContextMenu();
+            return;
+        }
+
+        const normalizedPath = rawPath.replace(/\//g, "\\").trim().toLowerCase();
+        const duplicateExists = store
+            .getLauncherItemsByCategoryId(targetCategory.id)
+            .some((item) => item.itemType === "file" && item.path.replace(/\//g, "\\").trim().toLowerCase() === normalizedPath);
+        if (duplicateExists) {
+            showToast(`「${targetCategory.name}」中已存在该启动项`);
+            closeContextMenu();
+            return;
+        }
+
+        const externalRecord = statsStore.externalRecentLaunches.find(
+            (entry) => entry.path.replace(/\//g, "\\").trim().toLowerCase() === normalizedPath
+        );
+
+        const createdItemIds = store.addLauncherItemsToCategory(targetCategory.id, {
+            paths: [rawPath],
+            directories: [],
+            icon_base64s: [externalRecord?.iconBase64 ?? null],
+            itemTypes: ["file"],
+        });
+        const createdItemId = createdItemIds[0];
+        if (createdItemId) {
+            store.recordItemUsage(
+                targetCategory.id,
+                createdItemId,
+                externalRecord?.usedAt ?? Date.now()
+            );
+        }
+
+        showToast(`已添加到「${targetCategory.name}」`);
+        closeContextMenu();
+    }
+
     /**
      * 菜单动作统一分发器
      * 
@@ -762,6 +864,8 @@ export function useMenuActions(options: UseMenuActionsOptions) {
         if (action.kind === "copy-clipboard-item") return onCopyClipboardItem();
         if (action.kind === "locate-clipboard-item") return onLocateClipboardItem();
         if (action.kind === "open-in-explorer") return onOpenInExplorer();
+        if (action.kind === "block-external-item") return onBlockExternalItem();
+        if (action.kind === "convert-external-item") return onConvertExternalItem();
         if (action.kind === "open-settings") return onOpenSettings();
         if (action.kind === "open-about") return onOpenAbout();
         if (action.kind === "open-guide") {

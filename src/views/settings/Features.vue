@@ -14,16 +14,46 @@
                 </button>
             </div>
         </div>
+
+        <div class="section">
+            <div class="section-title">外部项屏蔽列表</div>
+            <div v-if="blockedExternalLaunches.length === 0" class="hint-text">
+                暂无已屏蔽的外部启动项
+            </div>
+            <div v-else class="blocked-list">
+                <div
+                    v-for="entry in blockedExternalLaunches"
+                    :key="entry.path"
+                    class="blocked-item"
+                >
+                    <div class="blocked-main">
+                        <div class="blocked-name" :title="entry.name">{{ entry.name }}</div>
+                        <div class="blocked-path" :title="entry.path">{{ entry.path }}</div>
+                    </div>
+                    <button
+                        class="action-btn"
+                        type="button"
+                        @click="onUnblockExternal(entry.path)"
+                    >
+                        取消屏蔽
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 </template>
 
 <script setup lang="ts">
 import { useRouter } from "vue-router";
 import { Store } from "../../stores";
+import { storeToRefs } from "pinia";
 import { useConfirmDialog } from "../../composables/useConfirmDialog";
+import { useStatsStore } from "../../stores/statsStore";
 
 const router = useRouter();
 const store = Store();
+const statsStore = useStatsStore();
+const { blockedExternalLaunches } = storeToRefs(statsStore);
 const { confirm } = useConfirmDialog();
 
 function onOpenPlugins() {
@@ -47,6 +77,10 @@ async function onClearRecentUsed() {
     }
 
     store.clearRecentUsed();
+}
+
+function onUnblockExternal(path: string) {
+    statsStore.unblockExternalLaunchPath(path);
 }
 </script>
 
@@ -94,5 +128,52 @@ async function onClearRecentUsed() {
 
 .action-btn.danger:hover {
     background: var(--error-bg);
+}
+
+.hint-text {
+    @include settings.hint(0);
+}
+
+.blocked-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.blocked-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-secondary);
+
+    & .action-btn {
+        width: 80px;
+    }
+}
+
+.blocked-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.blocked-name {
+    font-size: 13px;
+    color: var(--text-color);
+    font-weight: 600;
+}
+
+.blocked-path {
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: 250px;
 }
 </style>
