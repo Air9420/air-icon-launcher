@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
-import { buildContextMenuModel } from "../contextMenu";
+import { buildContextMenuModel, SCENARIO_KEYS } from "../contextMenu";
 import { enumContextMenuType, resolveConditionValue, evaluateCondition, type MenuContext } from "../contextMenuTypes";
 
 function createIconItemContext(overrides: Partial<MenuContext> = {}): MenuContext {
@@ -63,9 +63,7 @@ describe("contextMenu scenario membership group", () => {
     expect(group.children).toHaveLength(3);
     expect(group.children.every((child) => child.type === "item")).toBe(true);
     expect(group.children.map((child) => child.type === "item" ? child.label : null)).toEqual([
-      "work",
-      "dev",
-      "play",
+      ...SCENARIO_KEYS,
     ]);
     expect(group.children.map((child) => child.type === "item" ? child.mode : null)).toEqual([
       "checkbox",
@@ -73,9 +71,7 @@ describe("contextMenu scenario membership group", () => {
       "checkbox",
     ]);
     expect(group.children.map((child) => child.type === "item" ? child.action : null)).toEqual([
-      { kind: "toggle-scenario-membership", scenario: "work" },
-      { kind: "toggle-scenario-membership", scenario: "dev" },
-      { kind: "toggle-scenario-membership", scenario: "play" },
+      ...SCENARIO_KEYS.map((scenario) => ({ kind: "toggle-scenario-membership", scenario })),
     ]);
     expect(
       group.children.map((child) => {
@@ -122,11 +118,12 @@ describe("contextMenu scenario membership group", () => {
 
     const children = group.children.filter((child) => child.type === "item");
     expect(children).toHaveLength(3);
-    expect(children.map((child) => child.label)).toEqual(["work", "dev", "play"]);
-    expect(children.map((child) => child.action)).toEqual([
-      { kind: "toggle-scenario-membership", scenario: "work" },
-      { kind: "toggle-scenario-membership", scenario: "dev" },
-      { kind: "toggle-scenario-membership", scenario: "play" },
-    ]);
+    expect(children.map((child) => child.label)).toEqual([...SCENARIO_KEYS]);
+    expect(children.map((child) => child.action)).toEqual(
+      SCENARIO_KEYS.map((scenario) => ({
+        kind: "toggle-scenario-membership",
+        scenario,
+      })),
+    );
   });
 });

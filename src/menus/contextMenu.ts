@@ -5,6 +5,8 @@ import { getContextMenuContributions } from "../plugins/contextMenuRegistry";
 import type { MenuContext, MenuItem } from "./contextMenuTypes";
 import { evaluateCondition } from "./conditions";
 
+export const SCENARIO_KEYS: readonly ScenarioKey[] = ["work", "dev", "play"];
+
 /**
  * 构建当前右键上下文下的菜单模型（内置 + 插件贡献项）。
  */
@@ -21,8 +23,6 @@ export function buildContextMenuModel(ctx: MenuContext): MenuItem[] {
  * 构建应用内置的右键菜单模型（不含插件项）。
  */
 function buildBuiltinMenuModel(ctx: MenuContext): MenuItem[] {
-  const scenarioKeys: ScenarioKey[] = ["work", "dev", "play"];
-
   const items: MenuItem[] = [
     {
       type: "item",
@@ -100,7 +100,7 @@ function buildBuiltinMenuModel(ctx: MenuContext): MenuItem[] {
           { category: true },
         ],
       },
-      children: scenarioKeys.map((scenario, index) => ({
+      children: SCENARIO_KEYS.map((scenario, index) => ({
         type: "item" as const,
         id: `builtin:toggle-scenario-membership:${scenario}`,
         label: scenario,

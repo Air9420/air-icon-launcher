@@ -70,29 +70,13 @@
     </div>
 </template>
 
-<script setup lang="ts">
-import { HomeLayoutPresetKey, useUIStore } from "../stores/uiStore";
-import { storeToRefs } from "pinia";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { computed } from "vue";
-import { buildContextMenuModel } from "../menus/contextMenu";
-import { useLauncherStore } from "../stores/launcherStore";
-import type { MenuContext, MenuItem, MenuAction } from "../menus/contextMenuTypes";
-import { resolveLabel as resolveMenuLabel, resolveConditionValue, evaluateCondition } from "../menus/contextMenuTypes";
+<script lang="ts">
+import type { HomeLayoutPresetKey } from "../stores/uiStore";
+import type { ScenarioKey } from "../stores/launcherStore";
+import { enumContextMenuType, type MenuContext } from "../menus/contextMenuTypes";
+import { SCENARIO_KEYS } from "../menus/contextMenu";
 
-const uiStore = useUIStore();
-const launcherStore = useLauncherStore();
-const { ContextMenu, ContextMenuType } = storeToRefs(uiStore);
-
-const emit = defineEmits<{
-    (e: "action", action: MenuAction, ctx: MenuContext): void;
-    (
-        e: "start-external-convert-drag",
-        payload: { itemPath: string; clientX: number; clientY: number }
-    ): void;
-}>();
-
-const props = defineProps<{
+export interface ContextMenuViewProps {
     currentItemId?: string;
     currentItemPath?: string;
     currentClipboardRecordId?: string;
@@ -107,12 +91,21 @@ const props = defineProps<{
     pinnedLayoutPreset?: HomeLayoutPresetKey;
     recentLayoutPreset?: HomeLayoutPresetKey;
     currentCategoryId?: string;
-}>();
+}
 
-const menuContext = computed<MenuContext>(() => {
+export type ItemScenarioChecker = (
+    scenario: ScenarioKey,
+    itemId: string,
+) => boolean;
+
+export function buildMenuContextFromProps(
+    props: ContextMenuViewProps,
+    menuType: enumContextMenuType,
+    isItemInScenario: ItemScenarioChecker,
+): MenuContext {
     const itemScenarios = props.currentItemId
-        ? (["work", "dev", "play"] as const).filter((scenario) =>
-              launcherStore.isItemInScenario(scenario, props.currentItemId as string)
+        ? SCENARIO_KEYS.filter((scenario) =>
+              isItemInScenario(scenario, props.currentItemId),
           )
         : [];
 
@@ -133,7 +126,7 @@ const menuContext = computed<MenuContext>(() => {
     };
 
     return {
-        menuType: ContextMenuType.value,
+        menuType,
         categoryId: props.currentCategoryId ?? null,
         itemId: props.currentItemId ?? null,
         itemPath: props.currentItemPath ?? null,
@@ -150,6 +143,39 @@ const menuContext = computed<MenuContext>(() => {
             : undefined,
         layout,
     };
+}
+</script>
+
+<script setup lang="ts">
+import { useUIStore } from "../stores/uiStore";
+import { storeToRefs } from "pinia";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { computed } from "vue";
+import { buildContextMenuModel } from "../menus/contextMenu";
+import { useLauncherStore } from "../stores/launcherStore";
+import type { MenuContext, MenuItem, MenuAction } from "../menus/contextMenuTypes";
+import { resolveLabel as resolveMenuLabel, resolveConditionValue, evaluateCondition } from "../menus/contextMenuTypes";
+
+const uiStore = useUIStore();
+const launcherStore = useLauncherStore();
+const { ContextMenu, ContextMenuType } = storeToRefs(uiStore);
+
+const emit = defineEmits<{
+    (e: "action", action: MenuAction, ctx: MenuContext): void;
+    (
+        e: "start-external-convert-drag",
+        payload: { itemPath: string; clientX: number; clientY: number }
+    ): void;
+}>();
+
+const props = defineProps<ContextMenuViewProps>();
+
+const menuContext = computed<MenuContext>(() => {
+    return buildMenuContextFromProps(
+        props,
+        ContextMenuType.value,
+        (scenario, itemId) => launcherStore.isItemInScenario(scenario, itemId),
+    );
 });
 
 const menuModel = computed<MenuItem[]>(() => {
