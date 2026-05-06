@@ -7,6 +7,7 @@ import {
     getRecentSearchHistoryEntries,
     getSearchHistoryDisplayKeyword,
     getSearchShortcutIndex,
+    getSearchSectionIndex,
     getSearchMatchTypeLabel,
 } from "../search-ui";
 import type { GlobalSearchMergedResult } from "../../stores/launcherStore";
@@ -163,8 +164,38 @@ describe("getSearchShortcutIndex", () => {
     });
 
     it("ignores unsupported keys", () => {
-        expect(getSearchShortcutIndex({ key: "0", code: "Digit0" })).toBeNull();
+        expect(getSearchShortcutIndex({ key: "0", code: "Digit0" })).toBe(9);
         expect(getSearchShortcutIndex({ key: "a", code: "KeyA" })).toBeNull();
+    });
+});
+
+describe("getSearchSectionIndex", () => {
+    it("maps indices across command and launcher sections", () => {
+        const counts = {
+            command: 2,
+            launcher: 3,
+            browser: 1,
+            scanned: 4,
+            clipboard: 5,
+            "recent-file": 6,
+        } as const;
+
+        expect(getSearchSectionIndex(0, counts)).toEqual({ section: "command", offset: 0 });
+        expect(getSearchSectionIndex(1, counts)).toEqual({ section: "command", offset: 1 });
+        expect(getSearchSectionIndex(2, counts)).toEqual({ section: "launcher", offset: 0 });
+        expect(getSearchSectionIndex(5, counts)).toEqual({ section: "browser", offset: 0 });
+        expect(getSearchSectionIndex(15, counts)).toEqual({ section: "recent-file", offset: 0 });
+    });
+
+    it("returns null for out-of-range indices", () => {
+        expect(getSearchSectionIndex(-1, {
+            command: 0,
+            launcher: 0,
+            browser: 0,
+            scanned: 0,
+            clipboard: 0,
+            "recent-file": 0,
+        } as const)).toBeNull();
     });
 });
 

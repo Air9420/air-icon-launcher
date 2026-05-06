@@ -79,9 +79,11 @@
             :show-shortcut-hints="showShortcutHints"
             :is-pending="isHomeSearchPending"
             :scanned-section="scannedFallbackSection"
+            :command-results="commandSearchResults"
             :clipboard-results="clipboardSearchResults"
             :recent-file-results="recentFileSearchResults"
             @select="launchSearchWithCd"
+            @select-command="launchCommandWithCd"
             @browser-search="onBrowserSearch"
             @select-scanned="onSelectScannedApp"
             @select-clipboard="selectClipboardWithCd"
@@ -195,13 +197,16 @@ import {
     findSearchSelectionIndex,
     getSearchHistoryDisplayKeyword,
     getRecentSearchHistoryEntries,
+    getSearchSectionIndex,
     getSearchShortcutIndex,
     getHomeShortcutTarget,
     type SearchSelectionTarget,
 } from "../utils/search-ui";
 import { useScanCache } from "../composables/useScanCache";
+import { SCENARIO_KEYS } from "../menus/contextMenu";
 import type { ScannedAppEntry, ScannedFallbackSection } from "../types/scan-cache";
-import type { ClipboardSearchResult, RecentFileSearchResult } from "../types/search-extensions";
+import type { ClipboardSearchResult, CommandSearchResult, RecentFileSearchResult } from "../types/search-extensions";
+import type { ScenarioKey } from "../stores/launcherStore";
 
 const DEBUG_SEARCH = false;
 const RECENT_FILE_CACHE_KEY = "home-search-recent-file-candidates-v1";
@@ -508,6 +513,21 @@ function buildClipboardPreview(content: string): string {
     return `${normalized.slice(0, 70)}...`;
 }
 
+const SCENARIO_COMMANDS: ReadonlyArray<{
+    scenario: ScenarioKey;
+    title: string;
+    command: string;
+    subtitle: string;
+}> = [
+    { scenario: "work", title: "启动工作场景", command: "/work", subtitle: "批量启动 work 场景启动项" },
+    { scenario: "dev", title: "启动开发场景", command: "/dev", subtitle: "批量启动 dev 场景启动项" },
+    { scenario: "play", title: "启动娱乐场景", command: "/play", subtitle: "批量启动 play 场景启动项" },
+];
+
+function isScenarioKey(value: string): value is ScenarioKey {
+    return (SCENARIO_KEYS as readonly string[]).includes(value);
+}
+
 const { setLaunchStatus, clearLaunchStatus, getLaunchStatus } = useLaunchStatus({
     autoHideAfterLaunch,
 });
@@ -522,7 +542,9 @@ const homeSearchViewState = computed(() => {
     if (searchKeyword.value.trim()) {
         const launcherCount = rustSearchMergedResults.value?.length ?? 0;
         const hasFallbackResults = scannedFallbackSection.value && scannedFallbackSection.value.items.length > 0;
-        const hasExtensionResults = clipboardSearchResults.value.length > 0 || recentFileSearchResults.value.length > 0;
+        const hasExtensionResults = commandSearchResults.value.length > 0
+            || clipboardSearchResults.value.length > 0
+            || recentFileSearchResults.value.length > 0;
 
         if (launcherCount > 0 || hasFallbackResults || hasExtensionResults) {
             return "results";
@@ -998,6 +1020,56 @@ async function onSelectClipboardResult(entry: ClipboardSearchResult) {
     }
 }
 
+async function onOpenCommandResult(entry: CommandSearchResult) {
+    const scenario = (entry.action || "").trim();
+    if (!isScenarioKey(scenario)) return;
+
+    const targets = store.getScenarioLaunchItems(scenario);
+    if (targets.length === 0) {
+        showToast(`场景 ${entry.commandText} 暂无启动项`);
+        return;
+    }
+
+    closeSearchHistoryPanel();
+    store.recordConfirmedSearch();
+    store.clearSearch();
+    selectedIndex.value = -1;
+
+    let successCount = 0;
+    for (const target of targets) {
+        try {
+            await launchStoredItem(
+                {
+                    categoryId: target.categoryId,
+                    itemId: target.item.id,
+                },
+                {
+                    store,
+                    notifyError: false,
+                }
+            );
+            successCount += 1;
+        } catch (error) {
+            console.error("Failed to launch scenario item:", error);
+        }
+    }
+
+    if (successCount === targets.length) {
+        showToast(`${entry.commandText} 已启动 ${successCount} 个项目`);
+        return;
+    }
+
+    if (successCount > 0) {
+        showToast(
+            `${entry.commandText} 启动完成 ${successCount}/${targets.length}`,
+            { type: "info" }
+        );
+        return;
+    }
+
+    showToast(`${entry.commandText} 启动失败`, { type: "error" });
+}
+
 async function onOpenRecentFileResult(entry: RecentFileSearchResult) {
     if (!entry?.path) return;
     try {
@@ -1082,6 +1154,7 @@ function onReorderPinnedItems(newOrder: string[]) {
 const { createCooldown } = useLaunchCooldown({ cooldown: 2500 });
 
 const launchSearchWithCd = createCooldown(onOpenSearchResult);
+const launchCommandWithCd = createCooldown(onOpenCommandResult);
 const launchRecentWithCd = createCooldown(onOpenRecentItem);
 const launchPinnedWithCd = createCooldown(onOpenPinnedItem);
 const selectClipboardWithCd = createCooldown(onSelectClipboardResult);
@@ -1257,6 +1330,90 @@ const recentFileSearchResults = computed<RecentFileSearchResult[]>(() => {
     });
     return matched.slice(0, 10);
 });
+
+const commandSearchResults = computed<CommandSearchResult[]>(() => {
+    const keyword = searchKeyword.value.trim();
+    if (!keyword) return [];
+    const tokens = normalizeKeywordTokens(keyword);
+    if (tokens.length === 0) return [];
+
+    const getMatchType = (value: string): "exact" | "prefix" | "substring" | "fuzzy" | null =>
+        resolveExtensionMatchType(value, tokens);
+
+    const matched = SCENARIO_COMMANDS
+        .flatMap((entry) => {
+            const targetText = `${entry.command} ${entry.title} ${entry.subtitle}`;
+            const commandMatch = getMatchType(entry.command);
+            const textMatch = getMatchType(targetText);
+            const matchType = commandMatch ?? textMatch;
+            if (!matchType) return [];
+            return [{
+                key: `command:${entry.scenario}`,
+                title: entry.title,
+                subtitle: entry.subtitle,
+                commandText: entry.command,
+                action: entry.scenario,
+                matchType,
+            } satisfies CommandSearchResult];
+        })
+        .filter((entry) => !!entry);
+
+    matched.sort((a, b) => {
+        const rankDiff = extensionMatchRank(a.matchType || "fuzzy") - extensionMatchRank(b.matchType || "fuzzy");
+        if (rankDiff !== 0) return rankDiff;
+        return a.commandText.localeCompare(b.commandText);
+    });
+
+    return matched;
+});
+
+const searchSectionCounts = computed(() => ({
+    command: commandSearchResults.value.length,
+    launcher: currentSearchResults.value.length,
+    browser: showBrowserSearchOption.value ? 1 : 0,
+    scanned: scannedFallbackSection.value?.items.length ?? 0,
+    clipboard: clipboardSearchResults.value.length,
+    "recent-file": recentFileSearchResults.value.length,
+}));
+
+function triggerSearchSelectionAt(index: number): void {
+    const sectionTarget = getSearchSectionIndex(index, searchSectionCounts.value);
+    if (!sectionTarget) return;
+
+    if (sectionTarget.section === "command") {
+        const commandEntry = commandSearchResults.value[sectionTarget.offset];
+        if (commandEntry) launchCommandWithCd(commandEntry);
+        return;
+    }
+
+    if (sectionTarget.section === "launcher") {
+        const launcherEntry = currentSearchResults.value[sectionTarget.offset];
+        if (launcherEntry) launchSearchWithCd(launcherEntry);
+        return;
+    }
+
+    if (sectionTarget.section === "browser") {
+        onBrowserSearch();
+        return;
+    }
+
+    if (sectionTarget.section === "scanned") {
+        const item = scannedFallbackSection.value?.items[sectionTarget.offset];
+        if (item) onSelectScannedApp(item);
+        return;
+    }
+
+    if (sectionTarget.section === "clipboard") {
+        const clipboardEntry = clipboardSearchResults.value[sectionTarget.offset];
+        if (clipboardEntry) selectClipboardWithCd(clipboardEntry);
+        return;
+    }
+
+    if (sectionTarget.section === "recent-file") {
+        const recentFileEntry = recentFileSearchResults.value[sectionTarget.offset];
+        if (recentFileEntry) openRecentFileWithCd(recentFileEntry);
+    }
+}
 
 const showBrowserSearchOption = computed(() => {
     return searchKeyword.value.trim().length > 0
@@ -1502,16 +1659,13 @@ function triggerHomeSelection(): void {
 }
 
 const totalSearchItemCount = computed(() => {
-    let count = currentSearchResults.value.length;
-    if (showBrowserSearchOption.value) {
-        count += 1;
-    }
-    if (scannedFallbackSection.value) {
-        count += scannedFallbackSection.value.items.length;
-    }
-    count += clipboardSearchResults.value.length;
-    count += recentFileSearchResults.value.length;
-    return count;
+    const counts = searchSectionCounts.value;
+    return counts.command
+        + counts.launcher
+        + counts.browser
+        + counts.scanned
+        + counts.clipboard
+        + counts["recent-file"];
 });
 
 watch(
@@ -1633,49 +1787,8 @@ function onKeydown(e: KeyboardEvent) {
             if (shortcutIndex >= totalSearchItemCount.value) {
                 return;
             }
-            const launcherCount = currentSearchResults.value.length;
-            if (shortcutIndex < launcherCount) {
-                selectedIndex.value = shortcutIndex;
-                launchSearchWithCd(currentSearchResults.value[shortcutIndex]);
-                return;
-            }
-
-            const browserIndex = showBrowserSearchOption.value ? launcherCount : -1;
-            if (showBrowserSearchOption.value && shortcutIndex === browserIndex) {
-                selectedIndex.value = shortcutIndex;
-                onBrowserSearch();
-                return;
-            }
-
-            const scannedCount = scannedFallbackSection.value?.items.length ?? 0;
-            const scannedStart = launcherCount + (showBrowserSearchOption.value ? 1 : 0);
-            if (
-                shortcutIndex >= scannedStart
-                && shortcutIndex < scannedStart + scannedCount
-                && scannedFallbackSection.value
-            ) {
-                selectedIndex.value = shortcutIndex;
-                onSelectScannedApp(scannedFallbackSection.value.items[shortcutIndex - scannedStart]);
-                return;
-            }
-
-            const clipboardStart = scannedStart + scannedCount;
-            const clipboardCount = clipboardSearchResults.value.length;
-            const recentFileStart = clipboardStart + clipboardCount;
-
-            if (shortcutIndex >= clipboardStart && shortcutIndex < clipboardStart + clipboardCount) {
-                selectedIndex.value = shortcutIndex;
-                selectClipboardWithCd(clipboardSearchResults.value[shortcutIndex - clipboardStart]);
-                return;
-            }
-
-            if (
-                shortcutIndex >= recentFileStart
-                && shortcutIndex < recentFileStart + recentFileSearchResults.value.length
-            ) {
-                selectedIndex.value = shortcutIndex;
-                openRecentFileWithCd(recentFileSearchResults.value[shortcutIndex - recentFileStart]);
-            }
+            selectedIndex.value = shortcutIndex;
+            triggerSearchSelectionAt(shortcutIndex);
             return;
         }
     }
@@ -1769,7 +1882,10 @@ function onSearchNav(direction: "up" | "down" | "enter" | "tab") {
     }
 
     if (direction === "tab") {
-        if (totalSearchItemCount.value === 1 && currentSearchResults.value.length === 1) {
+        if (
+            totalSearchItemCount.value === 1
+            && searchSectionCounts.value.launcher === 1
+        ) {
             const result = currentSearchResults.value[0];
             selectedIndex.value = 0;
             pendingHomeSearchSelection = {
@@ -1781,40 +1897,7 @@ function onSearchNav(direction: "up" | "down" | "enter" | "tab") {
         return;
     }
 
-    const idx = selectedIndex.value;
-    const launcherCount = currentSearchResults.value.length;
-    const scannedCount = scannedFallbackSection.value?.items.length ?? 0;
-    const clipboardCount = clipboardSearchResults.value.length;
-    const recentFileCount = recentFileSearchResults.value.length;
-
-    if (idx < launcherCount) {
-        const result = currentSearchResults.value[idx];
-        launchSearchWithCd(result);
-        return;
-    }
-
-    const browserIndex = showBrowserSearchOption.value ? launcherCount : -1;
-    if (showBrowserSearchOption.value && idx === browserIndex) {
-        onBrowserSearch();
-        return;
-    }
-
-    const scannedStart = launcherCount + (showBrowserSearchOption.value ? 1 : 0);
-    if (idx >= scannedStart && idx < scannedStart + scannedCount && scannedFallbackSection.value) {
-        onSelectScannedApp(scannedFallbackSection.value.items[idx - scannedStart]);
-        return;
-    }
-
-    const clipboardStart = scannedStart + scannedCount;
-    if (idx >= clipboardStart && idx < clipboardStart + clipboardCount) {
-        selectClipboardWithCd(clipboardSearchResults.value[idx - clipboardStart]);
-        return;
-    }
-
-    const recentFileStart = clipboardStart + clipboardCount;
-    if (idx >= recentFileStart && idx < recentFileStart + recentFileCount) {
-        openRecentFileWithCd(recentFileSearchResults.value[idx - recentFileStart]);
-    }
+    triggerSearchSelectionAt(selectedIndex.value);
 }
 </script>
 

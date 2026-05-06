@@ -22,6 +22,8 @@ export type SearchSelectionTarget = {
 
 export type HomeSearchViewState = "home" | "pending" | "results" | "fallback";
 
+export type SearchResultSection = "command" | "launcher" | "browser" | "scanned" | "clipboard" | "recent-file";
+
 const DIRECT_MATCH_TYPES = new Set<RustSearchMatchType>([
     "exact",
     "prefix",
@@ -178,6 +180,33 @@ export function getHomeShortcutTarget(
     if (shortcutIndex < pinnedCount) return { type: "pinned", index: shortcutIndex };
     const recentIndex = shortcutIndex - pinnedCount;
     if (recentIndex < recentCount) return { type: "recent", index: recentIndex };
+    return null;
+}
+
+export function getSearchSectionIndex(
+    index: number,
+    counts: Record<SearchResultSection, number>
+): { section: SearchResultSection; offset: number } | null {
+    if (index < 0) return null;
+
+    const sections: SearchResultSection[] = [
+        "command",
+        "launcher",
+        "browser",
+        "scanned",
+        "clipboard",
+        "recent-file",
+    ];
+
+    let cursor = 0;
+    for (const section of sections) {
+        const count = counts[section] ?? 0;
+        if (index < cursor + count) {
+            return { section, offset: index - cursor };
+        }
+        cursor += count;
+    }
+
     return null;
 }
 
