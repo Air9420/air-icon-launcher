@@ -3,48 +3,25 @@
         <div class="section">
             <div class="section-title">窗口</div>
             <label class="check">
-                <input
-                    v-model="followMouseDraft"
-                    type="checkbox"
-                    @change="onApplyFollowMouse"
-                />
+                <input v-model="followMouseDraft" type="checkbox" @change="onApplyFollowMouse" />
                 <span>显示时跟随鼠标位置</span>
             </label>
             <div class="segmented" :class="{ disabled: !followMouseDraft }">
-                <button
-                    class="seg-btn"
-                    type="button"
-                    :class="{ active: followMouseAnchorDraft === 'top' }"
-                    :disabled="!followMouseDraft"
-                    @click="onSetFollowMouseAnchor('top')"
-                >
+                <button class="seg-btn" type="button" :class="{ active: followMouseAnchorDraft === 'top' }"
+                    :disabled="!followMouseDraft" @click="onSetFollowMouseAnchor('top')">
                     顶部
                 </button>
-                <button
-                    class="seg-btn"
-                    type="button"
-                    :class="{ active: followMouseAnchorDraft === 'center' }"
-                    :disabled="!followMouseDraft"
-                    @click="onSetFollowMouseAnchor('center')"
-                >
+                <button class="seg-btn" type="button" :class="{ active: followMouseAnchorDraft === 'center' }"
+                    :disabled="!followMouseDraft" @click="onSetFollowMouseAnchor('center')">
                     居中
                 </button>
-                <button
-                    class="seg-btn"
-                    type="button"
-                    :class="{ active: followMouseAnchorDraft === 'bottom' }"
-                    :disabled="!followMouseDraft"
-                    @click="onSetFollowMouseAnchor('bottom')"
-                >
+                <button class="seg-btn" type="button" :class="{ active: followMouseAnchorDraft === 'bottom' }"
+                    :disabled="!followMouseDraft" @click="onSetFollowMouseAnchor('bottom')">
                     底部
                 </button>
             </div>
             <label class="check" style="margin-top: 6px;">
-                <input
-                    v-model="hideOnCtrlRightClickDraft"
-                    type="checkbox"
-                    @change="onHideOnCtrlRightClickChange"
-                />
+                <input v-model="hideOnCtrlRightClickDraft" type="checkbox" @change="onHideOnCtrlRightClickChange" />
                 <span>Ctrl + 右键隐藏窗口</span>
             </label>
         </div>
@@ -52,11 +29,7 @@
         <div class="section">
             <div class="section-title">拖拽</div>
             <label class="check">
-                <input
-                    v-model="ctrlDragDraft"
-                    type="checkbox"
-                    @change="onCtrlDragChange"
-                />
+                <input v-model="ctrlDragDraft" type="checkbox" @change="onCtrlDragChange" />
                 <span>Ctrl + 左键拖拽窗口</span>
             </label>
             <div class="hint">
@@ -67,27 +40,19 @@
         <div class="section">
             <div class="section-title">启动</div>
             <label class="check">
-                <input
-                    v-model="autostartEnabledDraft"
-                    type="checkbox"
-                    :disabled="autostartLoading"
-                    @change="onAutostartEnabledChange"
-                />
+                <input v-model="autostartEnabledDraft" type="checkbox" :disabled="autostartLoading"
+                    @change="onAutostartEnabledChange" />
                 <span>开机自启</span>
             </label>
             <div v-if="autostartEnabledDraft" class="autostart-methods">
                 <div class="method-label">自启方式</div>
                 <div class="method-grid">
-                    <button
-                        v-for="method in autostartMethods"
-                        :key="method.value"
-                        class="method-btn"
-                        type="button"
-                        :class="{ active: autostartMethodDraft === method.value }"
-                        :disabled="autostartLoading"
-                        @click="onSelectAutostartMethod(method.value)"
-                    >
-                        <span class="method-icon">{{ method.icon }}</span>
+                    <button v-for="method in autostartMethods" :key="method.value" class="method-btn" type="button"
+                        :class="{ active: autostartMethodDraft === method.value }" :disabled="autostartLoading"
+                        @click="onSelectAutostartMethod(method.value)">
+                        <span class="method-icon">
+                            <component :is="method.icon" size="18" weight="Bold" />
+                        </span>
                         <span class="method-name">{{ method.name }}</span>
                     </button>
                 </div>
@@ -101,99 +66,70 @@
         <div class="section">
             <div class="section-title">启动项</div>
             <label class="check">
-                <input
-                    v-model="autoHideAfterLaunchDraft"
-                    type="checkbox"
-                    @change="onAutoHideAfterLaunchChange"
-                />
+                <input v-model="autoHideAfterLaunchDraft" type="checkbox" @change="onAutoHideAfterLaunchChange" />
                 <span>启动成功后自动隐藏窗口</span>
             </label>
             <div class="hint">
                 成功打开一个启动项后自动隐藏本程序窗口
             </div>
             <div class="hint compact">
-                💡 按住 <kbd>Ctrl</kbd> 键可连续启动多个，松开后自动隐藏
+                <DangerSquare size="18" weight="Bold" /> 按住 <kbd>Ctrl</kbd> 键可连续启动多个，松开后自动隐藏
             </div>
         </div>
 
         <div class="section">
             <div class="section-title">热角唤起</div>
             <label class="check">
-                <input
-                    v-model="cornerHotspotEnabledDraft"
-                    type="checkbox"
-                    @change="onCornerHotspotChange"
-                />
+                <input v-model="cornerHotspotEnabledDraft" type="checkbox" @change="onCornerHotspotChange" />
                 <span>启用热角唤起</span>
             </label>
             <div class="hint">
                 鼠标移动到屏幕角落并停留后唤起界面
             </div>
-            
+
             <div v-if="cornerHotspotEnabledDraft" class="corner-settings">
                 <div class="setting-row">
                     <span class="setting-label">角落位置</span>
                     <div class="corner-grid">
-                        <button
-                            class="corner-btn"
-                            type="button"
+                        <button class="corner-btn" type="button"
                             :class="{ active: cornerHotspotPositionDraft === 'top-left' }"
-                            @click="onSetCornerPosition('top-left')"
-                        >
+                            @click="onSetCornerPosition('top-left')">
                             左上
                         </button>
-                        <button
-                            class="corner-btn"
-                            type="button"
+                        <button class="corner-btn" type="button"
                             :class="{ active: cornerHotspotPositionDraft === 'top-right' }"
-                            @click="onSetCornerPosition('top-right')"
-                        >
+                            @click="onSetCornerPosition('top-right')">
                             右上
                         </button>
-                        <button
-                            class="corner-btn"
-                            type="button"
+                        <button class="corner-btn" type="button"
                             :class="{ active: cornerHotspotPositionDraft === 'bottom-left' }"
-                            @click="onSetCornerPosition('bottom-left')"
-                        >
+                            @click="onSetCornerPosition('bottom-left')">
                             左下
                         </button>
-                        <button
-                            class="corner-btn"
-                            type="button"
+                        <button class="corner-btn" type="button"
                             :class="{ active: cornerHotspotPositionDraft === 'bottom-right' }"
-                            @click="onSetCornerPosition('bottom-right')"
-                        >
+                            @click="onSetCornerPosition('bottom-right')">
                             右下
                         </button>
                     </div>
                 </div>
-                
+
                 <div class="setting-row">
                     <span class="setting-label">灵敏度</span>
                     <div class="sensitivity-row">
-                        <button
-                            class="sens-btn"
-                            type="button"
+                        <button class="sens-btn" type="button"
                             :class="{ active: cornerHotspotSensitivityDraft === 'low' }"
-                            @click="onSetCornerSensitivity('low')"
-                        >
+                            @click="onSetCornerSensitivity('low')">
                             低
                         </button>
-                        <button
-                            class="sens-btn"
-                            type="button"
+                        <button class="sens-btn" type="button"
                             :class="{ active: cornerHotspotSensitivityDraft === 'medium' }"
-                            @click="onSetCornerSensitivity('medium')"
-                        >
+                            @click="onSetCornerSensitivity('medium')">
                             中
                         </button>
-                        <button
-                            class="sens-btn"
-                            type="button"
+                        <button class="sens-btn" type="button"
                             :class="{ active: cornerHotspotSensitivityDraft === 'high' }"
-                            @click="onSetCornerSensitivity('high')"
-                        >
+                            @click="onSetCornerSensitivity('high')">
                             高
                         </button>
                     </div>
@@ -204,11 +140,7 @@
         <div class="section">
             <div class="section-title">自动隐藏</div>
             <label class="check">
-                <input
-                    v-model="autoHideEnabledDraft"
-                    type="checkbox"
-                    @change="onAutoHideEnabledChange"
-                />
+                <input v-model="autoHideEnabledDraft" type="checkbox" @change="onAutoHideEnabledChange" />
                 <span>窗口失焦后自动隐藏</span>
             </label>
             <div class="hint">
@@ -216,15 +148,8 @@
             </div>
             <div v-if="autoHideEnabledDraft" class="number-input-row">
                 <label class="number-label">倒计时秒数</label>
-                <input
-                    v-model.number="autoHideCountdownDraft"
-                    type="number"
-                    min="5"
-                    max="300"
-                    step="5"
-                    class="number-input"
-                    @change="onAutoHideCountdownChange"
-                />
+                <input v-model.number="autoHideCountdownDraft" type="number" min="5" max="300" step="5"
+                    class="number-input" @change="onAutoHideCountdownChange" />
                 <span class="number-unit">秒</span>
             </div>
         </div>
@@ -233,8 +158,9 @@
 
 <script setup lang="ts">
 import { storeToRefs } from "pinia";
-import { onMounted, ref, watchEffect, computed } from "vue";
+import { markRaw, onMounted, ref, watchEffect, computed } from "vue";
 import { useSettingsStore, type AutostartType } from "../../stores";
+import { DangerSquare, Clipboard, Alarm, Settings } from "@solar-icons/vue";
 
 const settingsStore = useSettingsStore();
 const {
@@ -271,20 +197,20 @@ const autostartMethods = [
     {
         value: "Registry" as AutostartType,
         name: "注册表",
-        icon: "📝",
+        icon: markRaw(Clipboard),
         desc: "写入注册表，简单可靠，无需管理员权限，推荐默认使用。",
         recommended: true,
     },
     {
         value: "TaskScheduler" as AutostartType,
         name: "任务计划",
-        icon: "⏰",
+        icon: markRaw(Alarm),
         desc: "创建 Windows 任务计划，使用最高权限，兼容性好。",
     },
     {
         value: "Service" as AutostartType,
         name: "服务",
-        icon: "🔧",
+        icon: markRaw(Settings),
         desc: "安装为系统服务，需要管理员权限，适合极特殊场景。",
     },
 ];
@@ -434,6 +360,9 @@ async function onAutoHideCountdownChange() {
 
 .hint {
     @include settings.hint();
+    display: flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .hint.error {
@@ -493,6 +422,7 @@ async function onAutoHideCountdownChange() {
 
 .method-icon {
     font-size: 18px;
+    color: var(--text-color);
 }
 
 .method-name {

@@ -155,6 +155,15 @@ fn apply_app_config_patch(config: &mut AppConfig, patch: AppConfigPatch) {
     if let Some(value) = patch.theme {
         config.theme = value;
     }
+    if let Some(value) = patch.category_cols {
+        config.category_cols = value;
+    }
+    if let Some(value) = patch.launcher_cols {
+        config.launcher_cols = value;
+    }
+    if let Some(value) = patch.home_section_layouts {
+        config.home_section_layouts = value;
+    }
     if let Some(value) = patch.toggle_shortcut {
         config.toggle_shortcut = value;
     }
@@ -208,6 +217,9 @@ fn apply_app_config_patch(config: &mut AppConfig, patch: AppConfigPatch) {
     }
     if let Some(value) = patch.plugin_sandbox_enabled {
         config.plugin_sandbox_enabled = value;
+    }
+    if let Some(value) = patch.clipboard_history_enabled {
+        config.clipboard_history_enabled = value;
     }
     if let Some(value) = patch.ai_organizer_base_url {
         config.ai_organizer_base_url = value;
@@ -313,6 +325,11 @@ fn restore_persisted_snapshot(
 
     if let (Some(app_handle), Some(clipboard_state)) = (app_handle, clipboard_state) {
         crate::clipboard::sync_runtime_config_from_app_config(app_handle, clipboard_state, config)?;
+        crate::clipboard::apply_monitoring_state_from_app_config(
+            app_handle,
+            clipboard_state,
+            config,
+        );
     }
 
     Ok(())
@@ -330,6 +347,11 @@ fn sync_runtime_state_after_import(
             clipboard_state,
             &config,
         )?;
+        crate::clipboard::apply_monitoring_state_from_app_config(
+            app_handle,
+            clipboard_state,
+            &config,
+        );
     }
 
     Ok(())
@@ -644,15 +666,34 @@ pub fn get_config(manager: tauri::State<'_, ConfigManager>) -> AppResult<AppConf
 }
 
 #[tauri::command]
-pub fn save_config(manager: tauri::State<'_, ConfigManager>, config: AppConfig) -> AppResult<()> {
+pub fn save_config(
+    app_handle: AppHandle,
+    manager: tauri::State<'_, ConfigManager>,
+    clipboard_state: tauri::State<'_, Arc<crate::clipboard::ClipboardState>>,
+    config: AppConfig,
+) -> AppResult<()> {
     manager
         .save_config_with_runtime_ai_key(&config)
-        .map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))
+        .map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))?;
+    crate::clipboard::sync_runtime_config_from_app_config(
+        &app_handle,
+        clipboard_state.inner(),
+        &config,
+    )
+    .map_err(|e| AppError::new("CLIPBOARD_RUNTIME_SYNC_ERROR", e))?;
+    crate::clipboard::apply_monitoring_state_from_app_config(
+        &app_handle,
+        clipboard_state.inner(),
+        &config,
+    );
+    Ok(())
 }
 
 #[tauri::command]
 pub fn patch_config(
+    app_handle: AppHandle,
     manager: tauri::State<'_, ConfigManager>,
+    clipboard_state: tauri::State<'_, Arc<crate::clipboard::ClipboardState>>,
     patch: AppConfigPatch,
 ) -> AppResult<AppConfig> {
     let mut current = manager.load_config();
@@ -660,6 +701,17 @@ pub fn patch_config(
     manager
         .save_config_with_runtime_ai_key(&current)
         .map_err(|e| AppError::new("CONFIG_SAVE_ERROR", e))?;
+    crate::clipboard::sync_runtime_config_from_app_config(
+        &app_handle,
+        clipboard_state.inner(),
+        &current,
+    )
+    .map_err(|e| AppError::new("CLIPBOARD_RUNTIME_SYNC_ERROR", e))?;
+    crate::clipboard::apply_monitoring_state_from_app_config(
+        &app_handle,
+        clipboard_state.inner(),
+        &current,
+    );
     Ok(current)
 }
 
@@ -1219,26 +1271,64 @@ mod tests {
     fn app_config_patch_only_updates_provided_fields() {
         let mut config = AppConfig::default();
         config.theme = "dark".to_string();
+        config.category_cols = 5;
+        config.launcher_cols = 6;
+        config.home_section_layouts = HomeSectionLayouts {
+            pinned: HomeSectionLayout {
+                preset: "1x5".to_string(),
+                rows: 1,
+                cols: 5,
+            },
+            recent: HomeSectionLayout {
+                preset: "1x5".to_string(),
+                rows: 1,
+                cols: 5,
+            },
+        };
         config.ctrl_drag_enabled = true;
         config.performance_mode = false;
         config.window_effect_type = "blur".to_string();
         config.strong_shortcut_mode = true;
         config.auto_hide_countdown_seconds = 60;
         config.auto_hide_enabled = false;
+        config.clipboard_history_enabled = true;
 
         apply_app_config_patch(
             &mut config,
             AppConfigPatch {
+                category_cols: Some(7),
+                launcher_cols: Some(4),
+                home_section_layouts: Some(HomeSectionLayouts {
+                    pinned: HomeSectionLayout {
+                        preset: "2x4".to_string(),
+                        rows: 2,
+                        cols: 4,
+                    },
+                    recent: HomeSectionLayout {
+                        preset: "1x6".to_string(),
+                        rows: 1,
+                        cols: 6,
+                    },
+                }),
                 performance_mode: Some(true),
                 corner_hotspot_position: Some("bottom-left".to_string()),
                 strong_shortcut_mode: Some(false),
                 auto_hide_countdown_seconds: Some(45),
                 auto_hide_enabled: Some(true),
+                clipboard_history_enabled: Some(false),
                 ..AppConfigPatch::default()
             },
         );
 
         assert_eq!(config.theme, "dark");
+        assert_eq!(config.category_cols, 7);
+        assert_eq!(config.launcher_cols, 4);
+        assert_eq!(config.home_section_layouts.pinned.preset, "2x4");
+        assert_eq!(config.home_section_layouts.pinned.rows, 2);
+        assert_eq!(config.home_section_layouts.pinned.cols, 4);
+        assert_eq!(config.home_section_layouts.recent.preset, "1x6");
+        assert_eq!(config.home_section_layouts.recent.rows, 1);
+        assert_eq!(config.home_section_layouts.recent.cols, 6);
         assert!(config.ctrl_drag_enabled);
         assert!(config.performance_mode);
         assert_eq!(config.window_effect_type, "blur");
@@ -1246,6 +1336,7 @@ mod tests {
         assert!(!config.strong_shortcut_mode);
         assert_eq!(config.auto_hide_countdown_seconds, 45);
         assert!(config.auto_hide_enabled);
+        assert!(!config.clipboard_history_enabled);
     }
 
     #[test]

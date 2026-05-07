@@ -175,6 +175,12 @@ impl Default for AppConfig {
 #[serde(default)]
 pub struct AppConfigPatch {
     pub theme: Option<String>,
+    #[serde(alias = "categoryCols")]
+    pub category_cols: Option<u32>,
+    #[serde(alias = "launcherCols")]
+    pub launcher_cols: Option<u32>,
+    #[serde(alias = "homeSectionLayouts")]
+    pub home_section_layouts: Option<HomeSectionLayouts>,
     pub toggle_shortcut: Option<String>,
     pub clipboard_shortcut: Option<String>,
     pub display_shortcut: Option<String>,
@@ -191,6 +197,7 @@ pub struct AppConfigPatch {
     pub window_effect_type: Option<String>,
     pub strong_shortcut_mode: Option<bool>,
     pub plugin_sandbox_enabled: Option<bool>,
+    pub clipboard_history_enabled: Option<bool>,
     pub ai_organizer_base_url: Option<String>,
     pub ai_organizer_model: Option<String>,
     pub ai_organizer_api_key: Option<String>,

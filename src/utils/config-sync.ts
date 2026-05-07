@@ -46,6 +46,16 @@ export type AppConfigSnapshot = {
     auto_hide_enabled: boolean;
 };
 
+export type ClipboardConfigSnapshot = {
+    history_enabled: boolean;
+    max_records: number;
+    max_image_size_mb: number;
+    encrypted: boolean;
+    storage_path: string | null;
+};
+
+export type ClipboardConfigPatch = Partial<ClipboardConfigSnapshot>;
+
 export async function getAppConfig(): Promise<AppConfigSnapshot> {
     return invokeOrThrow<AppConfigSnapshot>("get_config");
 }
@@ -58,4 +68,14 @@ export async function saveAppConfigPatch(
     patch: Partial<AppConfigSnapshot>
 ): Promise<AppConfigSnapshot> {
     return invokeOrThrow<AppConfigSnapshot>("patch_config", { patch });
+}
+
+export async function getClipboardConfig(): Promise<ClipboardConfigSnapshot> {
+    return invokeOrThrow<ClipboardConfigSnapshot>("get_clipboard_config");
+}
+
+export async function saveClipboardConfigPatch(
+    patch: ClipboardConfigPatch
+): Promise<ClipboardConfigSnapshot> {
+    return invokeOrThrow<ClipboardConfigSnapshot>("set_clipboard_config", { patch });
 }

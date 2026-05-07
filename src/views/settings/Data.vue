@@ -36,21 +36,11 @@
 
                 <div class="dm-row">
                     <button class="dm-btn" type="button" @click="onExportData" :disabled="isProcessing">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
-                            <path
-                                d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14l2-2V3a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2" />
-                            <path d="M7 10l5 5 5-5" />
-                        </svg>
+                        <Export size="18" />
                         导出数据
                     </button>
                     <button class="dm-btn" type="button" @click="onImportData" :disabled="isProcessing">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
-                            <path
-                                d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14l2-2V3a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2" />
-                            <path d="M7 14l5-5 5 5" />
-                        </svg>
+                        <Import size="18" />
                         导入数据
                     </button>
                 </div>
@@ -70,6 +60,7 @@ import { ref } from "vue";
 import { useDataManagement } from "../../composables/useDataManagement";
 import BackupPanel from "./BackupPanel.vue";
 import { showToast } from "../../composables/useGlobalToast";
+import { Export, Import } from "@solar-icons/vue";
 
 const isProcessing = ref<boolean>(false);
 const importMergeMode = ref<boolean>(false);

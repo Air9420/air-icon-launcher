@@ -40,6 +40,7 @@ impl From<&ClipboardRecord> for ClipboardRecordDb {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipboardConfig {
+    pub history_enabled: bool,
     pub max_records: usize,
     pub max_image_size_mb: f64,
     pub encrypted: bool,
@@ -48,6 +49,7 @@ pub struct ClipboardConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClipboardConfigPatch {
+    pub history_enabled: Option<bool>,
     pub max_records: Option<usize>,
     pub max_image_size_mb: Option<f64>,
     pub encrypted: Option<bool>,
@@ -56,6 +58,7 @@ pub struct ClipboardConfigPatch {
 impl Default for ClipboardConfig {
     fn default() -> Self {
         Self {
+            history_enabled: true,
             max_records: 1000,
             max_image_size_mb: 1.0,
             encrypted: false,
@@ -68,6 +71,7 @@ impl Default for ClipboardConfig {
 pub struct ClipboardConfigDebug {
     pub config_path: String,
     pub runtime: ClipboardConfig,
+    pub disk_history_enabled: bool,
     pub disk_max_records: usize,
     pub disk_max_image_size_mb: f64,
     pub disk_encrypted: bool,

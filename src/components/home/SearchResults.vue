@@ -2,35 +2,29 @@
     <div class="global-search-results">
         <template v-if="commandResults.length > 0">
             <div class="extension-section-divider">
-                <span class="extension-section-title">⚡ 场景命令（{{ commandResults.length }}）</span>
+                <span class="extension-section-title">
+                    <Rocket size="18" weight="Bold" /> 场景命令（{{ commandResults.length }}）
+                </span>
             </div>
             <div class="search-result-list">
-                <div
-                    v-for="(entry, i) in commandResults"
-                    :key="entry.key"
+                <div v-for="(entry, i) in commandResults" :key="entry.key"
                     :ref="el => setItemRef(el, commandStartIndex + i)"
                     class="search-result-item extension-item command-item"
                     :class="{ 'is-selected': selectedIndex === commandStartIndex + i }"
-                    @click.left="$emit('select-command', entry)"
-                >
-                    <div
-                        v-if="commandStartIndex + i < 10"
-                        class="shortcut-hint"
-                        :class="{ 'is-visible': !!showShortcutHints }"
-                        aria-hidden="true"
-                    >
+                    @click.left="$emit('select-command', entry)">
+                    <div v-if="commandStartIndex + i < 10" class="shortcut-hint"
+                        :class="{ 'is-visible': !!showShortcutHints }" aria-hidden="true">
                         {{ getShortcutLabel(commandStartIndex + i) }}
                     </div>
                     <div class="result-icon">
-                        <div class="icon-fallback extension-icon">⚡</div>
+                        <div class="icon-fallback extension-icon">
+                            <Rocket size="18" weight="Bold" />
+                        </div>
                     </div>
                     <div class="result-info">
                         <div class="result-name">{{ entry.title }}</div>
                         <div class="result-meta">
-                            <span
-                                class="match-type-chip"
-                                :class="`is-${entry.matchType || 'fuzzy'}`"
-                            >
+                            <span class="match-type-chip" :class="`is-${entry.matchType || 'fuzzy'}`">
                                 {{ getSearchMatchTypeLabel(entry.matchType || "fuzzy") }}
                             </span>
                             <span class="result-category-chip">{{ entry.commandText }}</span>
@@ -45,71 +39,42 @@
             搜索结果 ( {{ safeResults.length }} )
         </div>
         <div v-if="safeResults.length > 0" class="search-result-list">
-            <div
-                v-for="(result, index) in safeResults"
-                :key="result.key"
-                :ref="el => setItemRef(el, launcherStartIndex + index)"
-                class="search-result-item"
-                :class="{
+            <div v-for="(result, index) in safeResults" :key="result.key"
+                :ref="el => setItemRef(el, launcherStartIndex + index)" class="search-result-item" :class="{
                     'is-launching': getLaunchStatus(result.item.id) === 'launching',
                     'is-success': getLaunchStatus(result.item.id) === 'success',
                     'is-selected': selectedIndex === launcherStartIndex + index
-                }"
-                :data-menu-type="'Icon-Item'"
-                :data-item-id="result.item.id"
-                :data-category-id="result.categories[0]?.id || ''"
-                :data-item-path="result.item.path || ''"
-                @click.left="$emit('select', result)"
-            >
-                <div
-                    v-if="launcherStartIndex + index < 10"
-                    class="shortcut-hint"
-                    :class="{ 'is-visible': !!showShortcutHints }"
-                    aria-hidden="true"
-                >
+                }" :data-menu-type="'Icon-Item'" :data-item-id="result.item.id"
+                :data-category-id="result.categories[0]?.id || ''" :data-item-path="result.item.path || ''"
+                @click.left="$emit('select', result)">
+                <div v-if="launcherStartIndex + index < 10" class="shortcut-hint"
+                    :class="{ 'is-visible': !!showShortcutHints }" aria-hidden="true">
                     {{ getShortcutLabel(launcherStartIndex + index) }}
                 </div>
                 <div class="result-icon">
-                    <img
-                        v-if="result.item.iconBase64"
-                        class="icon-real"
-                        :src="getIconSrc(result.item.iconBase64)"
-                        alt=""
-                        draggable="false"
-                    />
+                    <img v-if="result.item.iconBase64" class="icon-real" :src="getIconSrc(result.item.iconBase64)"
+                        alt="" draggable="false" />
                     <div v-else class="icon-fallback">
                         {{ getFallbackText(result.item.name) }}
                     </div>
                 </div>
                 <div class="result-info">
                     <div class="result-name" :title="result.item.name">
-                        <template
-                            v-for="(segment, segmentIndex) in getNameSegments(result)"
-                            :key="`${result.key}-${segmentIndex}`"
-                        >
-                            <mark
-                                v-if="segment.highlighted"
-                                class="result-name-highlight"
-                            >
+                        <template v-for="(segment, segmentIndex) in getNameSegments(result)"
+                            :key="`${result.key}-${segmentIndex}`">
+                            <mark v-if="segment.highlighted" class="result-name-highlight">
                                 {{ segment.text }}
                             </mark>
                             <span v-else>{{ segment.text }}</span>
                         </template>
                     </div>
                     <div class="result-meta">
-                        <span
-                            class="match-type-chip"
-                            :class="`is-${result.matchType}`"
-                        >
+                        <span class="match-type-chip" :class="`is-${result.matchType}`">
                             {{ getSearchMatchTypeLabel(result.matchType) }}
                         </span>
                         <div class="result-categories">
-                            <span
-                                v-for="c in result.categories"
-                                :key="c.id"
-                                class="result-category-chip"
-                                :title="c.name"
-                            >
+                            <span v-for="c in result.categories" :key="c.id" class="result-category-chip"
+                                :title="c.name">
                                 {{ c.name }}
                             </span>
                         </div>
@@ -118,56 +83,38 @@
             </div>
         </div>
 
-        <div
-            v-if="showBrowserSearch"
-            :ref="el => setItemRef(el, browserSearchIndex)"
-            class="browser-search-item"
-            :class="{ 'is-selected': selectedIndex === browserSearchIndex }"
-            @click.left="$emit('browser-search')"
-        >
-            <div
-                v-if="browserSearchIndex < 10"
-                class="shortcut-hint browser-shortcut-hint"
-                :class="{ 'is-visible': !!showShortcutHints }"
-                aria-hidden="true"
-            >
+        <div v-if="showBrowserSearch" :ref="el => setItemRef(el, browserSearchIndex)" class="browser-search-item"
+            :class="{ 'is-selected': selectedIndex === browserSearchIndex }" @click.left="$emit('browser-search')">
+            <div v-if="browserSearchIndex < 10" class="shortcut-hint browser-shortcut-hint"
+                :class="{ 'is-visible': !!showShortcutHints }" aria-hidden="true">
                 {{ getShortcutLabel(browserSearchIndex) }}
             </div>
-            <span class="browser-search-icon">🌐</span>
+            <span class="browser-search-icon">
+                <Earth size="18" weight="Bold" />
+            </span>
             <span class="browser-search-text">用浏览器搜索 "{{ keyword }}"</span>
         </div>
 
         <template v-if="scannedSection && scannedSection.items && scannedSection.items.length > 0">
             <div class="scanned-section-divider">
-                <span class="scanned-section-title">📂 {{ scannedSection.sectionTitle }}（匹配 {{ scannedSection.totalMatches }}）</span>
+                <span class="scanned-section-title">
+                    <Folder size="16" weight="Bold" /> {{ scannedSection.sectionTitle }}（匹配 {{
+                        scannedSection.totalMatches }}）
+                </span>
             </div>
             <div class="search-result-list">
-                <div
-                    v-for="(entry, i) in scannedSection.items"
-                    :key="entry.path"
-                    :ref="el => setItemRef(el, scannedStartIndex + i)"
-                    class="search-result-item scanned-item"
+                <div v-for="(entry, i) in scannedSection.items" :key="entry.path"
+                    :ref="el => setItemRef(el, scannedStartIndex + i)" class="search-result-item scanned-item"
                     :class="{ 'is-selected': selectedIndex === scannedStartIndex + i }"
-                    :data-menu-type="'Search-Scanned-Item'"
-                    :data-item-path="entry.path"
-                    @click.left="$emit('select-scanned', entry)"
-                >
-                    <div
-                        v-if="scannedStartIndex + i < 10"
-                        class="shortcut-hint"
-                        :class="{ 'is-visible': !!showShortcutHints }"
-                        aria-hidden="true"
-                    >
+                    :data-menu-type="'Search-Scanned-Item'" :data-item-path="entry.path"
+                    @click.left="$emit('select-scanned', entry)">
+                    <div v-if="scannedStartIndex + i < 10" class="shortcut-hint"
+                        :class="{ 'is-visible': !!showShortcutHints }" aria-hidden="true">
                         {{ getShortcutLabel(scannedStartIndex + i) }}
                     </div>
                     <div class="result-icon">
-                        <img
-                            v-if="entry.iconBase64"
-                            class="icon-real"
-                            :src="getIconSrc(entry.iconBase64)"
-                            alt=""
-                            draggable="false"
-                        />
+                        <img v-if="entry.iconBase64" class="icon-real" :src="getIconSrc(entry.iconBase64)" alt=""
+                            draggable="false" />
                         <div v-else class="icon-fallback">
                             {{ getFallbackText(entry.name) }}
                         </div>
@@ -175,27 +122,18 @@
                     <div class="result-info">
                         <div class="result-name">{{ entry.name }}</div>
                         <div class="result-meta">
-                            <span
-                                class="match-type-chip"
-                                :class="`is-${entry.matchType || 'fuzzy'}`"
-                            >
+                            <span class="match-type-chip" :class="`is-${entry.matchType || 'fuzzy'}`">
                                 {{ getSearchMatchTypeLabel(entry.matchType || "fuzzy") }}
                             </span>
                             <span class="scanned-source-tag" :class="getSourceClass(entry.source)">
                                 {{ entry.source }}
                             </span>
-                            <span
-                                v-if="entry.launchRisk === 'uninstall_candidate'"
-                                class="scanned-risk-tag"
-                                :title="entry.launchRiskHint"
-                            >
+                            <span v-if="entry.launchRisk === 'uninstall_candidate'" class="scanned-risk-tag"
+                                :title="entry.launchRiskHint">
                                 卸载/异常启动项
                             </span>
-                            <span
-                                v-else-if="entry.launchRisk === 'installer_candidate'"
-                                class="scanned-risk-tag is-installer"
-                                :title="entry.launchRiskHint"
-                            >
+                            <span v-else-if="entry.launchRisk === 'installer_candidate'"
+                                class="scanned-risk-tag is-installer" :title="entry.launchRiskHint">
                                 安装器/修复入口
                             </span>
                         </div>
@@ -209,38 +147,29 @@
 
         <template v-if="clipboardResults.length > 0">
             <div class="extension-section-divider">
-                <span class="extension-section-title">📋 剪贴板匹配（{{ clipboardResults.length }}）</span>
+                <span class="extension-section-title">
+                    <ClipboardText size="16" weight="Bold" /> 剪贴板匹配（{{ clipboardResults.length }}）
+                </span>
             </div>
             <div class="search-result-list">
-                <div
-                    v-for="(entry, i) in clipboardResults"
-                    :key="entry.key"
-                    :ref="el => setItemRef(el, clipboardStartIndex + i)"
-                    class="search-result-item extension-item"
+                <div v-for="(entry, i) in clipboardResults" :key="entry.key"
+                    :ref="el => setItemRef(el, clipboardStartIndex + i)" class="search-result-item extension-item"
                     :class="{ 'is-selected': selectedIndex === clipboardStartIndex + i }"
-                    :data-menu-type="'Search-Clipboard-Item'"
-                    :data-clipboard-record-id="entry.id"
-                    :data-clipboard-content-type="entry.contentType"
-                    @click.left="$emit('select-clipboard', entry)"
-                >
-                    <div
-                        v-if="clipboardStartIndex + i < 10"
-                        class="shortcut-hint"
-                        :class="{ 'is-visible': !!showShortcutHints }"
-                        aria-hidden="true"
-                    >
+                    :data-menu-type="'Search-Clipboard-Item'" :data-clipboard-record-id="entry.id"
+                    :data-clipboard-content-type="entry.contentType" @click.left="$emit('select-clipboard', entry)">
+                    <div v-if="clipboardStartIndex + i < 10" class="shortcut-hint"
+                        :class="{ 'is-visible': !!showShortcutHints }" aria-hidden="true">
                         {{ getShortcutLabel(clipboardStartIndex + i) }}
                     </div>
                     <div class="result-icon">
-                        <div class="icon-fallback extension-icon">📋</div>
+                        <div class="icon-fallback extension-icon">
+                            <ClipboardText size="18" weight="Bold" />
+                        </div>
                     </div>
                     <div class="result-info">
                         <div class="result-name">{{ entry.preview }}</div>
                         <div class="result-meta">
-                            <span
-                                class="match-type-chip"
-                                :class="`is-${entry.matchType || 'fuzzy'}`"
-                            >
+                            <span class="match-type-chip" :class="`is-${entry.matchType || 'fuzzy'}`">
                                 {{ getSearchMatchTypeLabel(entry.matchType || "fuzzy") }}
                             </span>
                             <span class="result-category-chip">
@@ -254,35 +183,23 @@
 
         <template v-if="recentFileResults.length > 0">
             <div class="extension-section-divider">
-                <span class="extension-section-title">🗂 最近文件匹配（{{ recentFileResults.length }}）</span>
+                <span class="extension-section-title">
+                    <Folder size="16" weight="Bold" /> 最近文件匹配（{{ recentFileResults.length }}）
+                </span>
             </div>
             <div class="search-result-list">
-                <div
-                    v-for="(entry, i) in recentFileResults"
-                    :key="entry.key"
-                    :ref="el => setItemRef(el, recentFileStartIndex + i)"
-                    class="search-result-item extension-item"
+                <div v-for="(entry, i) in recentFileResults" :key="entry.key"
+                    :ref="el => setItemRef(el, recentFileStartIndex + i)" class="search-result-item extension-item"
                     :class="{ 'is-selected': selectedIndex === recentFileStartIndex + i }"
-                    :data-menu-type="'Search-Recent-File-Item'"
-                    :data-item-path="entry.path"
-                    @click.left="$emit('select-recent-file', entry)"
-                >
-                    <div
-                        v-if="recentFileStartIndex + i < 10"
-                        class="shortcut-hint"
-                        :class="{ 'is-visible': !!showShortcutHints }"
-                        aria-hidden="true"
-                    >
+                    :data-menu-type="'Search-Recent-File-Item'" :data-item-path="entry.path"
+                    @click.left="$emit('select-recent-file', entry)">
+                    <div v-if="recentFileStartIndex + i < 10" class="shortcut-hint"
+                        :class="{ 'is-visible': !!showShortcutHints }" aria-hidden="true">
                         {{ getShortcutLabel(recentFileStartIndex + i) }}
                     </div>
                     <div class="result-icon">
-                        <img
-                            v-if="entry.iconBase64"
-                            class="icon-real"
-                            :src="getIconSrc(entry.iconBase64)"
-                            alt=""
-                            draggable="false"
-                        />
+                        <img v-if="entry.iconBase64" class="icon-real" :src="getIconSrc(entry.iconBase64)" alt=""
+                            draggable="false" />
                         <div v-else class="icon-fallback">
                             {{ getFallbackText(entry.name) }}
                         </div>
@@ -290,10 +207,7 @@
                     <div class="result-info">
                         <div class="result-name">{{ entry.name }}</div>
                         <div class="result-meta">
-                            <span
-                                class="match-type-chip"
-                                :class="`is-${entry.matchType || 'fuzzy'}`"
-                            >
+                            <span class="match-type-chip" :class="`is-${entry.matchType || 'fuzzy'}`">
                                 {{ getSearchMatchTypeLabel(entry.matchType || "fuzzy") }}
                             </span>
                             <span class="result-category-chip">{{ entry.path }}</span>
@@ -307,6 +221,8 @@
 
 <script setup lang="ts">
 import { ref, watch, nextTick, computed, type ComponentPublicInstance } from "vue";
+import { ClipboardText, Earth, Rocket, Folder } from "@solar-icons/vue";
+
 import type { GlobalSearchMergedResult } from "../../stores";
 import {
     buildSearchHighlightSegments,
@@ -421,6 +337,7 @@ function getShortcutLabel(index: number): string {
     overflow-y: auto;
     scroll-padding-top: 8px;
     scroll-padding-bottom: 8px;
+
     &::-webkit-scrollbar {
         display: none;
     }
@@ -432,6 +349,7 @@ function getShortcutLabel(index: number): string {
     color: var(--text-color-secondary);
     text-shadow: var(--text-shadow);
     margin-bottom: 12px;
+    margin-top: 12px;
 }
 
 .search-result-list {
@@ -569,6 +487,7 @@ function getShortcutLabel(index: number): string {
     min-width: 0;
     scrollbar-width: none;
     -ms-overflow-style: none;
+
     &::-webkit-scrollbar {
         display: none;
     }
@@ -622,9 +541,11 @@ function getShortcutLabel(index: number): string {
     0% {
         box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.3), var(--card-shadow-light);
     }
+
     50% {
         box-shadow: 0 0 0 4px rgba(0, 120, 212, 0.6), var(--card-shadow-light);
     }
+
     100% {
         box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.3), var(--card-shadow-light);
     }
@@ -634,9 +555,11 @@ function getShortcutLabel(index: number): string {
     0% {
         box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.3), var(--card-shadow-light);
     }
+
     50% {
         box-shadow: 0 0 0 4px rgba(76, 175, 80, 0.6), var(--card-shadow-light);
     }
+
     100% {
         box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.3), var(--card-shadow-light);
     }
@@ -670,6 +593,9 @@ function getShortcutLabel(index: number): string {
 
     .browser-search-icon {
         font-size: 18px;
+        color: var(--text-color);
+        display: flex;
+        align-items: center;
     }
 
     .browser-search-text {
@@ -686,8 +612,14 @@ function getShortcutLabel(index: number): string {
     margin: 16px 0 8px;
     padding: 6px 0;
     border-top: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    gap: 4px;
 
     .scanned-section-title {
+        display: flex;
+        align-items: center;
+        gap: 4px;
         font-size: 13px;
         font-weight: 600;
         color: var(--text-color-secondary);
@@ -732,12 +664,16 @@ function getShortcutLabel(index: number): string {
     margin: 12px 0 8px;
     padding: 6px 0;
     border-top: 1px solid var(--border-color);
+
 }
 
 .extension-section-title {
     font-size: 13px;
     font-weight: 600;
     color: var(--text-color-secondary);
+    display: flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .extension-item .result-name {

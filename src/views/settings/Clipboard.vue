@@ -2,7 +2,12 @@
     <div class="clipboard-settings">
         <div class="section">
             <div class="section-title">剪贴板</div>
-
+            <label class="check">
+                <input type="checkbox" :checked="clipboardHistoryEnabled"
+                    :disabled="!clipboardConfigLoaded || isProcessing || isMigrating"
+                    @change="onToggleClipboardHistoryEnabled" />
+                启用剪贴板历史
+            </label>
             <div class="clipboard-setting-row">
                 <span class="setting-label">最大记录数</span>
                 <div class="segmented small-segmented" :class="{ disabled: !clipboardConfigLoaded }">
@@ -28,6 +33,7 @@
                     </button>
                 </div>
             </div>
+
             <div class="clipboard-setting-row">
                 <span class="setting-label">图片大小限制</span>
                 <div class="segmented small-segmented" :class="{ disabled: !clipboardConfigLoaded }">
@@ -54,7 +60,7 @@
                 </div>
             </div>
 
-            <div class="clipboard-setting-row" style="margin-top: 12px;">
+            <div class="clipboard-setting-row">
                 <span class="setting-label">存储目录</span>
                 <div class="storage-path-display">
                     <span class="path-text">{{ clipboardStoragePath || '默认位置' }}</span>
@@ -92,11 +98,19 @@ import { invoke } from "@tauri-apps/api/core";
 import { invokeOrThrow } from "../../utils/invoke-wrapper";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useClipboardStore } from "../../stores/clipboardStore";
+import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
 import { showToast } from "../../composables/useGlobalToast";
+import { useSettingsStore } from "../../stores/settingsStore";
+import {
+    getClipboardConfig,
+    saveClipboardConfigPatch,
+} from "../../utils/config-sync";
 
 const router = useRouter();
 const clipboardStore = useClipboardStore();
+const settingsStore = useSettingsStore();
+const { clipboardHistoryEnabled } = storeToRefs(clipboardStore);
 
 function onOpenClipboardHistory() {
     router.push("/clipboard");
@@ -116,11 +130,8 @@ onMounted(async () => {
 async function loadClipboardConfig() {
     clipboardConfigLoaded.value = false;
     try {
-        const config = await invokeOrThrow<{
-            max_records: number;
-            max_image_size_mb: number;
-            storage_path: string | null;
-        }>("get_clipboard_config");
+        const config = await getClipboardConfig();
+        clipboardStore.setClipboardHistoryEnabled(config.history_enabled ?? true);
         clipboardMaxRecords.value = config.max_records;
         clipboardStore.setMaxRecords(config.max_records);
         clipboardMaxImageSize.value = config.max_image_size_mb;
@@ -146,13 +157,8 @@ async function onSetClipboardMaxRecords(value: number) {
     clipboardMaxRecords.value = value;
     clipboardStore.setMaxRecords(value);
     try {
-        const config = await invokeOrThrow<{
-            max_records: number;
-            max_image_size_mb: number;
-            storage_path: string | null;
-        }>("set_clipboard_config", {
-            patch: { max_records: value },
-        });
+        const config = await saveClipboardConfigPatch({ max_records: value });
+        clipboardStore.setClipboardHistoryEnabled(config.history_enabled ?? true);
         clipboardMaxRecords.value = config.max_records;
         clipboardStore.setMaxRecords(config.max_records);
         clipboardMaxImageSize.value = config.max_image_size_mb;
@@ -168,19 +174,32 @@ async function onSetClipboardMaxImageSize(value: number) {
     const prev = clipboardMaxImageSize.value;
     clipboardMaxImageSize.value = value;
     try {
-        const config = await invokeOrThrow<{
-            max_records: number;
-            max_image_size_mb: number;
-            storage_path: string | null;
-        }>("set_clipboard_config", {
-            patch: { max_image_size_mb: value },
-        });
+        const config = await saveClipboardConfigPatch({ max_image_size_mb: value });
+        clipboardStore.setClipboardHistoryEnabled(config.history_enabled ?? true);
         clipboardMaxRecords.value = config.max_records;
         clipboardStore.setMaxRecords(config.max_records);
         clipboardMaxImageSize.value = config.max_image_size_mb;
     } catch (e) {
         console.error("Failed to set clipboard max image size:", e);
         clipboardMaxImageSize.value = prev;
+        showToast("设置失败：" + (e instanceof Error ? e.message : String(e)), { type: "error" });
+    }
+}
+
+async function onToggleClipboardHistoryEnabled(event: Event) {
+    const target = event.target as HTMLInputElement | null;
+    const next = !!target?.checked;
+    const prev = clipboardHistoryEnabled.value;
+    try {
+        await settingsStore.setClipboardHistoryEnabled(next);
+        const config = await getClipboardConfig();
+        clipboardStore.setClipboardHistoryEnabled(config.history_enabled ?? next);
+        clipboardMaxRecords.value = config.max_records;
+        clipboardStore.setMaxRecords(config.max_records);
+        clipboardMaxImageSize.value = config.max_image_size_mb;
+    } catch (e) {
+        console.error("Failed to set clipboard history enabled:", e);
+        clipboardStore.setClipboardHistoryEnabled(prev);
         showToast("设置失败：" + (e instanceof Error ? e.message : String(e)), { type: "error" });
     }
 }
@@ -256,7 +275,7 @@ async function onResetStoragePath() {
 </script>
 
 <style lang="scss" scoped>
-@use "../../styles/settings/section" as settings;
+@use "../../styles/settings/_section" as settings;
 
 .clipboard-settings {
     @include settings.page-stack();
@@ -270,9 +289,7 @@ async function onResetStoragePath() {
     @include settings.section-title();
 }
 
-.action-buttons {
-    margin-bottom: 12px;
-}
+
 
 .action-btn {
     width: 100%;
@@ -294,7 +311,6 @@ async function onResetStoragePath() {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 8px;
 }
 
 .clipboard-setting-row:last-of-type {

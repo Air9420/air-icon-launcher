@@ -273,7 +273,6 @@ async function onWindowEffectTypeChange(type: "blur" | "acrylic") {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 8px;
 }
 
 .icon-size-row:last-child {
@@ -294,7 +293,6 @@ async function onWindowEffectTypeChange(type: "blur" | "acrylic") {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    margin-bottom: 8px;
 }
 
 .preset-grid:last-child {
@@ -372,7 +370,6 @@ async function onWindowEffectTypeChange(type: "blur" | "acrylic") {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-top: 12px;
 }
 
 .effect-type-label {

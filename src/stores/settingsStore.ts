@@ -293,9 +293,9 @@ export const useSettingsStore = defineStore(
             autoHideCountdownSeconds.value = config.auto_hide_countdown_seconds ?? 30;
             autoHideEnabled.value = config.auto_hide_enabled ?? true;
 
-            uiStore.setCategoryCols(config.category_cols);
-            uiStore.setLauncherCols(config.launcher_cols);
-            uiStore.setHomeSectionLayouts(config.home_section_layouts);
+            uiStore.setCategoryCols(config.category_cols, { persist: false });
+            uiStore.setLauncherCols(config.launcher_cols, { persist: false });
+            uiStore.setHomeSectionLayouts(config.home_section_layouts, { persist: false });
             clipboardStore.setClipboardHistoryEnabled(config.clipboard_history_enabled);
             clipboardStore.setMaxRecords(config.clipboard_max_records);
         }
@@ -549,6 +549,12 @@ export const useSettingsStore = defineStore(
             await saveAppConfigPatch({ auto_hide_enabled: enabled });
         }
 
+        async function setClipboardHistoryEnabled(enabled: boolean) {
+            const clipboardStore = useClipboardStore();
+            await saveAppConfigPatch({ clipboard_history_enabled: enabled });
+            clipboardStore.setClipboardHistoryEnabled(enabled);
+        }
+
         return {
             theme,
             windowEffectsEnabled,
@@ -600,6 +606,7 @@ export const useSettingsStore = defineStore(
             setStrongShortcutMode,
             setAutoHideCountdownSeconds,
             setAutoHideEnabled,
+            setClipboardHistoryEnabled,
         };
     },
     {

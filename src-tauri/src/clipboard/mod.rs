@@ -17,7 +17,7 @@ pub mod writer;
 
 pub use cache::{ClipboardCache, EventDeduplicator};
 pub use image::{get_clipboard_image, save_image_atomic, set_clipboard_image_from_png};
-pub use monitor::{get_default_storage_path, start_clipboard_monitor};
+pub use monitor::{get_default_storage_path, start_clipboard_monitor, stop_clipboard_monitor};
 pub use platform::{get_clipboard_text, set_clipboard_text};
 pub use types::{ClipboardConfig, ClipboardConfigDebug, ClipboardConfigPatch, ClipboardRecord};
 
@@ -70,6 +70,7 @@ impl ClipboardState {
             last_content_hash: Arc::new(Mutex::new(String::new())),
             is_monitoring: Arc::new(Mutex::new(false)),
             config: Arc::new(Mutex::new(ClipboardConfig {
+                history_enabled: app_config.clipboard_history_enabled,
                 max_records: app_config.clipboard_max_records,
                 max_image_size_mb: app_config.clipboard_max_image_size_mb,
                 encrypted: app_config.clipboard_encrypted,
@@ -110,6 +111,7 @@ impl ClipboardState {
 
 fn clipboard_config_from_app_config(app_config: &crate::config::AppConfig) -> ClipboardConfig {
     ClipboardConfig {
+        history_enabled: app_config.clipboard_history_enabled,
         max_records: app_config.clipboard_max_records,
         max_image_size_mb: app_config.clipboard_max_image_size_mb,
         encrypted: app_config.clipboard_encrypted,
@@ -182,6 +184,18 @@ pub fn sync_runtime_config_from_app_config(
     )
 }
 
+pub fn apply_monitoring_state_from_app_config(
+    app_handle: &AppHandle,
+    state: &Arc<ClipboardState>,
+    app_config: &crate::config::AppConfig,
+) {
+    if app_config.clipboard_history_enabled {
+        start_clipboard_monitor(app_handle.clone(), state.clone());
+    } else {
+        stop_clipboard_monitor(state);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,6 +239,7 @@ mod tests {
         apply_runtime_config_snapshot(
             &state,
             ClipboardConfig {
+                history_enabled: true,
                 max_records: 2,
                 max_image_size_mb: 4.0,
                 encrypted: true,
@@ -235,6 +250,7 @@ mod tests {
         .unwrap();
 
         let runtime = state.config.lock().unwrap().clone();
+        assert!(runtime.history_enabled);
         assert_eq!(runtime.max_records, 2);
         assert_eq!(runtime.max_image_size_mb, 4.0);
         assert!(runtime.encrypted);
@@ -403,6 +419,7 @@ pub fn get_clipboard_config_debug(
     Ok(ClipboardConfigDebug {
         config_path: config_manager.config_path().to_string_lossy().to_string(),
         runtime,
+        disk_history_enabled: disk.clipboard_history_enabled,
         disk_max_records: disk.clipboard_max_records,
         disk_max_image_size_mb: disk.clipboard_max_image_size_mb,
         disk_encrypted: disk.clipboard_encrypted,
@@ -413,12 +430,16 @@ pub fn get_clipboard_config_debug(
 #[tauri::command]
 pub fn set_clipboard_config(
     patch: ClipboardConfigPatch,
+    app_handle: AppHandle,
     config_manager: tauri::State<'_, crate::config::ConfigManager>,
     state: tauri::State<'_, Arc<ClipboardState>>,
 ) -> Result<ClipboardConfig, String> {
     {
         let mut config = state.config.lock().unwrap();
 
+        if let Some(v) = patch.history_enabled {
+            config.history_enabled = v;
+        }
         if let Some(v) = patch.max_records {
             config.max_records = v;
         }
@@ -432,6 +453,9 @@ pub fn set_clipboard_config(
 
     let mut app_config = config_manager.load_config();
 
+    if let Some(v) = patch.history_enabled {
+        app_config.clipboard_history_enabled = v;
+    }
     if let Some(v) = patch.max_records {
         app_config.clipboard_max_records = v;
     }
@@ -445,6 +469,16 @@ pub fn set_clipboard_config(
     config_manager.save_config(&app_config)?;
 
     let verify = config_manager.load_config();
+    if let Some(v) = patch.history_enabled {
+        if verify.clipboard_history_enabled != v {
+            return Err(format!(
+                "配置写入校验失败：clipboard_history_enabled 期望={} 实际={} 路径={}",
+                v,
+                verify.clipboard_history_enabled,
+                config_manager.config_path().to_string_lossy()
+            ));
+        }
+    }
     if let Some(v) = patch.max_records {
         if verify.clipboard_max_records != v {
             return Err(format!(
@@ -478,6 +512,13 @@ pub fn set_clipboard_config(
 
     if let Some(v) = patch.max_records {
         enforce_runtime_max_records(state.inner(), v)?;
+    }
+    if let Some(v) = patch.history_enabled {
+        if v {
+            start_clipboard_monitor(app_handle, state.inner().clone());
+        } else {
+            stop_clipboard_monitor(state.inner());
+        }
     }
 
     let latest = state.config.lock().unwrap().clone();

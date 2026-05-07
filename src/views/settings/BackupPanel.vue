@@ -2,20 +2,11 @@
     <div class="backup-panel">
         <div class="bp-row">
             <button class="bp-btn secondary" type="button" @click="onCreateBackup" :disabled="isProcessing">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                    stroke-width="2">
-                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                    <polyline points="17 21 17 13 7 13 7 21" />
-                    <polyline points="7 3 7 8 15 8" />
-                </svg>
+                <Backpack size="18" />
                 创建备份
             </button>
             <button class="bp-btn secondary" type="button" @click="onShowBackups" :disabled="isProcessing">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                    stroke-width="2">
-                    <circle cx="12" cy="12" r="10" />
-                    <polyline points="12 6 12 12 16 14" />
-                </svg>
+                <History size="18" />
                 备份历史
             </button>
         </div>
@@ -56,6 +47,7 @@ import { ref } from "vue";
 import { useDataManagement, type BackupInfo } from "../../composables/useDataManagement";
 import { useSearchStore } from "../../stores";
 import { showToast } from "../../composables/useGlobalToast";
+import { Backpack, History } from "@solar-icons/vue";
 
 const isProcessing = ref<boolean>(false);
 const backupList = ref<BackupInfo[]>([]);

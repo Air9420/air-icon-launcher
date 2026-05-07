@@ -55,7 +55,11 @@ pub fn run() {
                 &app_config.corner_hotspot_sensitivity,
             );
 
-            clipboard::start_clipboard_monitor(handle.clone(), clipboard_state);
+            clipboard::apply_monitoring_state_from_app_config(
+                &handle,
+                &clipboard_state,
+                &app_config,
+            );
             process_monitor::start_process_monitor(handle.clone());
             if autostart_service::is_autostart_launch() {
                 if let Some(window) = handle.get_webview_window("main") {

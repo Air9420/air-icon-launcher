@@ -1,57 +1,31 @@
 <template>
-    <div
-        class="settings-view"
-        data-menu-type="Settings-View"
-        data-tauri-drag-region
-    >
+    <div class="settings-view" data-menu-type="Settings-View" data-tauri-drag-region>
         <header class="settings-header" data-tauri-drag-region>
-            <button
-                class="back-btn"
-                type="button"
-                @click="onBack"
-                @mousedown.stop
-            >
+            <button class="back-btn" type="button" @click="onBack" @mousedown.stop>
                 返回
             </button>
             <div class="title" data-tauri-drag-region>设置</div>
         </header>
 
         <div class="tabs-container">
-            <button
-                class="scroll-btn scroll-left"
-                type="button"
-                @click="scrollTabs(-1)"
-                @mousedown.stop
-            >
+            <!-- <button class="scroll-btn scroll-left" type="button" @click="scrollTabs(-1)" @mousedown.stop>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="15 18 9 12 15 6"></polyline>
                 </svg>
-            </button>
-            <div class="tabs-wrapper" ref="tabsWrapper">
+            </button> -->
+            <div class="tabs-wrapper" ref="tabsWrapper" @wheel="onWheel">
                 <div class="tabs" ref="tabsContainer">
-                    <button
-                        v-for="tab in tabs"
-                        :key="tab.path"
-                        class="tab"
-                        :class="{ active: isActiveTab(tab.path) }"
-                        type="button"
-                        @click="onTabClick(tab.path)"
-                        @mousedown.stop
-                    >
+                    <button v-for="tab in tabs" :key="tab.path" class="tab" :class="{ active: isActiveTab(tab.path) }"
+                        type="button" @click="onTabClick(tab.path)" @mousedown.stop>
                         {{ tab.name }}
                     </button>
                 </div>
             </div>
-            <button
-                class="scroll-btn scroll-right"
-                type="button"
-                @click="scrollTabs(1)"
-                @mousedown.stop
-            >
+            <!-- <button class="scroll-btn scroll-right" type="button" @click="scrollTabs(1)" @mousedown.stop>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="9 18 15 12 9 6"></polyline>
                 </svg>
-            </button>
+            </button> -->
         </div>
 
         <div class="content">
@@ -61,8 +35,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { nextTick, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
+import { computeActiveTabScrollLeft } from "./tabScroll";
 
 const router = useRouter();
 const route = useRoute();
@@ -94,14 +69,43 @@ function onTabClick(path: string) {
     router.push(path);
 }
 
-function scrollTabs(direction: number) {
-    if (!tabsWrapper.value) return;
-    const scrollAmount = 120;
-    tabsWrapper.value.scrollBy({
-        left: direction * scrollAmount,
+function scrollActiveTabIntoView() {
+    const wrapper = tabsWrapper.value;
+    const container = tabsContainer.value;
+    if (!wrapper || !container) return;
+
+    const activeTab = container.querySelector<HTMLElement>(".tab.active");
+    if (!activeTab) return;
+
+    const nextScrollLeft = computeActiveTabScrollLeft({
+        currentScrollLeft: wrapper.scrollLeft,
+        viewportWidth: wrapper.clientWidth,
+        tabOffsetLeft: activeTab.offsetLeft,
+        tabWidth: activeTab.offsetWidth,
+        edgePadding: 4,
+        tailWidth: 16,
+    });
+
+    wrapper.scrollTo({
+        left: nextScrollLeft,
         behavior: "smooth",
     });
 }
+
+function onWheel(e: WheelEvent) {
+    if (!tabsWrapper.value) return;
+    e.preventDefault();
+    tabsWrapper.value.scrollLeft += e.deltaY;
+}
+
+watch(
+    () => route.path,
+    async () => {
+        await nextTick();
+        scrollActiveTabIntoView();
+    },
+    { immediate: true }
+);
 </script>
 
 <style scoped>
@@ -146,10 +150,10 @@ function scrollTabs(direction: number) {
 
 .tabs-container {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     background: var(--card-bg);
     border-bottom: 1px solid var(--border-color);
-    /* padding: 0 4px; */
+    box-sizing: border-box;
     height: 40px;
 }
 
@@ -167,6 +171,7 @@ function scrollTabs(direction: number) {
     display: flex;
     align-items: center;
     justify-content: center;
+    align-self: center;
 }
 
 .scroll-btn:hover {
@@ -177,7 +182,7 @@ function scrollTabs(direction: number) {
 .tabs-wrapper {
     flex: 1;
     overflow-x: auto;
-    overflow-y: hidden;
+    /* overflow-y: hidden; */
     scrollbar-width: none;
     -ms-overflow-style: none;
 }
@@ -189,9 +194,26 @@ function scrollTabs(direction: number) {
 .tabs {
     display: flex;
     gap: 0;
-    padding: 0 4px;
+    padding: 0;
     /* 不需要按shift键滚轮可横滚动 */
     user-select: none;
+}
+
+.tabs::before,
+.tabs::after {
+    content: "";
+    flex: 0 0 4px;
+    width: 4px;
+}
+
+
+
+.tab:first-child.active::before {
+    content: none;
+}
+
+.tab:last-child.active::after {
+    content: none;
 }
 
 .tab {
@@ -207,6 +229,7 @@ function scrollTabs(direction: number) {
     white-space: nowrap;
     font-size: 13px;
     margin: 0 1px;
+
 }
 
 .tab:hover {
@@ -244,7 +267,7 @@ function scrollTabs(direction: number) {
     border-bottom-right-radius: 8px;
 }
 
-.tab.active + .tab {
+.tab.active+.tab {
     border-bottom-left-radius: 8px;
 }
 

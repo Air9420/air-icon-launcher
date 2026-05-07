@@ -35,7 +35,7 @@ import { useWindowPosition } from "./composables/useWindowPosition";
 import { useAutoHideCountdown } from "./composables/useAutoHideCountdown";
 import { getPluginManager } from "./plugins";
 
-import "./styles/themes.css";
+import "./styles/themes.scss";
 
 const WINDOW_EFFECT_BOOT_MARK_KEY = "__air_window_effect_boot_mark__";
 
@@ -326,6 +326,8 @@ onBeforeUnmount(async () => {
     width: 100vw;
     height: 100vh;
     overflow: hidden;
+    border-radius: calc(16px * var(--performance-mode, 0));
+    box-shadow: inset 0 0 0 calc(2px * var(--performance-mode, 0)) var(--border-color-strong);
 }
 </style>
 

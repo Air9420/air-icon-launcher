@@ -1,5 +1,10 @@
 <template>
-    <div class="clipboard-history" data-tauri-drag-region data-menu-type="Clipboard-History-View">
+    <div
+        ref="clipboardHistoryRef"
+        class="clipboard-history"
+        data-tauri-drag-region
+        data-menu-type="Clipboard-History-View"
+    >
         <header class="clipboard-header" data-tauri-drag-region>
             <button class="back-btn" type="button" @click="onBack" @mousedown.stop>
                 返回
@@ -17,12 +22,16 @@
         </header>
 
         <div class="toolbar" v-if="history.length > 0">
-            <div class="search-wrap">
+            <div
+                class="search-wrap"
+                :class="{ 'is-keyboard-focus': tabRegion === 'search' }"
+            >
                 <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="11" cy="11" r="8" />
                     <path d="m21 21-4.35-4.35" />
                 </svg>
                 <input
+                    ref="searchInputRef"
                     v-model="searchKeyword"
                     type="text"
                     class="search-input"
@@ -49,7 +58,12 @@
                     :key="option.key"
                     type="button"
                     class="filter-chip"
-                    :class="{ 'is-active': selectedFilter === option.key }"
+                    :class="{
+                        'is-active': selectedFilter === option.key,
+                        'is-keyboard-focus': tabRegion === 'filter' && focusedFilterKey === option.key,
+                    }"
+                    :data-filter-key="option.key"
+                    :ref="(el) => setFilterChipRef(el, option.key)"
                     @click="selectedFilter = option.key"
                 >
                     {{ option.label }}
@@ -72,9 +86,11 @@
                         :key="item.id"
                         class="history-item"
                         :ref="(el) => setItemRef(el, item.id)"
+                        :data-item-id="item.id"
                         :class="{
                             'is-current': item.hash === currentHash,
                             'is-anchor-flashing': anchorFlashItemId === item.id,
+                            'is-keyboard-focus': tabRegion === 'content' && focusedRecordId === item.id,
                         }"
                         @click="onCopyItem(item)"
                     >
@@ -159,7 +175,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { getRecordContent, type ClipboardRecord } from "../stores/clipboardStore";
 import { useClipboardStore } from "../stores/clipboardStore";
@@ -185,6 +201,18 @@ const expandedRecordIds = ref<Record<string, boolean>>({});
 const itemRefs = ref<Record<string, HTMLElement | null>>({});
 const contentRef = ref<HTMLElement | null>(null);
 const anchorFlashItemId = ref<string | null>(null);
+const clipboardHistoryRef = ref<HTMLElement | null>(null);
+const searchInputRef = ref<HTMLInputElement | null>(null);
+const filterChipRefs = ref<Record<ClipboardFilter, HTMLButtonElement | null>>({
+    all: null,
+    favorites: null,
+    text: null,
+    code: null,
+    image: null,
+});
+const tabRegion = ref<ClipboardTabRegion>("search");
+const focusedFilterIndex = ref(0);
+const focusedRecordIndex = ref(0);
 
 const filterOptions: Array<{ key: ClipboardFilter; label: string }> = [
     { key: "all", label: "全部" },
@@ -203,11 +231,33 @@ let anchorFlashTimer: number | null = null;
 
 type ClipboardFilter = "all" | "favorites" | "text" | "code" | "image";
 type ClipboardGroupKey = "favorites" | "text" | "code" | "image";
+type ClipboardTabRegion = "search" | "filter" | "content";
 type ClipboardGroup = {
     key: ClipboardGroupKey;
     label: string;
     items: ClipboardRecord[];
 };
+
+const filterOrder = computed<ClipboardFilter[]>(() => filterOptions.map((option) => option.key));
+const focusedFilterKey = computed<ClipboardFilter>(() => {
+    const list = filterOrder.value;
+    if (list.length === 0) return "all";
+    const safeIndex = Math.max(0, Math.min(focusedFilterIndex.value, list.length - 1));
+    return list[safeIndex];
+});
+const flatVisibleRecords = computed<ClipboardRecord[]>(() => {
+    const rows: ClipboardRecord[] = [];
+    for (const group of groupedHistory.value) {
+        rows.push(...group.items);
+    }
+    return rows;
+});
+const focusedRecordId = computed<string | null>(() => {
+    const list = flatVisibleRecords.value;
+    if (list.length === 0) return null;
+    const safeIndex = Math.max(0, Math.min(focusedRecordIndex.value, list.length - 1));
+    return list[safeIndex]?.id ?? null;
+});
 
 watch(
     history,
@@ -232,6 +282,14 @@ watch(
     { immediate: true }
 );
 
+watch(filterOrder, (list) => {
+    if (list.length === 0) {
+        focusedFilterIndex.value = 0;
+        return;
+    }
+    focusedFilterIndex.value = Math.max(0, Math.min(focusedFilterIndex.value, list.length - 1));
+});
+
 watch(
     () => route.query.anchor,
     async (anchor) => {
@@ -247,7 +305,18 @@ watch(
     { immediate: true }
 );
 
+onMounted(() => {
+    document.addEventListener("keydown", onClipboardKeydown, true);
+    document.addEventListener("mousedown", onClipboardMouseDown, true);
+    nextTick(() => {
+        searchInputRef.value?.focus();
+    });
+});
+
 onBeforeUnmount(() => {
+    document.removeEventListener("keydown", onClipboardKeydown, true);
+    document.removeEventListener("mousedown", onClipboardMouseDown, true);
+
     if (scrollAnimationFrame === null) {
         if (anchorFlashTimer !== null) {
             clearTimeout(anchorFlashTimer);
@@ -347,8 +416,214 @@ const groupedHistory = computed<ClipboardGroup[]>(() => {
     return sections;
 });
 
+watch(flatVisibleRecords, (records) => {
+    if (records.length === 0) {
+        focusedRecordIndex.value = 0;
+        if (tabRegion.value === "content") {
+            tabRegion.value = "search";
+            nextTick(() => {
+                searchInputRef.value?.focus();
+            });
+        }
+        return;
+    }
+    focusedRecordIndex.value = Math.max(0, Math.min(focusedRecordIndex.value, records.length - 1));
+});
+
 function onBack() {
     router.back();
+}
+
+function resetTabCycleState() {
+    tabRegion.value = "search";
+}
+
+function blurSearchInput() {
+    searchInputRef.value?.blur();
+}
+
+function setFilterChipRef(target: Element | ComponentPublicInstance | null, key: ClipboardFilter) {
+    if (target instanceof HTMLButtonElement) {
+        filterChipRefs.value[key] = target;
+        return;
+    }
+    if (target && "$el" in target && target.$el instanceof HTMLButtonElement) {
+        filterChipRefs.value[key] = target.$el;
+        return;
+    }
+    filterChipRefs.value[key] = null;
+}
+
+function scrollFocusedRecordIntoView() {
+    if (tabRegion.value !== "content") return;
+    const focusedId = focusedRecordId.value;
+    if (!focusedId) return;
+    const node = itemRefs.value[focusedId];
+    node?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+}
+
+function rotateTabRegion(reverse = false) {
+    const order: ClipboardTabRegion[] = ["search", "filter", "content"];
+    const step = reverse ? -1 : 1;
+    const current = order.indexOf(tabRegion.value);
+    const nextIndex = (current + step + order.length) % order.length;
+    const nextRegion = order[nextIndex];
+
+    if (nextRegion === "search") {
+        resetTabCycleState();
+        nextTick(() => {
+            searchInputRef.value?.focus();
+        });
+        return;
+    }
+
+    if (nextRegion === "filter") {
+        tabRegion.value = "filter";
+        blurSearchInput();
+        nextTick(() => {
+            filterChipRefs.value[focusedFilterKey.value]?.focus();
+        });
+        return;
+    }
+
+    tabRegion.value = "content";
+    blurSearchInput();
+    nextTick(() => {
+        scrollFocusedRecordIntoView();
+    });
+}
+
+function moveFilterFocusByArrow(key: "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown") {
+    const list = filterOrder.value;
+    if (list.length === 0) return;
+    const current = Math.max(0, Math.min(focusedFilterIndex.value, list.length - 1));
+    const delta = key === "ArrowLeft" || key === "ArrowUp" ? -1 : 1;
+    const nextIndex = Math.max(0, Math.min(current + delta, list.length - 1));
+    focusedFilterIndex.value = nextIndex;
+    nextTick(() => {
+        filterChipRefs.value[focusedFilterKey.value]?.focus();
+    });
+}
+
+function moveContentFocusByArrow(key: "ArrowUp" | "ArrowDown") {
+    const list = flatVisibleRecords.value;
+    if (list.length === 0) return;
+    const current = Math.max(0, Math.min(focusedRecordIndex.value, list.length - 1));
+    const nextIndex = key === "ArrowUp"
+        ? Math.max(0, current - 1)
+        : Math.min(list.length - 1, current + 1);
+    focusedRecordIndex.value = nextIndex;
+    nextTick(() => {
+        scrollFocusedRecordIntoView();
+    });
+}
+
+function triggerFocusedFilterSelection() {
+    const key = focusedFilterKey.value;
+    selectedFilter.value = key;
+}
+
+function triggerFocusedRecordCopy() {
+    const focusedId = focusedRecordId.value;
+    if (!focusedId) return;
+    const item = flatVisibleRecords.value.find((record) => record.id === focusedId);
+    if (!item) return;
+    onCopyItem(item);
+}
+
+function onClipboardKeydown(e: KeyboardEvent) {
+    const hasBlockingDialog = !!document.querySelector(".confirm-overlay, .input-overlay");
+    if (hasBlockingDialog) return;
+
+    if (e.key === "Tab") {
+        e.preventDefault();
+        rotateTabRegion(e.shiftKey);
+        return;
+    }
+
+    if (e.key === "Escape") {
+        const isSearchInputTarget = e.target instanceof HTMLInputElement
+            && e.target.classList.contains("search-input");
+        const targetInputValue = isSearchInputTarget ? e.target.value.trim() : "";
+
+        if (isSearchInputTarget && targetInputValue.length > 0) {
+            return;
+        }
+
+        e.preventDefault();
+        onBack();
+        return;
+    }
+
+    if (tabRegion.value === "filter") {
+        if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") {
+            e.preventDefault();
+            moveFilterFocusByArrow(e.key as "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown");
+            return;
+        }
+        if (e.key === "Enter") {
+            e.preventDefault();
+            triggerFocusedFilterSelection();
+            return;
+        }
+        return;
+    }
+
+    if (tabRegion.value === "content") {
+        if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+            e.preventDefault();
+            moveContentFocusByArrow(e.key as "ArrowUp" | "ArrowDown");
+            return;
+        }
+        if (e.key === "Enter") {
+            e.preventDefault();
+            triggerFocusedRecordCopy();
+            return;
+        }
+    }
+}
+
+function onClipboardMouseDown(event: MouseEvent) {
+    if (!(event.target instanceof Element)) return;
+
+    if (event.target.closest(".search-wrap")) {
+        tabRegion.value = "search";
+        return;
+    }
+
+    const filterNode = event.target.closest<HTMLElement>(".filter-chip[data-filter-key]");
+    if (filterNode) {
+        const key = filterNode.dataset.filterKey as ClipboardFilter | undefined;
+        const index = filterOrder.value.findIndex((option) => option === key);
+        if (index >= 0) {
+            focusedFilterIndex.value = index;
+        }
+        tabRegion.value = "filter";
+        return;
+    }
+
+    const itemNode = event.target.closest<HTMLElement>(".history-item[data-item-id]");
+    if (itemNode) {
+        const itemId = itemNode.dataset.itemId;
+        if (itemId) {
+            const index = flatVisibleRecords.value.findIndex((record) => record.id === itemId);
+            if (index >= 0) {
+                focusedRecordIndex.value = index;
+            }
+        }
+        tabRegion.value = "content";
+        return;
+    }
+
+    const clickedBackButton = !!event.target.closest(".back-btn");
+    if (clickedBackButton) {
+        resetTabCycleState();
+        return;
+    }
+
+    if (!clipboardHistoryRef.value?.contains(event.target)) {
+        resetTabCycleState();
+    }
 }
 
 function clearSearchKeyword() {
@@ -566,7 +841,7 @@ function animateScrollTo(container: HTMLElement, targetScrollTop: number) {
 </script>
 
 <style lang="scss" scoped>
-$scrollbar-width: 6px;
+@use "../styles/scrollbar" as *;
 .clipboard-history {
     width: 100vw;
     height: 100vh;
@@ -632,6 +907,11 @@ $scrollbar-width: 6px;
     border: 1px solid var(--border-color);
     border-radius: 10px;
     padding: 8px 10px;
+}
+
+.search-wrap.is-keyboard-focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 40%, transparent);
 }
 
 .search-icon {
@@ -707,6 +987,10 @@ $scrollbar-width: 6px;
     color: var(--primary-color);
 }
 
+.filter-chip.is-keyboard-focus {
+    box-shadow: 0 0 0 2px var(--primary-color, #0078d4) !important;
+}
+
 .usage-hint {
     font-size: 12px;
     color: var(--text-hint);
@@ -716,23 +1000,12 @@ $scrollbar-width: 6px;
     flex: 1;
     overflow-y: auto;
     padding: 12px;
-    padding-right: 12px - $scrollbar-width;
+    padding-right: 6px;
     display: flex;
     flex-direction: column;
     gap: 8px;
-}
 
-.content::-webkit-scrollbar {
-    width: $scrollbar-width;
-}
-
-.content::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.content::-webkit-scrollbar-thumb {
-    background: var(--border-color-strong);
-    border-radius: calc($scrollbar-width / 2);
+    @include custom-scrollbar;
 }
 
 .group-section {
@@ -746,7 +1019,6 @@ $scrollbar-width: 6px;
     color: var(--text-hint);
     font-weight: 600;
     letter-spacing: 0.3px;
-    padding: 2px 4px;
 }
 
 .history-item {
@@ -772,6 +1044,16 @@ $scrollbar-width: 6px;
     background: var(--primary-bg);
     border-color: var(--primary-color);
     box-shadow: 0 0 0 1px var(--primary-color);
+}
+
+.history-item.is-keyboard-focus:not(.is-current) {
+    border: 2px dashed color-mix(in srgb, var(--primary-color) 70%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 28%, transparent), var(--card-shadow);
+}
+
+.history-item.is-current.is-keyboard-focus {
+    outline: 2px dashed color-mix(in srgb, var(--primary-color) 80%, transparent);
+    outline-offset: 2px;
 }
 
 .history-item.is-anchor-flashing:not(.is-current) {
@@ -821,6 +1103,9 @@ $scrollbar-width: 6px;
 .item-content {
     flex: 1;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
 }
 
 .item-head {
@@ -828,7 +1113,6 @@ $scrollbar-width: 6px;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    margin-bottom: 6px;
 }
 
 .item-type {
@@ -872,14 +1156,11 @@ $scrollbar-width: 6px;
 .item-time {
     font-size: 12px;
     color: var(--text-hint);
-    margin-top: 4px;
 }
 
 .item-image {
     max-width: 100%;
-    max-height: 120px;
     border-radius: 8px;
-    margin-top: 8px;
 }
 
 .item-image-placeholder {

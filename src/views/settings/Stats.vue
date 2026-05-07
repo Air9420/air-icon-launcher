@@ -63,14 +63,17 @@
           <div class="summary-label">已追踪应用数</div>
         </div>
         <div class="summary-card">
-          <div class="summary-value">{{ currentTimeSlotLabel }}</div>
+          <div class="summary-value time-slot-value">
+            <component v-if="currentTimeSlotIcon" :is="currentTimeSlotIcon" size="22" weight="LineDuotone" />
+            <span>{{ currentTimeSlotLabel }}</span>
+          </div>
           <div class="summary-label">当前时段</div>
         </div>
       </div>
     </section>
 
     <section class="stats-section" v-if="timeRecs.length > 0">
-      <h3 class="section-title">🕐 当前时段推荐 ({{ currentTimeSlotLabel }})</h3>
+      <h3 class="section-title"><ClockCircle size="18" weight="LineDuotone" /> 当前时段推荐 ({{ currentTimeSlotLabel }})</h3>
       <div class="rec-list">
         <div v-for="app in timeRecs" :key="app.itemId" class="rec-item">
           <span class="rec-name">{{ app.name }}</span>
@@ -82,8 +85,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, markRaw } from "vue";
 import { useStatsStore } from "../../stores/statsStore";
+import { ClockCircle, Sun, CloudSun, Moon, MoonStars } from "@solar-icons/vue";
 
 const stats = useStatsStore();
 
@@ -101,16 +105,25 @@ const maxWeekLaunches = computed(() =>
 );
 
 const TIME_SLOT_LABELS: Record<string, string> = {
-  morning: "☀️ 上午",
-  afternoon: "🌤️ 下午",
-  evening: "🌙 傍晚",
-  night: "🌛 夜间",
+  morning: "上午",
+  afternoon: "下午",
+  evening: "傍晚",
+  night: "夜间",
 };
+
+const TIME_SLOT_ICONS: Record<string, ReturnType<typeof markRaw>> = {
+  morning: markRaw(Sun),
+  afternoon: markRaw(CloudSun),
+  evening: markRaw(Moon),
+  night: markRaw(MoonStars),
+};
+
+const currentTimeSlotIcon = computed(() => TIME_SLOT_ICONS[currentTimeSlot.value]);
 
 const currentTimeSlotLabel = computed(() => TIME_SLOT_LABELS[currentTimeSlot.value] || currentTimeSlot.value);
 </script>
 
-<style scoped>
+<style lang="scss" scoped>
 .stats-panel {
   display: flex;
   flex-direction: column;
@@ -125,6 +138,9 @@ const currentTimeSlotLabel = computed(() => TIME_SLOT_LABELS[currentTimeSlot.val
   margin-bottom: 12px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .empty-hint {
@@ -295,6 +311,13 @@ const currentTimeSlotLabel = computed(() => TIME_SLOT_LABELS[currentTimeSlot.val
   font-weight: 800;
   color: var(--text-color);
   line-height: 1.2;
+}
+
+.time-slot-value {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .summary-label {

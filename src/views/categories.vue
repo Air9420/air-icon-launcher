@@ -1909,6 +1909,7 @@ function onSearchNav(direction: "up" | "down" | "enter" | "tab") {
     display: flex;
     flex-direction: column;
     user-select: none;
+    border-radius: 12px;
 }
 
 .categorie-view.is-editing {
@@ -1916,7 +1917,7 @@ function onSearchNav(direction: "up" | "down" | "enter" | "tab") {
 }
 
 .search-header {
-    padding: 12px 16px;
+    padding: 12px 16px 0px 16px;
     flex-shrink: 0;
 }
 
@@ -2059,7 +2060,7 @@ function onSearchNav(direction: "up" | "down" | "enter" | "tab") {
     padding: 0 16px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
     flex-shrink: 0;
 }
 

@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { enumContextMenuType } from "../menus/contextMenuTypes";
+import { saveAppConfigPatch, type AppConfigSnapshot } from "../utils/config-sync";
 export type { enumContextMenuType };
 export type HomeLayoutSectionKey = "pinned" | "recent";
 export type HomeLayoutPresetKey =
@@ -183,6 +184,22 @@ type ContextMenuState =
       y: number;
     };
 
+type LayoutPersistOptions = {
+  persist?: boolean;
+};
+
+type LayoutConfigPatch = Partial<
+  Pick<AppConfigSnapshot, "category_cols" | "launcher_cols" | "home_section_layouts">
+>;
+
+async function persistLayoutConfigPatch(patch: LayoutConfigPatch) {
+  try {
+    await saveAppConfigPatch(patch);
+  } catch (error) {
+    console.error("Failed to persist UI layout patch:", error);
+  }
+}
+
 export const useUIStore = defineStore(
   "ui",
   () => {
@@ -209,14 +226,20 @@ export const useUIStore = defineStore(
       ContextMenu.value = { visible: false, x: 0, y: 0 };
     }
 
-    function setCategoryCols(cols: number) {
+    function setCategoryCols(cols: number, options: LayoutPersistOptions = {}) {
       const next = Math.min(8, Math.max(4, Math.floor(cols)));
+      if (categoryCols.value === next) return;
       categoryCols.value = next;
+      if (options.persist === false) return;
+      void persistLayoutConfigPatch({ category_cols: next });
     }
 
-    function setLauncherCols(cols: number) {
+    function setLauncherCols(cols: number, options: LayoutPersistOptions = {}) {
       const next = Math.min(8, Math.max(4, Math.floor(cols)));
+      if (launcherCols.value === next) return;
       launcherCols.value = next;
+      if (options.persist === false) return;
+      void persistLayoutConfigPatch({ launcher_cols: next });
     }
 
     function setCategorySortMode(mode: CategorySortMode) {
@@ -226,17 +249,35 @@ export const useUIStore = defineStore(
     function setHomeSectionLayoutPreset(
       section: HomeLayoutSectionKey,
       preset: HomeLayoutPresetKey,
+      options: LayoutPersistOptions = {},
     ) {
       const matched = HOME_LAYOUT_PRESETS.find((x) => x.preset === preset);
       if (!matched) return;
-      homeSectionLayouts.value = {
+      const nextLayouts: HomeSectionLayouts = {
         ...homeSectionLayouts.value,
         [section]: { ...matched },
       };
+      const current = homeSectionLayouts.value[section];
+      if (
+        current.preset === nextLayouts[section].preset
+        && current.rows === nextLayouts[section].rows
+        && current.cols === nextLayouts[section].cols
+      ) {
+        return;
+      }
+      homeSectionLayouts.value = nextLayouts;
+      if (options.persist === false) return;
+      void persistLayoutConfigPatch({ home_section_layouts: nextLayouts });
     }
 
-    function setHomeSectionLayouts(next: unknown) {
-      homeSectionLayouts.value = normalizeHomeSectionLayouts(next);
+    function setHomeSectionLayouts(
+      next: unknown,
+      options: LayoutPersistOptions = {},
+    ) {
+      const normalized = normalizeHomeSectionLayouts(next);
+      homeSectionLayouts.value = normalized;
+      if (options.persist === false) return;
+      void persistLayoutConfigPatch({ home_section_layouts: normalized });
     }
 
     function getHomeSectionLayout(

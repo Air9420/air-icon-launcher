@@ -131,7 +131,7 @@ function onUnblockExternal(path: string) {
 }
 
 .hint-text {
-    @include settings.hint(0);
+    @include settings.hint();
 }
 
 .blocked-list {

@@ -746,9 +746,9 @@ export function useDataManagement() {
         const pluginManager = getPluginManager();
 
         await settingsStore.setTheme(snapshot.settings.theme);
-        uiStore.setCategoryCols(snapshot.settings.categoryCols);
-        uiStore.setLauncherCols(snapshot.settings.launcherCols);
-        uiStore.setHomeSectionLayouts(snapshot.settings.homeSectionLayouts);
+        uiStore.setCategoryCols(snapshot.settings.categoryCols, { persist: false });
+        uiStore.setLauncherCols(snapshot.settings.launcherCols, { persist: false });
+        uiStore.setHomeSectionLayouts(snapshot.settings.homeSectionLayouts, { persist: false });
         await settingsStore.setToggleShortcut(snapshot.settings.toggleShortcut);
         await settingsStore.setClipboardShortcut(snapshot.settings.clipboardShortcut);
         await settingsStore.setFollowMouseOnShow(snapshot.settings.followMouseOnShow);
@@ -769,7 +769,7 @@ export function useDataManagement() {
         );
         await settingsStore.setStrongShortcutMode(snapshot.settings.strongShortcutMode);
         await pluginManager.setSandboxMode(snapshot.settings.pluginSandboxEnabled);
-        clipboardStore.setClipboardHistoryEnabled(snapshot.settings.clipboardHistoryEnabled);
+        await settingsStore.setClipboardHistoryEnabled(snapshot.settings.clipboardHistoryEnabled);
         clipboardStore.setMaxRecords(snapshot.settings.clipboardMaxRecords);
         categoryStore.importCategories(snapshot.categories);
         categoryStore.setCurrentCategory(snapshot.currentCategoryId);
@@ -843,13 +843,13 @@ export function useDataManagement() {
                 await settingsStore.setTheme(config.theme);
             }
             if (typeof config.category_cols === "number") {
-                uiStore.setCategoryCols(config.category_cols);
+                uiStore.setCategoryCols(config.category_cols, { persist: false });
             }
             if (typeof config.launcher_cols === "number") {
-                uiStore.setLauncherCols(config.launcher_cols);
+                uiStore.setLauncherCols(config.launcher_cols, { persist: false });
             }
             if (config.home_section_layouts) {
-                uiStore.setHomeSectionLayouts(config.home_section_layouts);
+                uiStore.setHomeSectionLayouts(config.home_section_layouts, { persist: false });
             }
             if (config.toggle_shortcut) {
                 await settingsStore.setToggleShortcut(config.toggle_shortcut);
@@ -892,7 +892,7 @@ export function useDataManagement() {
                 await pluginManager.setSandboxMode(config.plugin_sandbox_enabled);
             }
             if (typeof config.clipboard_history_enabled === "boolean") {
-                clipboardStore.setClipboardHistoryEnabled(config.clipboard_history_enabled);
+                await settingsStore.setClipboardHistoryEnabled(config.clipboard_history_enabled);
             }
             if (typeof config.clipboard_max_records === "number") {
                 clipboardStore.setMaxRecords(config.clipboard_max_records);

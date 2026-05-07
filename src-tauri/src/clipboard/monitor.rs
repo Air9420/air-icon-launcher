@@ -13,6 +13,8 @@ use tauri::{Emitter, Manager};
 
 #[cfg(target_os = "windows")]
 use crate::clipboard_listener::listen_clipboard;
+#[cfg(target_os = "windows")]
+use crate::clipboard_listener::stop_clipboard_listener;
 
 #[cfg(target_os = "windows")]
 struct ClipboardMonitor {
@@ -147,6 +149,21 @@ pub fn start_clipboard_monitor(app_handle: AppHandle, state: Arc<ClipboardState>
                 thread::sleep(Duration::from_millis(100));
             }
         });
+    }
+}
+
+pub fn stop_clipboard_monitor(state: &Arc<ClipboardState>) {
+    {
+        let mut monitoring = state.is_monitoring.lock().unwrap();
+        *monitoring = false;
+    }
+
+    let mut sender = state.sender.lock().unwrap();
+    *sender = None;
+
+    #[cfg(target_os = "windows")]
+    {
+        stop_clipboard_listener();
     }
 }
 

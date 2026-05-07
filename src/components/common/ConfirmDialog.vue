@@ -58,7 +58,8 @@ function onDismiss() {
 }
 
 .confirm-dialog {
-    background: var(--card-bg-solid);
+    --confirm-dialog-opacity: 0.86;
+    background: rgba(var(--floating-panel-rgb), var(--confirm-dialog-opacity));
     border-radius: 12px;
     padding: 20px;
     min-width: 300px;

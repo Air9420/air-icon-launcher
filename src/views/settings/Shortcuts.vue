@@ -4,50 +4,26 @@
             <div class="section-title">快捷键</div>
             <div class="shortcut-row">
                 <span class="shortcut-label">主窗口</span>
-                <input
-                    ref="mainInputRef"
-                    v-model="shortcutDraft"
-                    class="input shortcut-input"
-                    :class="{ recording: recording && recordingTarget === 'main' }"
-                    type="text"
-                    placeholder="点击后按下快捷键"
-                    readonly
-                    @focus="startRecording('main')"
-                    @blur="onInputBlur('main')"
-                    @click="startRecording('main')"
-                />
+                <input ref="mainInputRef" v-model="shortcutDraft" class="input shortcut-input"
+                    :class="{ recording: recording && recordingTarget === 'main' }" type="text" placeholder="点击后按下快捷键"
+                    readonly @focus="startRecording('main')" @blur="onInputBlur('main')"
+                    @click="startRecording('main')" />
             </div>
             <div class="hint">显示或隐藏启动器主界面</div>
             <div class="shortcut-row">
                 <span class="shortcut-label">剪贴板</span>
-                <input
-                    ref="clipboardInputRef"
-                    v-model="clipboardShortcutDraft"
-                    class="input shortcut-input"
-                    :class="{ recording: recording && recordingTarget === 'clipboard' }"
-                    type="text"
-                    placeholder="点击后按下快捷键"
-                    readonly
-                    @focus="startRecording('clipboard')"
-                    @blur="onInputBlur('clipboard')"
-                    @click="startRecording('clipboard')"
-                />
+                <input ref="clipboardInputRef" v-model="clipboardShortcutDraft" class="input shortcut-input"
+                    :class="{ recording: recording && recordingTarget === 'clipboard' }" type="text"
+                    placeholder="点击后按下快捷键" readonly @focus="startRecording('clipboard')"
+                    @blur="onInputBlur('clipboard')" @click="startRecording('clipboard')" />
             </div>
             <div class="hint">快速打开剪贴板历史面板</div>
             <div class="shortcut-row">
                 <span class="shortcut-label">投影切换</span>
-                <input
-                    ref="displayInputRef"
-                    v-model="displayShortcutDraft"
-                    class="input shortcut-input"
-                    :class="{ recording: recording && recordingTarget === 'display' }"
-                    type="text"
-                    placeholder="点击后按下快捷键"
-                    readonly
-                    @focus="startRecording('display')"
-                    @blur="onInputBlur('display')"
-                    @click="startRecording('display')"
-                />
+                <input ref="displayInputRef" v-model="displayShortcutDraft" class="input shortcut-input"
+                    :class="{ recording: recording && recordingTarget === 'display' }" type="text"
+                    placeholder="点击后按下快捷键" readonly @focus="startRecording('display')" @blur="onInputBlur('display')"
+                    @click="startRecording('display')" />
             </div>
             <div class="hint">
                 在「仅电脑屏幕」和「扩展」模式之间快速切换（仅在多屏幕环境下可用）
@@ -66,13 +42,11 @@
 
         <div class="section">
             <div class="shortcut-row">
-                <span class="shortcut-label">⚡ 强力模式</span>
+                <span class="shortcut-label">
+                    <Infinite size="16" weight="Bold" /> 强力模式
+                </span>
                 <label class="toggle-switch">
-                    <input
-                        type="checkbox"
-                        :checked="strongShortcutMode"
-                        @change="onStrongShortcutModeChange"
-                    />
+                    <input type="checkbox" :checked="strongShortcutMode" @change="onStrongShortcutModeChange" />
                     <span class="toggle-slider"></span>
                 </label>
             </div>
@@ -89,6 +63,7 @@ import { onBeforeUnmount, ref, watchEffect } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { invokeOrThrow } from "../../utils/invoke-wrapper";
 import { useSettingsStore } from "../../stores";
+import { Infinite } from "@solar-icons/vue";
 
 const settingsStore = useSettingsStore();
 const {
@@ -283,7 +258,7 @@ onBeforeUnmount(() => {
 }
 
 .section-title {
-    @include settings.section-title(0);
+    @include settings.section-title();
 }
 
 .shortcut-row {
@@ -301,6 +276,9 @@ onBeforeUnmount(() => {
     font-size: 13px;
     color: var(--text-secondary);
     min-width: 60px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .shortcut-input {
@@ -325,7 +303,7 @@ onBeforeUnmount(() => {
 }
 
 .hint {
-    @include settings.hint(0);
+    @include settings.hint();
 }
 
 .hint.error {
@@ -369,11 +347,11 @@ onBeforeUnmount(() => {
     border-radius: 50%;
 }
 
-.toggle-switch input:checked + .toggle-slider {
+.toggle-switch input:checked+.toggle-slider {
     background-color: var(--primary-color);
 }
 
-.toggle-switch input:checked + .toggle-slider:before {
+.toggle-switch input:checked+.toggle-slider:before {
     transform: translateX(20px);
 }
 </style>
