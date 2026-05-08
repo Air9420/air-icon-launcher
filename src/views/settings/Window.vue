@@ -315,9 +315,7 @@ async function onAutoHideCountdownChange() {
 }
 
 .segmented {
-    display: flex;
-    gap: 8px;
-    margin-top: 10px;
+    @include settings.segmented();
 }
 
 .segmented.disabled {
@@ -325,19 +323,11 @@ async function onAutoHideCountdownChange() {
 }
 
 .seg-btn {
-    flex: 1;
-    height: 34px;
-    border-radius: 12px;
-    border: 1px solid var(--border-color-strong);
-    background: var(--input-bg);
-    cursor: pointer;
-    -webkit-app-region: no-drag;
-    color: var(--text-color);
+    @include settings.segment-button();
 }
 
 .seg-btn.active {
-    border-color: var(--primary-color);
-    background: var(--primary-bg);
+    @include settings.segment-button-active();
 }
 
 .seg-btn:disabled {
@@ -345,12 +335,7 @@ async function onAutoHideCountdownChange() {
 }
 
 .check {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 13px;
-    color: var(--text-secondary);
-    -webkit-app-region: no-drag;
+    @include settings.check-row();
 }
 
 .check input {
@@ -369,12 +354,9 @@ async function onAutoHideCountdownChange() {
     color: var(--error-color);
 }
 
-.hint.compact {
-    margin-top: 4px;
-}
 
 .autostart-methods {
-    margin-top: 12px;
+    @include settings.section-card();
     padding: 12px;
     background: var(--input-bg);
     border-radius: 12px;
@@ -384,7 +366,6 @@ async function onAutoHideCountdownChange() {
 .method-label {
     font-size: 12px;
     color: var(--text-hint);
-    margin-bottom: 8px;
 }
 
 .method-grid {
@@ -431,7 +412,6 @@ async function onAutoHideCountdownChange() {
 }
 
 .method-desc {
-    margin-top: 10px;
     font-size: 12px;
     color: var(--text-hint);
     line-height: 1.5;
@@ -463,15 +443,11 @@ async function onAutoHideCountdownChange() {
 }
 
 .setting-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
+    @include settings.inline-row();
 }
 
 .setting-label {
-    font-size: 13px;
-    color: var(--text-secondary);
-    min-width: 60px;
+    @include settings.row-label(60px);
 }
 
 .corner-grid {
@@ -524,7 +500,6 @@ async function onAutoHideCountdownChange() {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-top: 10px;
 }
 
 .number-label {
@@ -534,11 +509,7 @@ async function onAutoHideCountdownChange() {
 
 .number-input {
     width: 80px;
-    height: 32px;
-    border-radius: 8px;
-    border: 1px solid var(--border-color-strong);
-    background: var(--input-bg);
-    color: var(--text-color);
+    @include settings.input-control(32px, 8px, 0 0 80px);
     text-align: center;
     font-size: 13px;
 }

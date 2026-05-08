@@ -293,8 +293,8 @@ function onClose() {
     }
 
     &.in-settings {
-        margin: -16px;
-        height: calc(100% + 32px);
+        margin: -8px;
+        height: calc(100% + 24px);
     }
 }
 
@@ -318,6 +318,7 @@ function onClose() {
     flex: 1;
     overflow-y: auto;
     padding: 16px;
+    padding-right: 12px;
 }
 
 .guide-section {

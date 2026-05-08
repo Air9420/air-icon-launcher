@@ -574,7 +574,7 @@ function getShortcutLabel(index: number): string {
     gap: 10px;
     padding: 12px 16px;
     margin-top: 8px;
-    background: var(--card-bg-solid);
+    background: rgba(var(--floating-panel-rgb), 0.8);
     border-radius: 12px;
     cursor: pointer;
     transition: background 0.15s ease, box-shadow 0.15s ease;

@@ -138,6 +138,7 @@ pub fn run() {
             clipboard::get_clipboard_config,
             clipboard::get_clipboard_config_debug,
             clipboard::set_clipboard_config,
+            clipboard::set_clipboard_favorite_hashes,
             clipboard::set_clipboard_storage_path,
             clipboard::get_clipboard_storage_path,
             clipboard::reset_clipboard_storage_path,

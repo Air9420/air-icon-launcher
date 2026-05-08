@@ -12,6 +12,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { createVersionedPersistConfig } from "../utils/versioned-persist";
+import { invokeOrThrow } from "../utils/invoke-wrapper";
 
 /**
  * 剪贴板记录类型
@@ -57,6 +58,16 @@ export const useClipboardStore = defineStore("clipboard", () => {
     const currentClipboardHash = ref<string | null>(null);
     const favoriteHashes = ref<string[]>([]);
 
+    async function syncFavoriteHashesToBackend() {
+        try {
+            await invokeOrThrow("set_clipboard_favorite_hashes", {
+                hashes: favoriteHashes.value,
+            });
+        } catch (error) {
+            console.warn("Failed to sync clipboard favorite hashes:", error);
+        }
+    }
+
     function addClipboardRecord(record: ClipboardRecord, forcePromote: boolean = false) {
         const existingIndex = clipboardHistory.value.findIndex(r => r.hash === record.hash);
         if (existingIndex !== -1) {
@@ -80,6 +91,7 @@ export const useClipboardStore = defineStore("clipboard", () => {
         clipboardHistory.value = records;
         const recordHashes = new Set(records.map((record) => record.hash));
         favoriteHashes.value = favoriteHashes.value.filter((hash) => recordHashes.has(hash));
+        void syncFavoriteHashesToBackend();
     }
 
     /**
@@ -93,6 +105,7 @@ export const useClipboardStore = defineStore("clipboard", () => {
             const [removed] = clipboardHistory.value.splice(index, 1);
             if (removed) {
                 favoriteHashes.value = favoriteHashes.value.filter((hash) => hash !== removed.hash);
+                void syncFavoriteHashesToBackend();
             }
         }
     }
@@ -103,6 +116,7 @@ export const useClipboardStore = defineStore("clipboard", () => {
     function clearClipboardHistory() {
         clipboardHistory.value = [];
         favoriteHashes.value = [];
+        void syncFavoriteHashesToBackend();
     }
 
     function isFavoriteHash(hash: string): boolean {
@@ -114,10 +128,15 @@ export const useClipboardStore = defineStore("clipboard", () => {
         if (favorite) {
             if (!favoriteHashes.value.includes(hash)) {
                 favoriteHashes.value = [hash, ...favoriteHashes.value];
+                void syncFavoriteHashesToBackend();
             }
             return;
         }
+        if (!favoriteHashes.value.includes(hash)) {
+            return;
+        }
         favoriteHashes.value = favoriteHashes.value.filter((target) => target !== hash);
+        void syncFavoriteHashesToBackend();
     }
 
     function toggleFavoriteHash(hash: string) {
@@ -133,6 +152,11 @@ export const useClipboardStore = defineStore("clipboard", () => {
         clipboardHistoryEnabled.value = enabled;
     }
 
+    function clearRuntimeClipboardHistoryView() {
+        clipboardHistory.value = [];
+        currentClipboardHash.value = null;
+    }
+
     /**
      * 设置最大记录数
      *
@@ -141,7 +165,12 @@ export const useClipboardStore = defineStore("clipboard", () => {
     function setMaxRecords(value: number) {
         maxRecords.value = value;
         if (value > 0 && clipboardHistory.value.length > value) {
-            clipboardHistory.value = clipboardHistory.value.slice(0, value);
+            const favoriteSet = new Set(favoriteHashes.value);
+            const favorites = clipboardHistory.value.filter((record) => favoriteSet.has(record.hash));
+            const nonFavorites = clipboardHistory.value.filter((record) => !favoriteSet.has(record.hash));
+            const keptNonFavorites = nonFavorites.slice(0, value);
+            clipboardHistory.value = [...favorites, ...keptNonFavorites]
+                .sort((a, b) => b.timestamp - a.timestamp);
         }
     }
 
@@ -156,6 +185,7 @@ export const useClipboardStore = defineStore("clipboard", () => {
         removeClipboardRecord,
         clearClipboardHistory,
         setClipboardHistoryEnabled,
+        clearRuntimeClipboardHistoryView,
         setMaxRecords,
         setCurrentClipboardHash,
         isFavoriteHash,

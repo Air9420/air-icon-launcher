@@ -1,4 +1,4 @@
-@mixin page-stack($gap: 14px) {
+@mixin page-stack($gap: 8px) {
     display: flex;
     flex-direction: column;
     gap: $gap;
@@ -14,13 +14,67 @@
     gap: 10px;
 }
 
+@mixin inline-row($gap: 12px, $align: center) {
+    display: flex;
+    align-items: $align;
+    gap: $gap;
+}
+
+@mixin row-label($min-width: 70px) {
+    font-size: 13px;
+    color: var(--text-secondary);
+    min-width: $min-width;
+}
+
+@mixin segmented($gap: 8px) {
+    display: flex;
+    gap: $gap;
+}
+
+@mixin segment-button($height: 34px, $radius: 12px) {
+    flex: 1;
+    height: $height;
+    border-radius: $radius;
+    border: 1px solid var(--border-color-strong);
+    background: var(--input-bg);
+    cursor: pointer;
+    -webkit-app-region: no-drag;
+    color: var(--text-color);
+}
+
+@mixin segment-button-active() {
+    border-color: var(--primary-color);
+    background: var(--primary-bg);
+}
+
+@mixin check-row() {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    -webkit-app-region: no-drag;
+}
+
+@mixin input-control($height: 34px, $radius: 12px, $flex: 1) {
+    flex: $flex;
+    height: $height;
+    padding: 0 10px;
+    border-radius: $radius;
+    border: 1px solid var(--border-color-strong);
+    background: var(--input-bg);
+    outline: none;
+    -webkit-app-region: no-drag;
+    color: var(--text-color);
+}
+
 @mixin section-title() {
     font-size: 13px;
     font-weight: 700;
     color: var(--text-secondary);
 }
 
-@mixin hint( $color: var(--text-hint)) {
+@mixin hint($color: var(--text-hint)) {
     font-size: 12px;
     color: $color;
     -webkit-app-region: no-drag;

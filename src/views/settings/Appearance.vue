@@ -7,7 +7,7 @@
                 <span>性能模式</span>
             </label>
             <div v-if="performanceMode" class="hint">
-                性能模式已启用，透明效果已关闭
+                性能模式已启用，模糊效果已关闭
             </div>
             <template v-else>
                 <div class="effect-type-row">
@@ -29,7 +29,7 @@
                     Blur 效果更轻量, Acrylic 更耗性能但更美观
                 </div>
                 <div class="hint">
-                    拖拽窗口卡顿时建议切换为 Blur 效果
+                    拖拽窗口卡顿时建议切换为 Blur 或 开启性能模式
                 </div>
                 <div v-if="supportHint" class="hint">
                     {{ supportHint }}
@@ -50,7 +50,7 @@
                 <button class="seg-btn" type="button"
                     :class="{ active: theme === 'transparent', disabled: !windowEffectsEnabled }"
                     :disabled="!windowEffectsEnabled" @click="onSetTheme('transparent')">
-                    透明
+                    模糊
                 </button>
                 <button class="seg-btn" type="button" :class="{ active: theme === 'system' }"
                     @click="onSetTheme('system')">
@@ -270,9 +270,7 @@ async function onWindowEffectTypeChange(type: "blur" | "acrylic") {
 }
 
 .icon-size-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
+    @include settings.inline-row();
 }
 
 .icon-size-row:last-child {
@@ -280,9 +278,7 @@ async function onWindowEffectTypeChange(type: "blur" | "acrylic") {
 }
 
 .icon-size-label {
-    font-size: 13px;
-    color: var(--text-secondary);
-    min-width: 70px;
+    @include settings.row-label();
 }
 
 .icon-size-segmented {
@@ -300,21 +296,16 @@ async function onWindowEffectTypeChange(type: "blur" | "acrylic") {
 }
 
 .preset-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
+    @include settings.inline-row();
 }
 
 .preset-label {
-    font-size: 13px;
-    color: var(--text-secondary);
-    min-width: 70px;
+    @include settings.row-label();
 }
 
 .preset-segmented {
     flex: 1;
-    display: flex;
-    gap: 6px;
+    @include settings.segmented(6px);
 }
 
 .preset-segmented .seg-btn {
@@ -322,24 +313,15 @@ async function onWindowEffectTypeChange(type: "blur" | "acrylic") {
 }
 
 .segmented {
-    display: flex;
-    gap: 8px;
+    @include settings.segmented();
 }
 
 .seg-btn {
-    flex: 1;
-    height: 34px;
-    border-radius: 12px;
-    border: 1px solid var(--border-color-strong);
-    background: var(--input-bg);
-    cursor: pointer;
-    -webkit-app-region: no-drag;
-    color: var(--text-color);
+    @include settings.segment-button();
 }
 
 .seg-btn.active {
-    border-color: var(--primary-color);
-    background: var(--primary-bg);
+    @include settings.segment-button-active();
 }
 
 .seg-btn.disabled,
@@ -349,12 +331,7 @@ async function onWindowEffectTypeChange(type: "blur" | "acrylic") {
 }
 
 .check {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 13px;
-    color: var(--text-secondary);
-    -webkit-app-region: no-drag;
+    @include settings.check-row();
 }
 
 .check input {
@@ -367,15 +344,11 @@ async function onWindowEffectTypeChange(type: "blur" | "acrylic") {
 }
 
 .effect-type-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
+    @include settings.inline-row();
 }
 
 .effect-type-label {
-    font-size: 13px;
-    color: var(--text-secondary);
-    min-width: 70px;
+    @include settings.row-label();
 }
 
 .effect-type-segmented {

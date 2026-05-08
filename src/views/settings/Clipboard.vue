@@ -194,6 +194,9 @@ async function onToggleClipboardHistoryEnabled(event: Event) {
         await settingsStore.setClipboardHistoryEnabled(next);
         const config = await getClipboardConfig();
         clipboardStore.setClipboardHistoryEnabled(config.history_enabled ?? next);
+        if (!(config.history_enabled ?? next)) {
+            clipboardStore.clearRuntimeClipboardHistoryView();
+        }
         clipboardMaxRecords.value = config.max_records;
         clipboardStore.setMaxRecords(config.max_records);
         clipboardMaxImageSize.value = config.max_image_size_mb;
@@ -275,7 +278,7 @@ async function onResetStoragePath() {
 </script>
 
 <style lang="scss" scoped>
-@use "../../styles/settings/_section" as settings;
+@use "../../styles/settings/section" as settings;
 
 .clipboard-settings {
     @include settings.page-stack();
@@ -308,9 +311,7 @@ async function onResetStoragePath() {
 }
 
 .clipboard-setting-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
+    @include settings.inline-row();
 }
 
 .clipboard-setting-row:last-of-type {
@@ -318,14 +319,11 @@ async function onResetStoragePath() {
 }
 
 .setting-label {
-    font-size: 13px;
-    color: var(--text-secondary);
-    min-width: 80px;
+    @include settings.row-label(80px);
 }
 
 .segmented {
-    display: flex;
-    gap: 8px;
+    @include settings.segmented();
 }
 
 .segmented.disabled {
@@ -343,19 +341,11 @@ async function onResetStoragePath() {
 }
 
 .seg-btn {
-    flex: 1;
-    height: 34px;
-    border-radius: 12px;
-    border: 1px solid var(--border-color-strong);
-    background: var(--input-bg);
-    cursor: pointer;
-    -webkit-app-region: no-drag;
-    color: var(--text-color);
+    @include settings.segment-button();
 }
 
 .seg-btn.active {
-    border-color: var(--primary-color);
-    background: var(--primary-bg);
+    @include settings.segment-button-active();
 }
 
 .seg-btn:disabled {
@@ -430,12 +420,7 @@ async function onResetStoragePath() {
 }
 
 .check {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 13px;
-    color: var(--text-secondary);
-    -webkit-app-region: no-drag;
+    @include settings.check-row();
 }
 
 .check input {

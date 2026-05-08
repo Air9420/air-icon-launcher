@@ -9,7 +9,7 @@
                 <SearchBox
                     ref="searchBoxRef"
                     v-model="searchKeyword"
-                    placeholder="搜索启动项..."
+                    placeholder="搜一搜"
                     :intercept-tab="true"
                     @nav="onSearchNav"
                 >
@@ -1907,6 +1907,7 @@ function onSearchNav(direction: "up" | "down" | "enter" | "tab") {
     height: 100vh;
     background: var(--bg-color);
     display: flex;
+    gap: 8px;
     flex-direction: column;
     user-select: none;
     border-radius: 12px;
@@ -1917,7 +1918,7 @@ function onSearchNav(direction: "up" | "down" | "enter" | "tab") {
 }
 
 .search-header {
-    padding: 12px 16px 0px 16px;
+    padding: 8px 16px 0px 16px;
     flex-shrink: 0;
 }
 

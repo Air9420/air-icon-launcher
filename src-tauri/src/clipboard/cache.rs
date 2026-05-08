@@ -20,21 +20,18 @@ impl ClipboardCache {
         }
     }
 
-    fn contains(&self, hash: &str, content: &str) -> bool {
-        self.content_index
-            .get(hash)
-            .map(|c| c == content)
-            .unwrap_or(false)
-    }
-
     #[allow(dead_code)]
     fn hash_exists(&self, hash: &str) -> bool {
         self.hash_index.contains(hash) || self.buffer_hashes.contains(hash)
     }
 
     pub fn push_with_limit(&mut self, record: ClipboardRecord, max_records: usize) {
-        if self.contains(&record.hash, record.text_content.as_deref().unwrap_or("")) {
-            return;
+        if let Some(pos) = self.list.iter().position(|item| item.hash == record.hash) {
+            if let Some(existing) = self.list.remove(pos) {
+                self.hash_index.remove(&existing.hash);
+                self.content_index.remove(&existing.hash);
+                self.buffer_hashes.remove(&existing.hash);
+            }
         }
 
         self.hash_index.insert(record.hash.clone());
@@ -76,10 +73,17 @@ impl ClipboardCache {
             let record = self.list.remove(pos).unwrap();
             self.hash_index.remove(&record.hash);
             self.content_index.remove(&record.hash);
+            self.buffer_hashes.remove(&record.hash);
             Some(record)
         } else {
             None
         }
+    }
+
+    pub fn remove_by_ids(&mut self, ids: &[String]) -> Vec<ClipboardRecord> {
+        ids.iter()
+            .filter_map(|id| self.remove_by_id(id))
+            .collect()
     }
 
     pub(crate) fn clear_buffer_hashes(&mut self) {

@@ -217,13 +217,12 @@ function getIconSrc(iconBase64: string) {
     align-items: center;
     justify-content: center;
     position: relative;
-    // overflow: hidden;
+    overflow: hidden;
 
     .icon-real {
         width: 100%;
         height: 100%;
         object-fit: contain;
-        filter: drop-shadow(0 0 calc(12px * var(--performance-mode, 0)) rgba(0, 0, 0, 0.45));
     }
 
     .icon-fallback {

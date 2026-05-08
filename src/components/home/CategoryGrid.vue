@@ -223,7 +223,8 @@ function getNameFontSize(name: string): number {
     display: grid;
     grid-template-columns: repeat(var(--cols), 1fr);
     grid-auto-rows: max-content;
-    padding: 16px;
+    padding: 8px 16px 8px 16px;
+    margin-top: -8px;
     flex-wrap: wrap;
     flex: 1;
     min-height: 0;

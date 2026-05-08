@@ -262,10 +262,7 @@ onBeforeUnmount(() => {
 }
 
 .shortcut-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 0;
+    @include settings.inline-row();
 }
 
 .shortcut-row:last-child {
@@ -273,9 +270,7 @@ onBeforeUnmount(() => {
 }
 
 .shortcut-label {
-    font-size: 13px;
-    color: var(--text-secondary);
-    min-width: 60px;
+    @include settings.row-label(60px);
     display: flex;
     align-items: center;
     gap: 4px;
@@ -286,15 +281,7 @@ onBeforeUnmount(() => {
 }
 
 .input {
-    flex: 1;
-    height: 34px;
-    padding: 0 10px;
-    border-radius: 12px;
-    border: 1px solid var(--border-color-strong);
-    background: var(--input-bg);
-    outline: none;
-    -webkit-app-region: no-drag;
-    color: var(--text-color);
+    @include settings.input-control();
 }
 
 .input.recording {

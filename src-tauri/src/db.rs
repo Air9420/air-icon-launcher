@@ -1,4 +1,5 @@
-use rusqlite::{params, Connection, Result as SqliteResult};
+use rusqlite::{params, params_from_iter, Connection, Result as SqliteResult};
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
@@ -41,6 +42,12 @@ fn initialize_schema(conn: &Connection) -> SqliteResult<()> {
 pub struct ClipboardDatabase {
     write_conn: Mutex<Connection>,
     read_conn: Mutex<Connection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrunedClipboardRecord {
+    pub id: String,
+    pub image_path: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -192,46 +199,83 @@ impl ClipboardDatabase {
         })
     }
 
-    pub fn enforce_max_records(&self, max: usize) -> SqliteResult<Vec<String>> {
+    pub fn enforce_max_records(&self, max: usize) -> SqliteResult<Vec<PrunedClipboardRecord>> {
+        self.enforce_max_records_with_protected(max, &HashSet::new())
+    }
+
+    pub fn enforce_max_records_with_protected(
+        &self,
+        max: usize,
+        protected_hashes: &HashSet<String>,
+    ) -> SqliteResult<Vec<PrunedClipboardRecord>> {
         let conn = self.write_conn.lock().unwrap();
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM clipboard_records", [], |row| {
-            row.get(0)
-        })?;
-
-        if count as usize > max {
-            let to_delete = count as usize - max;
-
-            let mut stmt = conn.prepare(
-                "SELECT id, image_path FROM clipboard_records
-                 ORDER BY timestamp ASC LIMIT ?1",
-            )?;
-
-            let old_records: Vec<(String, Option<String>)> = stmt
-                .query_map([to_delete as i64], |row| Ok((row.get(0)?, row.get(1)?)))?
-                .filter_map(|r| r.ok())
-                .collect();
-
-            let mut deleted_images = Vec::new();
-            let ids: Vec<String> = old_records
-                .iter()
-                .filter_map(|(id, path)| {
-                    if let Some(p) = path {
-                        if !p.is_empty() {
-                            deleted_images.push(p.clone());
-                        }
-                    }
-                    Some(id.clone())
-                })
-                .collect();
-
-            for id in &ids {
-                conn.execute("DELETE FROM clipboard_records WHERE id = ?1", [id.as_str()])?;
-            }
-
-            Ok(deleted_images)
+        let (count_sql, query_sql) = if protected_hashes.is_empty() {
+            (
+                "SELECT COUNT(*) FROM clipboard_records".to_string(),
+                "SELECT id, image_path FROM clipboard_records ORDER BY timestamp ASC".to_string(),
+            )
         } else {
-            Ok(Vec::new())
+            let placeholders = vec!["?"; protected_hashes.len()].join(", ");
+            (
+                format!(
+                    "SELECT COUNT(*) FROM clipboard_records WHERE hash NOT IN ({})",
+                    placeholders
+                ),
+                format!(
+                    "SELECT id, image_path FROM clipboard_records WHERE hash NOT IN ({}) ORDER BY timestamp ASC",
+                    placeholders
+                ),
+            )
+        };
+
+        let protected_vec: Vec<String> = protected_hashes.iter().cloned().collect();
+
+        let count: i64 = if protected_vec.is_empty() {
+            conn.query_row(&count_sql, [], |row| row.get(0))?
+        } else {
+            conn.query_row(
+                &count_sql,
+                params_from_iter(protected_vec.iter().map(|s| s.as_str())),
+                |row| row.get(0),
+            )?
+        };
+
+        if count as usize <= max {
+            return Ok(Vec::new());
         }
+
+        let to_delete = count as usize - max;
+        let old_records: Vec<(String, Option<String>)> = if protected_vec.is_empty() {
+            let mut stmt = conn.prepare(&query_sql)?;
+            let mapped = stmt
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .filter_map(|r| r.ok())
+                .take(to_delete)
+                .collect();
+            mapped
+        } else {
+            let mut stmt = conn.prepare(&query_sql)?;
+            let mapped = stmt
+                .query_map(
+                    params_from_iter(protected_vec.iter().map(|s| s.as_str())),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?
+                .filter_map(|r| r.ok())
+                .take(to_delete)
+                .collect();
+            mapped
+        };
+
+        let pruned: Vec<PrunedClipboardRecord> = old_records
+            .into_iter()
+            .map(|(id, image_path)| PrunedClipboardRecord { id, image_path })
+            .collect();
+
+        for id in pruned.iter().map(|record| record.id.as_str()) {
+            conn.execute("DELETE FROM clipboard_records WHERE id = ?1", [id])?;
+        }
+
+        Ok(pruned)
     }
 
     pub fn hash_exists(&self, hash: &str) -> SqliteResult<bool> {
@@ -486,5 +530,42 @@ mod tests {
         }
         let _deleted = db.enforce_max_records(3).unwrap();
         assert_eq!(db.count().unwrap(), 3);
+    }
+
+    #[test]
+    fn test_enforce_max_records_with_protected_hashes() {
+        let db = open_mem_db();
+        for i in 0..5 {
+            db.insert(&make_record(
+                &format!("{}", i),
+                "text",
+                Some("x"),
+                &format!("h{}", i),
+                (i + 1) as i64 * 1000,
+            ))
+            .unwrap();
+        }
+
+        let protected_hashes = HashSet::from([
+            "h0".to_string(), // oldest
+            "h3".to_string(),
+        ]);
+
+        let deleted = db
+            .enforce_max_records_with_protected(2, &protected_hashes)
+            .unwrap();
+
+        let deleted_ids: HashSet<String> = deleted.into_iter().map(|r| r.id).collect();
+        assert!(deleted_ids.contains("1"));
+        assert!(deleted_ids.contains("2"));
+        assert!(deleted_ids.contains("4"));
+        assert!(!deleted_ids.contains("0"));
+        assert!(!deleted_ids.contains("3"));
+
+        let remained = db.get_all().unwrap();
+        let remained_hashes: HashSet<String> = remained.into_iter().map(|r| r.hash).collect();
+        assert_eq!(remained_hashes.len(), 2);
+        assert!(remained_hashes.contains("h0"));
+        assert!(remained_hashes.contains("h3"));
     }
 }

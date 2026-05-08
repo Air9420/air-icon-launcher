@@ -1,4 +1,5 @@
 use crate::db::ClipboardDatabase;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -30,6 +31,7 @@ pub struct ClipboardState {
     pub database: Arc<Mutex<Option<ClipboardDatabase>>>,
     pub sender: Arc<Mutex<Option<crossbeam_channel::Sender<ClipboardRecord>>>>,
     pub images_dir: Arc<Mutex<PathBuf>>,
+    pub favorite_hashes: Arc<Mutex<HashSet<String>>>,
 }
 
 impl Default for ClipboardState {
@@ -43,6 +45,7 @@ impl Default for ClipboardState {
             database: Arc::new(Mutex::new(None)),
             sender: Arc::new(Mutex::new(None)),
             images_dir: Arc::new(Mutex::new(PathBuf::new())),
+            favorite_hashes: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 }
@@ -80,6 +83,7 @@ impl ClipboardState {
             database: Arc::new(Mutex::new(database)),
             sender: Arc::new(Mutex::new(None)),
             images_dir: Arc::new(Mutex::new(images_dir)),
+            favorite_hashes: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -124,16 +128,44 @@ fn enforce_runtime_max_records(state: &Arc<ClipboardState>, max_records: usize) 
         return Ok(());
     }
 
+    let protected_hashes = state.favorite_hashes.lock().unwrap().clone();
+
     if let Some(db) = state.database.lock().unwrap().as_ref() {
-        let images = db.enforce_max_records(max_records).map_err(|e| e.to_string())?;
-        for image_path in images {
-            let _ = std::fs::remove_file(image_path);
+        let pruned = db
+            .enforce_max_records_with_protected(max_records, &protected_hashes)
+            .map_err(|e| e.to_string())?;
+        let pruned_ids: Vec<String> = pruned.iter().map(|record| record.id.clone()).collect();
+        if !pruned_ids.is_empty() {
+            let mut cache = state.cache.lock().unwrap();
+            let _ = cache.remove_by_ids(&pruned_ids);
+        }
+        for record in pruned {
+            if let Some(image_path) = record.image_path {
+                if !image_path.is_empty() {
+                    let _ = std::fs::remove_file(image_path);
+                }
+            }
         }
     }
 
     let removed = {
         let mut cache = state.cache.lock().unwrap();
-        cache.enforce_max_records(max_records)
+        let mut removed = cache.enforce_max_records(max_records);
+        if !protected_hashes.is_empty() {
+            let mut protected = Vec::new();
+            removed.retain(|record| {
+                if protected_hashes.contains(&record.hash) {
+                    protected.push(record.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+            for record in protected {
+                cache.push_with_limit(record, 0);
+            }
+        }
+        removed
     };
     for record in removed {
         if let Some(image_path) = record.image_path {
@@ -143,6 +175,20 @@ fn enforce_runtime_max_records(state: &Arc<ClipboardState>, max_records: usize) 
         }
     }
 
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_clipboard_favorite_hashes(
+    hashes: Vec<String>,
+    state: tauri::State<'_, Arc<ClipboardState>>,
+) -> Result<(), String> {
+    let mut favorite_hashes = state.favorite_hashes.lock().unwrap();
+    *favorite_hashes = hashes
+        .into_iter()
+        .map(|hash| hash.trim().to_string())
+        .filter(|hash| !hash.is_empty())
+        .collect();
     Ok(())
 }
 
@@ -321,7 +367,7 @@ pub fn set_clipboard_content(
                 let hash = simple_hash(&png_data);
                 let mut last_hash = state.last_content_hash.lock().unwrap();
                 *last_hash = hash;
-                let _ = app_handle.emit("clipboard-set-from-history", ());
+                let _ = app_handle.emit("clipboard-set-from-history", true);
                 return Ok(());
             }
         }
@@ -331,7 +377,7 @@ pub fn set_clipboard_content(
         if set_clipboard_text(&content) {
             let mut last_hash = state.last_content_hash.lock().unwrap();
             *last_hash = hash;
-            let _ = app_handle.emit("clipboard-set-from-history", ());
+            let _ = app_handle.emit("clipboard-set-from-history", true);
             Ok(())
         } else {
             Err("Failed to set clipboard content".to_string())
@@ -343,7 +389,12 @@ pub fn set_clipboard_content(
 pub fn get_clipboard_history(
     state: tauri::State<'_, Arc<ClipboardState>>,
 ) -> Result<Vec<ClipboardRecord>, String> {
-    let max_records = state.config.lock().unwrap().max_records;
+    let config = state.config.lock().unwrap().clone();
+    if !config.history_enabled {
+        return Ok(Vec::new());
+    }
+
+    let max_records = config.max_records;
     let cache = state.cache.lock().unwrap();
     let mut records = cache.get_all();
     if max_records > 0 && records.len() > max_records {

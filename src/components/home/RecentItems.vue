@@ -130,8 +130,14 @@ function getLaunchStatusByItem(item: HomeRecentDisplayItem, getter: (itemId: str
 </script>
 
 <style lang="scss" scoped>
+.home-section{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
 .home-section-header {
-    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
 }
 
 .home-section-title {

@@ -279,7 +279,7 @@
 
 @media (prefers-color-scheme: dark) {
   [data-effects-disabled="true"][data-theme="system"] {
-    --bg-color: rgba(19, 23, 31, 0.5);
+    --bg-color: rgba(19, 23, 31, 0.7);
     --card-bg: rgba(37, 41, 50, 0.9);
     --card-bg-solid: rgba(44, 49, 59, 0.94);
     --search-history-bg: rgba(44, 49, 59, 0.96);
@@ -299,7 +299,7 @@
 
 @media (prefers-color-scheme: light) {
   [data-effects-disabled="true"][data-theme="system"] {
-    --bg-color: rgba(241, 244, 250, 0.5);
+    --bg-color: rgba(241, 244, 250, 0.7);
     --card-bg: rgba(255, 255, 255, 0.91);
     --card-bg-solid: rgba(255, 255, 255, 0.95);
     --search-history-bg: rgba(255, 255, 255, 0.96);

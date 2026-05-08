@@ -231,7 +231,7 @@ let anchorFlashTimer: number | null = null;
 
 type ClipboardFilter = "all" | "favorites" | "text" | "code" | "image";
 type ClipboardGroupKey = "favorites" | "text" | "code" | "image";
-type ClipboardTabRegion = "search" | "filter" | "content";
+type ClipboardTabRegion = "search" | "filter" | "content" | "none";
 type ClipboardGroup = {
     key: ClipboardGroupKey;
     label: string;
@@ -308,6 +308,7 @@ watch(
 onMounted(() => {
     document.addEventListener("keydown", onClipboardKeydown, true);
     document.addEventListener("mousedown", onClipboardMouseDown, true);
+    searchInputRef.value?.addEventListener("blur", onSearchInputBlur);
     nextTick(() => {
         searchInputRef.value?.focus();
     });
@@ -316,6 +317,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
     document.removeEventListener("keydown", onClipboardKeydown, true);
     document.removeEventListener("mousedown", onClipboardMouseDown, true);
+    searchInputRef.value?.removeEventListener("blur", onSearchInputBlur);
 
     if (scrollAnimationFrame === null) {
         if (anchorFlashTimer !== null) {
@@ -435,11 +437,19 @@ function onBack() {
 }
 
 function resetTabCycleState() {
-    tabRegion.value = "search";
+    tabRegion.value = "none";
+    focusedFilterIndex.value = 0;
+    focusedRecordIndex.value = 0;
 }
 
 function blurSearchInput() {
     searchInputRef.value?.blur();
+}
+
+function onSearchInputBlur() {
+    if (tabRegion.value === "search") {
+        tabRegion.value = "none";
+    }
 }
 
 function setFilterChipRef(target: Element | ComponentPublicInstance | null, key: ClipboardFilter) {
@@ -466,11 +476,28 @@ function rotateTabRegion(reverse = false) {
     const order: ClipboardTabRegion[] = ["search", "filter", "content"];
     const step = reverse ? -1 : 1;
     const current = order.indexOf(tabRegion.value);
+    if (current < 0) {
+        if (reverse) {
+            tabRegion.value = "content";
+            blurSearchInput();
+            nextTick(() => {
+                scrollFocusedRecordIntoView();
+            });
+            return;
+        }
+        resetTabCycleState();
+        tabRegion.value = "search";
+        nextTick(() => {
+            searchInputRef.value?.focus();
+        });
+        return;
+    }
     const nextIndex = (current + step + order.length) % order.length;
     const nextRegion = order[nextIndex];
 
     if (nextRegion === "search") {
         resetTabCycleState();
+        tabRegion.value = "search";
         nextTick(() => {
             searchInputRef.value?.focus();
         });
@@ -586,43 +613,63 @@ function onClipboardKeydown(e: KeyboardEvent) {
 function onClipboardMouseDown(event: MouseEvent) {
     if (!(event.target instanceof Element)) return;
 
-    if (event.target.closest(".search-wrap")) {
-        tabRegion.value = "search";
+    const clickedBackButton = !!event.target.closest(".back-btn");
+    if (clickedBackButton) {
+        resetTabCycleState();
+        blurSearchInput();
         return;
     }
 
-    const filterNode = event.target.closest<HTMLElement>(".filter-chip[data-filter-key]");
-    if (filterNode) {
-        const key = filterNode.dataset.filterKey as ClipboardFilter | undefined;
+    if (!clipboardHistoryRef.value?.contains(event.target)) {
+        resetTabCycleState();
+        blurSearchInput();
+        return;
+    }
+
+    const clickedSearch = !!event.target.closest(".search-wrap");
+    const clickedFilter = event.target.closest<HTMLElement>(".filter-chip[data-filter-key]");
+    const clickedItem = event.target.closest<HTMLElement>(".history-item[data-item-id]");
+
+    const isOnCurrentKeyboardFocus = (() => {
+        if (tabRegion.value === "search") {
+            return clickedSearch;
+        }
+        if (tabRegion.value === "filter") {
+            const key = clickedFilter?.dataset.filterKey as ClipboardFilter | undefined;
+            return key === focusedFilterKey.value;
+        }
+        if (tabRegion.value === "content") {
+            const itemId = clickedItem?.dataset.itemId;
+            return itemId === focusedRecordId.value;
+        }
+        return false;
+    })();
+
+    if (tabRegion.value !== "none" && !isOnCurrentKeyboardFocus) {
+        resetTabCycleState();
+        if (!clickedSearch) {
+            blurSearchInput();
+        }
+        return;
+    }
+
+    if (clickedFilter) {
+        const key = clickedFilter.dataset.filterKey as ClipboardFilter | undefined;
         const index = filterOrder.value.findIndex((option) => option === key);
         if (index >= 0) {
             focusedFilterIndex.value = index;
         }
-        tabRegion.value = "filter";
         return;
     }
 
-    const itemNode = event.target.closest<HTMLElement>(".history-item[data-item-id]");
-    if (itemNode) {
-        const itemId = itemNode.dataset.itemId;
+    if (clickedItem) {
+        const itemId = clickedItem.dataset.itemId;
         if (itemId) {
             const index = flatVisibleRecords.value.findIndex((record) => record.id === itemId);
             if (index >= 0) {
                 focusedRecordIndex.value = index;
             }
         }
-        tabRegion.value = "content";
-        return;
-    }
-
-    const clickedBackButton = !!event.target.closest(".back-btn");
-    if (clickedBackButton) {
-        resetTabCycleState();
-        return;
-    }
-
-    if (!clipboardHistoryRef.value?.contains(event.target)) {
-        resetTabCycleState();
     }
 }
 
@@ -910,8 +957,8 @@ function animateScrollTo(container: HTMLElement, targetScrollTop: number) {
 }
 
 .search-wrap.is-keyboard-focus {
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 40%, transparent);
+    border: 1px solid var(--primary-color);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 35%, transparent);
 }
 
 .search-icon {
@@ -982,13 +1029,15 @@ function animateScrollTo(container: HTMLElement, targetScrollTop: number) {
 }
 
 .filter-chip.is-active {
-    border-color: var(--primary-color);
+    border-style: dashed;
+    border-color: color-mix(in srgb, var(--primary-color) 70%, transparent);
     background: var(--primary-bg);
     color: var(--primary-color);
 }
 
 .filter-chip.is-keyboard-focus {
-    box-shadow: 0 0 0 2px var(--primary-color, #0078d4) !important;
+    border: 1px solid var(--primary-color);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 35%, transparent);
 }
 
 .usage-hint {
@@ -1036,24 +1085,24 @@ function animateScrollTo(container: HTMLElement, targetScrollTop: number) {
 
 .history-item:hover {
     background: var(--card-bg-solid);
-    border-color: var(--primary-color);
+    border-color: color-mix(in srgb, var(--primary-color) 60%, transparent);
     box-shadow: var(--card-shadow);
 }
 
 .history-item.is-current {
     background: var(--primary-bg);
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 1px var(--primary-color);
+    border: 1px dashed color-mix(in srgb, var(--primary-color) 70%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 22%, transparent);
 }
 
 .history-item.is-keyboard-focus:not(.is-current) {
-    border: 2px dashed color-mix(in srgb, var(--primary-color) 70%, transparent);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 28%, transparent), var(--card-shadow);
+    border: 1px solid var(--primary-color);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 35%, transparent), var(--card-shadow);
 }
 
 .history-item.is-current.is-keyboard-focus {
-    outline: 2px dashed color-mix(in srgb, var(--primary-color) 80%, transparent);
-    outline-offset: 2px;
+    border: 1px solid var(--primary-color);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 40%, transparent), var(--card-shadow);
 }
 
 .history-item.is-anchor-flashing:not(.is-current) {

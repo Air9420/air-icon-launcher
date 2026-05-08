@@ -62,15 +62,24 @@ pub fn start_clipboard_monitor(app_handle: AppHandle, state: Arc<ClipboardState>
     let max_records = state.config.lock().unwrap().max_records;
     if let Some(db) = state.database.lock().unwrap().as_ref() {
         if max_records > 0 {
-            if let Ok(images) = db.enforce_max_records(max_records) {
-                for image_path in images {
-                    let _ = std::fs::remove_file(image_path);
+            let protected_hashes = state.favorite_hashes.lock().unwrap().clone();
+            if let Ok(pruned) =
+                db.enforce_max_records_with_protected(max_records, &protected_hashes)
+            {
+                for record in pruned {
+                    if let Some(image_path) = record.image_path {
+                        if !image_path.is_empty() {
+                            let _ = std::fs::remove_file(image_path);
+                        }
+                    }
                 }
             }
         }
 
         if let Ok(records) = db.get_all() {
             let mut cache = state.cache.lock().unwrap();
+            let mut records = records;
+            records.reverse();
             for record in records {
                 let clipboard_record: ClipboardRecord = record.into();
                 cache.push_with_limit(clipboard_record, max_records);

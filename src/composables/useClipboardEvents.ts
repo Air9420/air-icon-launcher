@@ -10,6 +10,8 @@ export function useClipboardEvents() {
     const { clipboardHistory: history } = storeToRefs(clipboardStore);
     const currentTime = ref(Date.now());
     let unlisten: (() => void) | null = null;
+    let unlistenSetFromHistory: (() => void) | null = null;
+    let skipNextClipboardChanged = false;
 
     function updateCurrentTime() {
         currentTime.value = Date.now();
@@ -96,7 +98,17 @@ export function useClipboardEvents() {
 
         await fetchCurrentClipboardHash();
 
+        unlistenSetFromHistory = await listen<boolean>("clipboard-set-from-history", (event) => {
+            if (event.payload) {
+                skipNextClipboardChanged = true;
+            }
+        });
+
         unlisten = await listen<ClipboardRecord>("clipboard-changed", (event) => {
+            if (skipNextClipboardChanged) {
+                skipNextClipboardChanged = false;
+                return;
+            }
             const currentHash = clipboardStore.currentClipboardHash;
             if (currentHash && event.payload.hash === currentHash) {
                 return;
@@ -110,6 +122,9 @@ export function useClipboardEvents() {
     onBeforeUnmount(() => {
         if (unlisten) {
             unlisten();
+        }
+        if (unlistenSetFromHistory) {
+            unlistenSetFromHistory();
         }
     });
 
