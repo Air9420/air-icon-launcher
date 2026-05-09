@@ -95,15 +95,15 @@
             <span class="browser-search-text">用浏览器搜索 "{{ keyword }}"</span>
         </div>
 
-        <template v-if="scannedSection && scannedSection.items && scannedSection.items.length > 0">
+        <template v-if="safeScannedItems.length > 0">
             <div class="scanned-section-divider">
                 <span class="scanned-section-title">
-                    <Folder size="16" weight="Bold" /> {{ scannedSection.sectionTitle }}（匹配 {{
-                        scannedSection.totalMatches }}）
+                    <Folder size="16" weight="Bold" /> {{ scannedSection?.sectionTitle ?? "电脑应用" }}（匹配 {{
+                        scannedSection?.totalMatches ?? safeScannedItems.length }}）
                 </span>
             </div>
-            <div class="search-result-list">
-                <div v-for="(entry, i) in scannedSection.items" :key="entry.path"
+            <div :key="scannedSectionRenderKey" class="search-result-list">
+                <div v-for="(entry, i) in safeScannedItems" :key="entry.path"
                     :ref="el => setItemRef(el, scannedStartIndex + i)" class="search-result-item scanned-item"
                     :class="{ 'is-selected': selectedIndex === scannedStartIndex + i }"
                     :data-menu-type="'Search-Scanned-Item'" :data-item-path="entry.path"
@@ -140,8 +140,8 @@
                     </div>
                 </div>
             </div>
-            <div v-if="scannedSection.totalMatches > safeScannedItems.length" class="scanned-more-hint">
-                + {{ scannedSection.totalMatches - safeScannedItems.length }} 个匹配
+            <div v-if="(scannedSection?.totalMatches ?? safeScannedItems.length) > safeScannedItems.length" class="scanned-more-hint">
+                + {{ (scannedSection?.totalMatches ?? safeScannedItems.length) - safeScannedItems.length }} 个匹配
             </div>
         </template>
 
@@ -259,6 +259,9 @@ const safeScannedItems = computed(() => props.scannedSection?.items ?? []);
 const commandResults = computed(() => props.commandResults ?? []);
 const clipboardResults = computed(() => props.clipboardResults ?? []);
 const recentFileResults = computed(() => props.recentFileResults ?? []);
+const scannedSectionRenderKey = computed(() => {
+    return safeScannedItems.value.map((entry) => entry.path).join("|");
+});
 
 const showBrowserSearch = computed(() => {
     return props.keyword.trim().length > 0 && (props.isPending || safeResults.value.length <= 3);
