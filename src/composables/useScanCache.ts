@@ -9,6 +9,9 @@ import { useLauncherStore } from "../stores/launcherStore";
 import { matchScannedApps, normalizePathKey } from "../utils/scan-fallback";
 
 const DEBUG_SCAN_CACHE = false;
+const RESOLVED_LNK_TARGET_STORAGE_KEY = "__resolved_lnk_target_cache__";
+
+type PersistedResolvedLnkTargets = Record<string, string>;
 
 function debugLog(...args: unknown[]) {
   if (DEBUG_SCAN_CACHE) {
@@ -29,6 +32,52 @@ const resolvedLnkTargetCache = new Map<string, string | null>();
 let launcherPathKeyCache: { fingerprint: string; keys: Set<string> } | null = null;
 const pendingResolvedLnkTargets = new Map<string, Promise<string | null>>();
 
+function getResolvedLnkCacheKey(path: string): string {
+  return normalizePathKey(path);
+}
+
+function readPersistedResolvedLnkTargets(): PersistedResolvedLnkTargets {
+  try {
+    const raw = localStorage.getItem(RESOLVED_LNK_TARGET_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const next: PersistedResolvedLnkTargets = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value !== "string") continue;
+      const trimmed = value.trim();
+      if (!trimmed) continue;
+      next[key] = trimmed;
+    }
+    return next;
+  } catch (error) {
+    debugWarn("failed to read persisted lnk cache:", error);
+    return {};
+  }
+}
+
+function writePersistedResolvedLnkTargets(): void {
+  try {
+    const entries: PersistedResolvedLnkTargets = {};
+    for (const [key, value] of resolvedLnkTargetCache.entries()) {
+      if (typeof value !== "string") continue;
+      const trimmed = value.trim();
+      if (!trimmed) continue;
+      entries[key] = trimmed;
+    }
+    localStorage.setItem(RESOLVED_LNK_TARGET_STORAGE_KEY, JSON.stringify(entries));
+  } catch (error) {
+    debugWarn("failed to persist lnk cache:", error);
+  }
+}
+
+function seedResolvedLnkTargetCache(): void {
+  if (resolvedLnkTargetCache.size > 0) return;
+  const persisted = readPersistedResolvedLnkTargets();
+  for (const [key, value] of Object.entries(persisted)) {
+    resolvedLnkTargetCache.set(key, value);
+  }
+}
+
 export function clearScanCacheStateForTests(): void {
   cachedScanResult = null;
   cacheLoadPromise = null;
@@ -41,6 +90,7 @@ export function clearScanCacheStateForTests(): void {
 export function useScanCache() {
   const isCacheReady = ref(false);
   const isLoading = ref(false);
+  seedResolvedLnkTargetCache();
 
   async function loadCache(): Promise<ScannedAppCache | null> {
     if (cachedScanResult) {
@@ -112,38 +162,42 @@ export function useScanCache() {
         if (!item.path) continue;
 
         let pathToAdd = item.resolvedPath || item.path;
+        const lnkCacheKey = getResolvedLnkCacheKey(item.path);
 
         if (item.path.toLowerCase().endsWith('.lnk')) {
           if (item.resolvedPath) {
             pathToAdd = item.resolvedPath;
-            resolvedLnkTargetCache.set(item.path, item.resolvedPath);
-          } else if (resolvedLnkTargetCache.has(item.path)) {
-            const cachedTarget = resolvedLnkTargetCache.get(item.path);
+            resolvedLnkTargetCache.set(lnkCacheKey, item.resolvedPath);
+            writePersistedResolvedLnkTargets();
+          } else if (resolvedLnkTargetCache.has(lnkCacheKey)) {
+            const cachedTarget = resolvedLnkTargetCache.get(lnkCacheKey);
             if (cachedTarget) {
               pathToAdd = cachedTarget;
+              launcherStore.setLauncherItemResolvedPath(categoryId, item.id, cachedTarget);
             }
           } else {
             try {
-              let pending = pendingResolvedLnkTargets.get(item.path);
+              let pending = pendingResolvedLnkTargets.get(lnkCacheKey);
               if (!pending) {
                 pending = invoke<string>('resolve_lnk_target', { path: item.path })
                   .then((result) => {
                     if (result.ok && result.value) {
-                      resolvedLnkTargetCache.set(item.path, result.value);
+                      resolvedLnkTargetCache.set(lnkCacheKey, result.value);
+                      writePersistedResolvedLnkTargets();
                       return result.value;
                     }
-                    resolvedLnkTargetCache.set(item.path, null);
+                    resolvedLnkTargetCache.set(lnkCacheKey, null);
                     return null;
                   })
                   .catch((e) => {
-                    resolvedLnkTargetCache.set(item.path, null);
+                    resolvedLnkTargetCache.set(lnkCacheKey, null);
                     debugWarn("failed to resolve lnk:", item.path, e);
                     return null;
                   })
                   .finally(() => {
-                    pendingResolvedLnkTargets.delete(item.path);
+                    pendingResolvedLnkTargets.delete(lnkCacheKey);
                   });
-                pendingResolvedLnkTargets.set(item.path, pending);
+                pendingResolvedLnkTargets.set(lnkCacheKey, pending);
               }
               const resolved = await pending;
               if (resolved) {

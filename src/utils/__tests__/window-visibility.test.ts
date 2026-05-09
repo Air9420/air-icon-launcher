@@ -1,17 +1,54 @@
 import { describe, expect, it } from "vitest";
 
-import { shouldSkipVisibleHydration } from "../window-visibility";
+import {
+    reconcileVisibleHydrationState,
+    shouldSkipVisibleHydration,
+} from "../window-visibility";
 
-describe("shouldSkipVisibleHydration", () => {
-  it("skips hydration while the window is hidden", () => {
-    expect(shouldSkipVisibleHydration("hidden", true)).toBe(true);
-  });
+describe("reconcileVisibleHydrationState", () => {
+    it("recovers from stale hidden state when the document is visibly focused", () => {
+        expect(
+            reconcileVisibleHydrationState("hidden", false, {
+                documentVisibilityState: "visible",
+                documentHasFocus: true,
+            })
+        ).toEqual({
+            visibilityState: "visible",
+            isWindowFocused: true,
+        });
 
-  it("skips hydration while the window is visible but not focused", () => {
-    expect(shouldSkipVisibleHydration("visible", false)).toBe(true);
-  });
+        expect(
+            shouldSkipVisibleHydration("hidden", false, {
+                documentVisibilityState: "visible",
+                documentHasFocus: true,
+            })
+        ).toBe(false);
+    });
 
-  it("allows hydration only when the window is visible and focused", () => {
-    expect(shouldSkipVisibleHydration("visible", true)).toBe(false);
-  });
+    it("treats hidden documents as non-hydratable", () => {
+        expect(
+            reconcileVisibleHydrationState("visible", true, {
+                documentVisibilityState: "hidden",
+                documentHasFocus: false,
+            })
+        ).toEqual({
+            visibilityState: "hidden",
+            isWindowFocused: false,
+        });
+
+        expect(
+            shouldSkipVisibleHydration("visible", true, {
+                documentVisibilityState: "hidden",
+                documentHasFocus: false,
+            })
+        ).toBe(true);
+    });
+
+    it("falls back to stored window state when no document hints are available", () => {
+        expect(reconcileVisibleHydrationState("visible", false)).toEqual({
+            visibilityState: "visible",
+            isWindowFocused: false,
+        });
+        expect(shouldSkipVisibleHydration("visible", false)).toBe(true);
+    });
 });

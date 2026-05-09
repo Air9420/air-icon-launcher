@@ -11,6 +11,21 @@ vi.mock("../../utils/invoke-wrapper", () => ({
 
 import * as invokeWrapper from "../../utils/invoke-wrapper";
 
+const RESOLVED_LNK_TARGET_STORAGE_KEY = "__resolved_lnk_target_cache__";
+const localStorageStore = new Map<string, string>();
+
+vi.stubGlobal("localStorage", {
+  getItem(key: string) {
+    return localStorageStore.has(key) ? localStorageStore.get(key)! : null;
+  },
+  setItem(key: string, value: string) {
+    localStorageStore.set(key, value);
+  },
+  removeItem(key: string) {
+    localStorageStore.delete(key);
+  },
+});
+
 const mockApps: ScannedAppEntry[] = [
   { name: "Visual Studio Code", path: "C:\\Apps\\Code.exe", source: "注册表", publisher: "Microsoft", iconBase64: null, namePinyinFull: "", namePinyinInitial: "" },
   { name: "Adobe Photoshop 2025", path: "C:\\Adobe\\Photoshop.exe", source: "注册表", publisher: "Adobe", iconBase64: null, namePinyinFull: "", namePinyinInitial: "" },
@@ -27,6 +42,9 @@ const launcherPaths = new Set<string>([normalizePathKey("C:\\Apps\\Code.exe")]);
 describe("matchScannedApps", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.clearAllMocks();
+    localStorageStore.clear();
+    localStorage.removeItem(RESOLVED_LNK_TARGET_STORAGE_KEY);
     setActivePinia(createPinia());
     clearScanCacheStateForTests();
   });
@@ -267,5 +285,95 @@ describe("matchScannedApps", () => {
     expect(invokeWrapper.invoke).toHaveBeenCalledWith("resolve_lnk_target", {
       path: "C:\\Apps\\Chrome.lnk",
     });
+  });
+
+  it("reuses persisted lnk target cache after scan-cache state is recreated", async () => {
+    const store = useLauncherStore();
+    await store.importLauncherItems({
+      "cat-1": [
+        {
+          id: "item-1",
+          name: "Chrome Shortcut",
+          path: "C:\\Apps\\Chrome.lnk",
+          itemType: "file",
+          isDirectory: false,
+          iconBase64: null,
+          hasCustomIcon: false,
+          launchDependencies: [],
+          launchDelaySeconds: 0,
+        },
+      ],
+    });
+
+    const invokeSpy = vi.spyOn(invokeWrapper, "invoke");
+    invokeSpy
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          apps: [
+            {
+              name: "Google Chrome",
+              path: "C:\\Google\\Chrome.exe",
+              source: "桌面",
+              publisher: "Google",
+              iconBase64: null,
+              namePinyinFull: "",
+              namePinyinInitial: "",
+            },
+          ],
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        ok: true,
+        value: "C:\\Google\\Chrome.exe",
+      } as any);
+
+    const firstCache = useScanCache();
+    expect(await firstCache.getFallbackSection("chrome")).toBeNull();
+    expect(store.getLauncherItemById("cat-1", "item-1")?.resolvedPath).toBe(
+      "C:\\Google\\Chrome.exe"
+    );
+
+    clearScanCacheStateForTests();
+    await store.importLauncherItems({
+      "cat-1": [
+        {
+          id: "item-1",
+          name: "Chrome Shortcut",
+          path: "C:\\Apps\\Chrome.lnk",
+          itemType: "file",
+          isDirectory: false,
+          iconBase64: null,
+          hasCustomIcon: false,
+          launchDependencies: [],
+          launchDelaySeconds: 0,
+        },
+      ],
+    });
+    invokeSpy.mockClear();
+
+    invokeSpy.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        apps: [
+          {
+            name: "Google Chrome",
+            path: "C:\\Google\\Chrome.exe",
+            source: "桌面",
+            publisher: "Google",
+            iconBase64: null,
+            namePinyinFull: "",
+            namePinyinInitial: "",
+          },
+        ],
+      },
+    } as any);
+
+    const secondCache = useScanCache();
+    expect(await secondCache.getFallbackSection("chrome")).toBeNull();
+    expect(invokeSpy.mock.calls.filter(([command]) => command === "resolve_lnk_target")).toHaveLength(0);
+    expect(store.getLauncherItemById("cat-1", "item-1")?.resolvedPath).toBe(
+      "C:\\Google\\Chrome.exe"
+    );
   });
 });

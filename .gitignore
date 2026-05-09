@@ -55,3 +55,4 @@ src-tauri/*.rpm
 
 CLAUDE.md
 .artifacts
+.claude

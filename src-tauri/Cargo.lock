@@ -41,6 +41,7 @@ dependencies = [
  "image",
  "once_cell",
  "pinyin",
+ "quick-xml",
  "rayon",
  "regex",
  "reqwest 0.12.28",

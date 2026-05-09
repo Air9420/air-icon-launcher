@@ -191,8 +191,13 @@ import { showToast } from "../composables/useGlobalToast";
 import { invokeOrThrow } from "../utils/invoke-wrapper";
 import { launchStoredItem } from "../utils/launcher-service";
 import { SEARCH_THROTTLE_MS } from "../utils/search-config";
+import { buildSearchIconHydrationPlan } from "../utils/search-icon-hydration";
 import { openPathWithSystem } from "../utils/system-commands";
-import { shouldSkipVisibleHydration, type WindowVisibilityState } from "../utils/window-visibility";
+import {
+    reconcileVisibleHydrationState,
+    shouldSkipVisibleHydration,
+    type WindowVisibilityState,
+} from "../utils/window-visibility";
 import {
     createSearchSelectionTarget,
     findSearchSelectionIndex,
@@ -428,13 +433,17 @@ function normalizeKeywordTokens(keyword: string): string[] {
         .filter((token) => token.length > 0);
 }
 
-function collectVisibleSearchHydrationTargets(results: GlobalSearchMergedResult[]): Array<{ categoryId: string; itemId: string }> {
-    return results
-        .slice(0, SEARCH_ICON_HYDRATION_LIMIT)
-        .map((result) => ({
-            categoryId: result.primaryCategoryId,
-            itemId: result.item.id,
-        }));
+function collectVisibleRecentFileHydrationPaths(rows: RecentFileSearchResult[]): string[] {
+    const missingPaths: string[] = [];
+    const seen = new Set<string>();
+    for (const row of rows.slice(0, RECENT_FILE_ICON_HYDRATION_LIMIT)) {
+        if (normalizeIconBase64(row.iconBase64)) continue;
+        const normalizedPath = normalizePathKey(row.path);
+        if (!normalizedPath || seen.has(normalizedPath)) continue;
+        seen.add(normalizedPath);
+        missingPaths.push(row.path);
+    }
+    return missingPaths;
 }
 
 function collectVisibleHomeHydrationTargets(
@@ -476,6 +485,58 @@ function getSearchResultIconMaxEdge(): number | undefined {
 
 function getHomeIconMaxEdge(): number | undefined {
     return resolveVisibleIconMaxEdge('.home-card[data-home-section] .home-card-icon');
+}
+
+function queryVisibleNodes(selector: string): HTMLElement[] {
+    if (typeof document === "undefined") {
+        return [];
+    }
+
+    const viewportTop = 0;
+    const viewportBottom = window.innerHeight;
+    return Array.from(document.querySelectorAll<HTMLElement>(selector))
+        .filter((node) => {
+            const rect = node.getBoundingClientRect();
+            return rect.bottom > viewportTop && rect.top < viewportBottom;
+        });
+}
+
+function collectVisibleSearchResultTargets(): Array<{ categoryId: string; itemId: string }> {
+    return queryVisibleNodes('.search-result-list .search-result-item[data-item-id][data-category-id]')
+        .map((node) => {
+            const categoryId = node.dataset.categoryId?.trim() ?? "";
+            const itemId = node.dataset.itemId?.trim() ?? "";
+            if (!categoryId || !itemId) return null;
+            return { categoryId, itemId };
+        })
+        .filter((target): target is { categoryId: string; itemId: string } => !!target);
+}
+
+function collectVisibleRecentFileResultPaths(): string[] {
+    return queryVisibleNodes('.search-result-list .search-result-item[data-menu-type="Search-Recent-File-Item"][data-item-path]')
+        .map((node) => node.dataset.itemPath?.trim() ?? "")
+        .filter((path) => !!path);
+}
+
+function getDocumentVisibilityHints() {
+    if (typeof document === "undefined") {
+        return {};
+    }
+
+    return {
+        documentVisibilityState: document.visibilityState === "hidden" ? "hidden" : "visible",
+        documentHasFocus: document.hasFocus(),
+    } as const;
+}
+
+function syncVisibleHydrationState(): void {
+    const reconciled = reconcileVisibleHydrationState(
+        windowVisibility.value,
+        isWindowFocused.value,
+        getDocumentVisibilityHints()
+    );
+    windowVisibility.value = reconciled.visibilityState;
+    isWindowFocused.value = reconciled.isWindowFocused;
 }
 
 function includesAllTokens(target: string, tokens: string[]): boolean {
@@ -656,8 +717,11 @@ onMounted(async () => {
             return;
         }
 
+        windowVisibility.value = "visible";
+
         nextTick(() => {
             searchBoxRef.value?.focus();
+            hydrateVisibleSearchResultIcons();
         });
     });
 
@@ -672,6 +736,7 @@ onMounted(async () => {
         selectedIndex.value = -1;
         nextTick(() => {
             searchBoxRef.value?.focus();
+            hydrateVisibleSearchResultIcons();
         });
     });
 
@@ -687,9 +752,11 @@ onMounted(async () => {
     window.addEventListener("pointerup", onExternalConvertPointerUp, true);
     window.addEventListener("pointercancel", cancelExternalConvertDrag, true);
     window.addEventListener("blur", onWindowBlur);
+    window.addEventListener("scroll", hydrateVisibleSearchResultIcons, true);
 });
 
 async function loadRecentFileCandidates(): Promise<void> {
+    syncVisibleHydrationState();
     if (windowVisibility.value !== "visible") return;
     try {
         const rows = await invokeOrThrow<RecentFileRow[]>("get_recent_files", {
@@ -715,17 +782,9 @@ async function loadRecentFileCandidates(): Promise<void> {
 }
 
 async function hydrateRecentFileCandidateIcons(rows: RecentFileSearchResult[]): Promise<void> {
-    if (shouldSkipVisibleHydration(windowVisibility.value, isWindowFocused.value)) return;
-    const missingPaths: string[] = [];
-    const seen = new Set<string>();
-    for (const row of rows.slice(0, RECENT_FILE_ICON_HYDRATION_LIMIT)) {
-        if (normalizeIconBase64(row.iconBase64)) continue;
-        const normalizedPath = normalizePathKey(row.path);
-        if (!normalizedPath || seen.has(normalizedPath)) continue;
-        seen.add(normalizedPath);
-        missingPaths.push(row.path);
-    }
-
+    syncVisibleHydrationState();
+    if (shouldSkipVisibleHydration(windowVisibility.value, isWindowFocused.value, getDocumentVisibilityHints())) return;
+    const missingPaths = collectVisibleRecentFileHydrationPaths(rows);
     if (missingPaths.length === 0) return;
 
     const requestId = ++recentFileIconHydrationRequestId;
@@ -750,6 +809,39 @@ async function hydrateRecentFileCandidateIcons(rows: RecentFileSearchResult[]): 
         writeRecentFileCandidatesCache(mergedRows);
     } catch (error) {
         console.warn("Failed to hydrate recent file icons:", error);
+    }
+}
+
+function hydrateVisibleSearchResultIcons(): void {
+    syncVisibleHydrationState();
+    const plan = buildSearchIconHydrationPlan({
+        keyword: searchKeyword.value,
+        visibilityState: windowVisibility.value,
+        isWindowFocused: isWindowFocused.value,
+        launcherLimit: SEARCH_ICON_HYDRATION_LIMIT,
+        recentFileLimit: RECENT_FILE_ICON_HYDRATION_LIMIT,
+        launcherResults: currentSearchResults.value,
+        recentFileResults: recentFileSearchResults.value,
+        visibleLauncherTargets: collectVisibleSearchResultTargets(),
+        visibleRecentFilePaths: collectVisibleRecentFileResultPaths(),
+    });
+
+    if (plan.launcherTargets.length > 0) {
+        void store.hydrateLauncherIconsForVisibleItems(plan.launcherTargets, {
+            maxEdge: getSearchResultIconMaxEdge(),
+        });
+    }
+
+    if (plan.recentFilePaths.length === 0) return;
+
+    const rowByPath = new Map(
+        recentFileCandidates.value.map((row) => [normalizePathKey(row.path), row] as const)
+    );
+    const rows = plan.recentFilePaths
+        .map((path) => rowByPath.get(normalizePathKey(path)))
+        .filter((row): row is RecentFileSearchResult => !!row);
+    if (rows.length > 0) {
+        void hydrateRecentFileCandidateIcons(rows);
     }
 }
 
@@ -782,8 +874,10 @@ async function primeSearchResources(): Promise<void> {
 }
 
 function onWindowBlur(): void {
-    windowVisibility.value = "hidden";
-    isWindowFocused.value = false;
+    const hints = getDocumentVisibilityHints();
+    const reconciled = reconcileVisibleHydrationState("hidden", false, hints);
+    windowVisibility.value = reconciled.visibilityState;
+    isWindowFocused.value = reconciled.isWindowFocused;
 }
 
 onUnmounted(() => {
@@ -797,6 +891,7 @@ onUnmounted(() => {
     document.removeEventListener("keyup", onKeyup);
     document.removeEventListener("mousedown", onDocumentMouseDown, true);
     window.removeEventListener("blur", onWindowBlur);
+    window.removeEventListener("scroll", hydrateVisibleSearchResultIcons, true);
     window.removeEventListener(
         EXTERNAL_CONVERT_DRAG_EVENT,
         onExternalConvertDragStart as EventListener
@@ -1271,21 +1366,17 @@ const throttledRustSearch = useThrottleFn(async (keyword: string, requestId: num
         rustSearchResults.value = results;
         debugLog("results length:", results.length, "keyword:", keyword);
 
-        if (results.length <= 3) {
-            debugLog("awaiting fallback section for:", keyword);
-            const fallbackSection = await fallbackPromise;
-            if (requestId !== homeSearchRequestId) return;
-            scannedFallbackSection.value = fallbackSection;
-            if (fallbackSection) {
-                void hydrateSectionIcons(fallbackSection).then((hydratedSection) => {
-                    if (requestId !== homeSearchRequestId) return;
-                    scannedFallbackSection.value = hydratedSection;
-                });
-            }
-            debugLog("fallback result:", !!scannedFallbackSection.value, scannedFallbackSection.value?.items?.length);
-        } else {
-            scannedFallbackSection.value = null;
+        debugLog("awaiting fallback section for:", keyword);
+        const fallbackSection = await fallbackPromise;
+        if (requestId !== homeSearchRequestId) return;
+        scannedFallbackSection.value = fallbackSection;
+        if (fallbackSection) {
+            void hydrateSectionIcons(fallbackSection).then((hydratedSection) => {
+                if (requestId !== homeSearchRequestId) return;
+                scannedFallbackSection.value = hydratedSection;
+            });
         }
+        debugLog("fallback result:", !!scannedFallbackSection.value, scannedFallbackSection.value?.items?.length);
     } catch (e) {
         console.warn("Launcher search error:", e);
         if (requestId === homeSearchRequestId) {
@@ -1764,8 +1855,8 @@ const totalSearchItemCount = computed(() => {
 });
 
 watch(
-    currentSearchResults,
-    (results) => {
+    [currentSearchResults, recentFileSearchResults],
+    ([results]) => {
         if (pendingHomeSearchSelection && !isHomeSearchPending.value) {
             selectedIndex.value = findSearchSelectionIndex(
                 results,
@@ -1775,11 +1866,7 @@ watch(
         }
 
         if (!searchKeyword.value.trim()) return;
-        if (shouldSkipVisibleHydration(windowVisibility.value, isWindowFocused.value)) return;
-        const targets = collectVisibleSearchHydrationTargets(results);
-        void store.hydrateLauncherIconsForVisibleItems(targets, {
-            maxEdge: getSearchResultIconMaxEdge(),
-        });
+        hydrateVisibleSearchResultIcons();
     },
     { immediate: true }
 );
@@ -1817,7 +1904,8 @@ watch(
     [pinnedMergedItems, mergedRecentDisplayItems, searchKeyword],
     ([pinned, recent, keyword]) => {
         if (keyword.trim()) return;
-        if (shouldSkipVisibleHydration(windowVisibility.value, isWindowFocused.value)) return;
+        syncVisibleHydrationState();
+        if (shouldSkipVisibleHydration(windowVisibility.value, isWindowFocused.value, getDocumentVisibilityHints())) return;
         const targets = collectVisibleHomeHydrationTargets(pinned, recent);
         void store.hydrateLauncherIconsForVisibleItems(targets, {
             maxEdge: getHomeIconMaxEdge(),
