@@ -264,7 +264,7 @@ describe("matchScannedApps", () => {
     expect(store.getLauncherItemById("cat-1", "item-1")?.resolvedPath).toBe(
       "C:\\Google\\Chrome.exe"
     );
-    expect(invokeWrapper.invoke).toHaveBeenNthCalledWith(2, "resolve_lnk_target", {
+    expect(invokeWrapper.invoke).toHaveBeenCalledWith("resolve_lnk_target", {
       path: "C:\\Apps\\Chrome.lnk",
     });
   });

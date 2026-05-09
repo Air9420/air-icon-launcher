@@ -339,6 +339,7 @@ import SearchBox from "../components/SearchBox.vue";
 import { launchStoredItem } from "../utils/launcher-service";
 import { SEARCH_THROTTLE_MS } from "../utils/search-config";
 import { collectVisibleGridHydrationTargets } from "../utils/icon-hydration-window";
+import { shouldSkipVisibleHydration, type WindowVisibilityState } from "../utils/window-visibility";
 
 const props = defineProps<{
     categoryId: string;
@@ -375,6 +376,7 @@ type LaunchStatus = "launching" | "success";
 const launchStatusMap = ref<Map<string, LaunchStatus>>(new Map());
 const hideName = computed(() => (launcherCols.value ?? 5) >= 6);
 const isSearchActive = computed(() => localSearchKeyword.value.trim().length > 0);
+const windowVisibility = ref<WindowVisibilityState>("visible");
 type CategoryTabRegion = "search" | "items" | "back";
 const tabRegion = ref<CategoryTabRegion>("search");
 const isLauncherKeyboardNavActive = ref(false);
@@ -402,21 +404,28 @@ let removeWindowResizeListener: (() => void) | null = null;
 onMounted(async () => {
     const win = getCurrentWindow();
     try {
+        windowVisibility.value = (await win.isVisible()) ? "visible" : "hidden";
         isWindowFocused.value = await win.isFocused();
     } catch {
+        windowVisibility.value = "visible";
         isWindowFocused.value = true;
     }
 
     unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
         isWindowFocused.value = focused;
         if (focused) {
+            windowVisibility.value = "visible";
             nextTick(() => {
                 searchBoxRef.value?.focus();
             });
+        } else {
+            windowVisibility.value = "hidden";
         }
     });
 
     unlistenShow = await listen("window-shown", () => {
+        windowVisibility.value = "visible";
+        isWindowFocused.value = true;
         localSearchKeyword.value = "";
         categorySearchResults.value = [];
         isCategorySearchPending.value = false;
@@ -583,6 +592,7 @@ function getVisibleIconMaxEdge(): number | undefined {
 }
 
 const scheduleVisibleIconHydration = useThrottleFn(() => {
+    if (shouldSkipVisibleHydration(windowVisibility.value, isWindowFocused.value)) return;
     const targets = getVisibleHydrationTargets();
     if (targets.length === 0) return;
     void store.hydrateLauncherIconsForVisibleItems(targets, {

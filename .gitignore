@@ -54,3 +54,4 @@ src-tauri/*.deb
 src-tauri/*.rpm
 
 CLAUDE.md
+.artifacts

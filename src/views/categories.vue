@@ -192,6 +192,7 @@ import { invokeOrThrow } from "../utils/invoke-wrapper";
 import { launchStoredItem } from "../utils/launcher-service";
 import { SEARCH_THROTTLE_MS } from "../utils/search-config";
 import { openPathWithSystem } from "../utils/system-commands";
+import { shouldSkipVisibleHydration, type WindowVisibilityState } from "../utils/window-visibility";
 import {
     createSearchSelectionTarget,
     findSearchSelectionIndex,
@@ -330,6 +331,7 @@ const searchShellRef = ref<HTMLElement | null>(null);
 const selectedIndex = ref(-1);
 const isSearchHistoryOpen = ref(false);
 const isHomeSearchPending = ref(false);
+const isWindowFocused = ref(true);
 const showShortcutHints = ref(false);
 const stableRecentDisplayItems = ref<HomeRecentDisplayItem[]>([]);
 type HomeFocusRegion = "pinned" | "recent" | "category";
@@ -350,6 +352,7 @@ const RECENT_FILE_ICON_HYDRATION_LIMIT = 12;
 let recentFileIconHydrationRequestId = 0;
 let recentStabilizeTimer: ReturnType<typeof setTimeout> | null = null;
 const RECENT_STABILIZE_DELAY_MS = 280;
+const RECENT_FILE_CACHE_STALE_MS = 10 * 60 * 1000;
 const externalConvertDragVisible = ref(false);
 const externalConvertDragPath = ref("");
 const externalConvertDragName = ref("");
@@ -362,6 +365,8 @@ const externalConvertGhostStyle = computed(() => ({
     left: `${externalConvertPointerX.value}px`,
     top: `${externalConvertPointerY.value}px`,
 }));
+const windowVisibility = ref<WindowVisibilityState>("visible");
+const hasPrimedSearchResources = ref(false);
 
 function hasSameRecentKeyOrder(
     prev: HomeRecentDisplayItem[],
@@ -624,6 +629,13 @@ onClickOutside(searchShellRef, () => {
 
 onMounted(async () => {
     const win = getCurrentWindow();
+    try {
+        windowVisibility.value = (await win.isVisible()) ? "visible" : "hidden";
+        isWindowFocused.value = await win.isFocused();
+    } catch {
+        windowVisibility.value = "visible";
+        isWindowFocused.value = true;
+    }
 
     if (searchExtensionsStore.recentFileCandidates.length > 0) {
         recentFileCandidates.value = [...searchExtensionsStore.recentFileCandidates];
@@ -631,24 +643,12 @@ onMounted(async () => {
         recentFileCandidates.value = readRecentFileCandidatesCache();
     }
 
-    void loadRecentFileCandidates();
-    if (!ensureIndexPromise) {
-        ensureIndexPromise = store.syncSearchIndex().finally(() => {
-            ensureIndexPromise = null;
-        });
-    }
-    void ensureIndexPromise;
-    void loadCache().catch((error) => {
-        console.warn("Failed to preload scan cache:", error);
-    });
-    void warmLauncherPathKeys().catch((error) => {
-        console.warn("Failed to warm launcher path keys:", error);
-    });
     document.addEventListener("keydown", onKeydown);
     document.addEventListener("keyup", onKeyup);
     document.addEventListener("mousedown", onDocumentMouseDown, true);
 
     unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
+        isWindowFocused.value = focused;
         if (!focused) {
             showShortcutHints.value = false;
             closeSearchHistoryPanel();
@@ -662,6 +662,8 @@ onMounted(async () => {
     });
 
     unlistenShow = await listen("window-shown", () => {
+        windowVisibility.value = "visible";
+        isWindowFocused.value = true;
         closeSearchHistoryPanel();
         isHomeSearchPending.value = false;
         pendingHomeSearchSelection = null;
@@ -684,9 +686,11 @@ onMounted(async () => {
     window.addEventListener("pointermove", onExternalConvertPointerMove, true);
     window.addEventListener("pointerup", onExternalConvertPointerUp, true);
     window.addEventListener("pointercancel", cancelExternalConvertDrag, true);
+    window.addEventListener("blur", onWindowBlur);
 });
 
 async function loadRecentFileCandidates(): Promise<void> {
+    if (windowVisibility.value !== "visible") return;
     try {
         const rows = await invokeOrThrow<RecentFileRow[]>("get_recent_files", {
             limit: 80,
@@ -711,6 +715,7 @@ async function loadRecentFileCandidates(): Promise<void> {
 }
 
 async function hydrateRecentFileCandidateIcons(rows: RecentFileSearchResult[]): Promise<void> {
+    if (shouldSkipVisibleHydration(windowVisibility.value, isWindowFocused.value)) return;
     const missingPaths: string[] = [];
     const seen = new Set<string>();
     for (const row of rows.slice(0, RECENT_FILE_ICON_HYDRATION_LIMIT)) {
@@ -748,6 +753,39 @@ async function hydrateRecentFileCandidateIcons(rows: RecentFileSearchResult[]): 
     }
 }
 
+function shouldRefreshRecentFileCandidates(): boolean {
+    if (searchExtensionsStore.recentFileCandidates.length === 0) return true;
+    const loadedAt = searchExtensionsStore.recentFileCandidatesLoadedAt;
+    if (!Number.isFinite(loadedAt) || loadedAt <= 0) return true;
+    return Date.now() - loadedAt > RECENT_FILE_CACHE_STALE_MS;
+}
+
+async function primeSearchResources(): Promise<void> {
+    if (hasPrimedSearchResources.value) return;
+    hasPrimedSearchResources.value = true;
+
+    if (shouldRefreshRecentFileCandidates()) {
+        void loadRecentFileCandidates();
+    }
+    if (!ensureIndexPromise) {
+        ensureIndexPromise = store.syncSearchIndex().finally(() => {
+            ensureIndexPromise = null;
+        });
+    }
+    void ensureIndexPromise;
+    void loadCache().catch((error) => {
+        console.warn("Failed to preload scan cache:", error);
+    });
+    void warmLauncherPathKeys().catch((error) => {
+        console.warn("Failed to warm launcher path keys:", error);
+    });
+}
+
+function onWindowBlur(): void {
+    windowVisibility.value = "hidden";
+    isWindowFocused.value = false;
+}
+
 onUnmounted(() => {
     if (unlistenFocus) unlistenFocus();
     if (unlistenShow) unlistenShow();
@@ -758,6 +796,7 @@ onUnmounted(() => {
     document.removeEventListener("keydown", onKeydown);
     document.removeEventListener("keyup", onKeyup);
     document.removeEventListener("mousedown", onDocumentMouseDown, true);
+    window.removeEventListener("blur", onWindowBlur);
     window.removeEventListener(
         EXTERNAL_CONVERT_DRAG_EVENT,
         onExternalConvertDragStart as EventListener
@@ -1262,6 +1301,7 @@ const throttledRustSearch = useThrottleFn(async (keyword: string, requestId: num
 let ensureIndexPromise: Promise<void> | null = null;
 
 async function ensureRustSearchReady(): Promise<boolean> {
+    await primeSearchResources();
     if (isRustSearchReady.value) return true;
     if (!ensureIndexPromise) {
         ensureIndexPromise = store.syncSearchIndex().finally(() => {
@@ -1735,6 +1775,7 @@ watch(
         }
 
         if (!searchKeyword.value.trim()) return;
+        if (shouldSkipVisibleHydration(windowVisibility.value, isWindowFocused.value)) return;
         const targets = collectVisibleSearchHydrationTargets(results);
         void store.hydrateLauncherIconsForVisibleItems(targets, {
             maxEdge: getSearchResultIconMaxEdge(),
@@ -1776,6 +1817,7 @@ watch(
     [pinnedMergedItems, mergedRecentDisplayItems, searchKeyword],
     ([pinned, recent, keyword]) => {
         if (keyword.trim()) return;
+        if (shouldSkipVisibleHydration(windowVisibility.value, isWindowFocused.value)) return;
         const targets = collectVisibleHomeHydrationTargets(pinned, recent);
         void store.hydrateLauncherIconsForVisibleItems(targets, {
             maxEdge: getHomeIconMaxEdge(),
