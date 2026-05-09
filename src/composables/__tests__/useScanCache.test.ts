@@ -1,6 +1,15 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScannedAppEntry } from "../../types/scan-cache";
 import { matchScannedApps, normalizePathKey } from "../../utils/scan-fallback";
+import { createPinia, setActivePinia } from "pinia";
+import { useLauncherStore } from "../../stores/launcherStore";
+import { clearScanCacheStateForTests, useScanCache } from "../useScanCache";
+
+vi.mock("../../utils/invoke-wrapper", () => ({
+  invoke: vi.fn(),
+}));
+
+import * as invokeWrapper from "../../utils/invoke-wrapper";
 
 const mockApps: ScannedAppEntry[] = [
   { name: "Visual Studio Code", path: "C:\\Apps\\Code.exe", source: "注册表", publisher: "Microsoft", iconBase64: null, namePinyinFull: "", namePinyinInitial: "" },
@@ -16,6 +25,12 @@ const mockApps: ScannedAppEntry[] = [
 const launcherPaths = new Set<string>([normalizePathKey("C:\\Apps\\Code.exe")]);
 
 describe("matchScannedApps", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    setActivePinia(createPinia());
+    clearScanCacheStateForTests();
+  });
+
   it("matches exact name", () => {
     const results = matchScannedApps("Steam", mockApps, launcherPaths);
     expect(results).toHaveLength(1);
@@ -155,5 +170,102 @@ describe("matchScannedApps", () => {
     } as ScannedAppEntry));
     const results = matchScannedApps("App", bigApps, new Set());
     expect(results).toHaveLength(8);
+  });
+
+  it("uses stored resolvedPath for lnk launcher dedupe without resolving again", async () => {
+    const store = useLauncherStore();
+    await store.importLauncherItems({
+      "cat-1": [
+        {
+          id: "item-1",
+          name: "Chrome Shortcut",
+          path: "C:\\Apps\\Chrome.lnk",
+          resolvedPath: "C:\\Google\\Chrome.exe",
+          itemType: "file",
+          isDirectory: false,
+          iconBase64: null,
+          hasCustomIcon: false,
+          launchDependencies: [],
+          launchDelaySeconds: 0,
+        },
+      ],
+    });
+
+    vi.spyOn(invokeWrapper, "invoke")
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          apps: [
+            {
+              name: "Google Chrome",
+              path: "C:\\Google\\Chrome.exe",
+              source: "桌面",
+              publisher: "Google",
+              iconBase64: null,
+              namePinyinFull: "",
+              namePinyinInitial: "",
+            },
+          ],
+        },
+      } as any);
+
+    const cache = useScanCache();
+    const section = await cache.getFallbackSection("chrome");
+
+    expect(section).toBeNull();
+    expect(invokeWrapper.invoke).toHaveBeenCalledTimes(1);
+    expect(invokeWrapper.invoke).toHaveBeenCalledWith("read_scan_cache");
+  });
+
+  it("persists resolvedPath after first lnk dedupe resolution", async () => {
+    const store = useLauncherStore();
+    await store.importLauncherItems({
+      "cat-1": [
+        {
+          id: "item-1",
+          name: "Chrome Shortcut",
+          path: "C:\\Apps\\Chrome.lnk",
+          itemType: "file",
+          isDirectory: false,
+          iconBase64: null,
+          hasCustomIcon: false,
+          launchDependencies: [],
+          launchDelaySeconds: 0,
+        },
+      ],
+    });
+
+    vi.spyOn(invokeWrapper, "invoke")
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          apps: [
+            {
+              name: "Google Chrome",
+              path: "C:\\Google\\Chrome.exe",
+              source: "桌面",
+              publisher: "Google",
+              iconBase64: null,
+              namePinyinFull: "",
+              namePinyinInitial: "",
+            },
+          ],
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        ok: true,
+        value: "C:\\Google\\Chrome.exe",
+      } as any);
+
+    const cache = useScanCache();
+    const section = await cache.getFallbackSection("chrome");
+
+    expect(section).toBeNull();
+    expect(store.getLauncherItemById("cat-1", "item-1")?.resolvedPath).toBe(
+      "C:\\Google\\Chrome.exe"
+    );
+    expect(invokeWrapper.invoke).toHaveBeenNthCalledWith(2, "resolve_lnk_target", {
+      path: "C:\\Apps\\Chrome.lnk",
+    });
   });
 });

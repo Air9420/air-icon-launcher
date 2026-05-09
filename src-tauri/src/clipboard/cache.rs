@@ -45,6 +45,7 @@ impl ClipboardCache {
         let _ = self.enforce_max_records(max_records);
     }
 
+    #[allow(dead_code)]
     pub fn push(&mut self, record: ClipboardRecord) {
         self.push_with_limit(record, 1000);
     }

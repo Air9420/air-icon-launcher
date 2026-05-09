@@ -439,7 +439,7 @@ fn get_recent_files_windows(limit: usize, include_icons: bool) -> AppResult<Vec<
         }
 
         let icon_base64 = if include_icons {
-            crate::drag::extract_icons_from_paths(vec![target_path_str.clone()])
+                crate::drag::extract_icons_from_paths(vec![target_path_str.clone()], None)
                 .into_iter()
                 .next()
                 .flatten()
@@ -531,6 +531,7 @@ pub fn open_browser_search(query: String) -> AppResult<()> {
         return open_url(fallback_url);
     }
 
+    #[cfg(not(target_os = "windows"))]
     open_url(query.to_string())
 }
 

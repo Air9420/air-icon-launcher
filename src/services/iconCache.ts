@@ -32,7 +32,10 @@ export async function extractIcons(paths: string[]): Promise<Map<string, string>
     const result = new Map<string, string>();
 
     try {
-        const response = await invoke<Array<string | null>>("extract_icons_from_paths", { paths });
+        const response = await invoke<Array<string | null>>("extract_icons_from_paths", {
+            paths,
+            maxEdge: 128,
+        });
         for (let i = 0; i < paths.length; i++) {
             const icon = response[i];
             if (icon) {

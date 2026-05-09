@@ -343,6 +343,10 @@ const recentFileCandidates = ref<RecentFileSearchResult[]>(
         ? [...searchExtensionsStore.recentFileCandidates]
         : readRecentFileCandidatesCache()
 );
+const SEARCH_ICON_HYDRATION_LIMIT = 12;
+const HOME_PINNED_ICON_HYDRATION_BUFFER = 2;
+const HOME_RECENT_ICON_HYDRATION_BUFFER = 2;
+const RECENT_FILE_ICON_HYDRATION_LIMIT = 12;
 let recentFileIconHydrationRequestId = 0;
 let recentStabilizeTimer: ReturnType<typeof setTimeout> | null = null;
 const RECENT_STABILIZE_DELAY_MS = 280;
@@ -417,6 +421,56 @@ function normalizeKeywordTokens(keyword: string): string[] {
         .split(/\s+/)
         .map((token) => token.trim())
         .filter((token) => token.length > 0);
+}
+
+function collectVisibleSearchHydrationTargets(results: GlobalSearchMergedResult[]): Array<{ categoryId: string; itemId: string }> {
+    return results
+        .slice(0, SEARCH_ICON_HYDRATION_LIMIT)
+        .map((result) => ({
+            categoryId: result.primaryCategoryId,
+            itemId: result.item.id,
+        }));
+}
+
+function collectVisibleHomeHydrationTargets(
+    pinned: PinnedMergedItem[],
+    recent: HomeRecentDisplayItem[]
+): Array<{ categoryId: string; itemId: string }> {
+    const pinnedLimit = Math.max(uiStore.getHomeSectionLimit("pinned"), 0) + HOME_PINNED_ICON_HYDRATION_BUFFER;
+    const recentLimit = Math.max(uiStore.getHomeSectionLimit("recent"), 0) + HOME_RECENT_ICON_HYDRATION_BUFFER;
+
+    return [
+        ...pinned
+            .slice(0, pinnedLimit)
+            .map((item) => ({
+                categoryId: item.primaryCategoryId,
+                itemId: item.item.id,
+            })),
+        ...recent
+            .slice(0, recentLimit)
+            .filter((item): item is Extract<HomeRecentDisplayItem, RecentUsedMergedItem> => "recent" in item)
+            .map((item) => ({
+                categoryId: item.recent.categoryId,
+                itemId: item.item.id,
+            })),
+    ];
+}
+
+function resolveVisibleIconMaxEdge(selector: string): number | undefined {
+    const iconNode = document.querySelector<HTMLElement>(selector);
+    if (!iconNode) return undefined;
+    const rect = iconNode.getBoundingClientRect();
+    const edge = Math.max(rect.width, rect.height);
+    if (edge <= 0) return undefined;
+    return Math.max(32, Math.min(256, Math.round(edge)));
+}
+
+function getSearchResultIconMaxEdge(): number | undefined {
+    return resolveVisibleIconMaxEdge(".search-result-item .result-icon");
+}
+
+function getHomeIconMaxEdge(): number | undefined {
+    return resolveVisibleIconMaxEdge('.home-card[data-home-section] .home-card-icon');
 }
 
 function includesAllTokens(target: string, tokens: string[]): boolean {
@@ -659,7 +713,7 @@ async function loadRecentFileCandidates(): Promise<void> {
 async function hydrateRecentFileCandidateIcons(rows: RecentFileSearchResult[]): Promise<void> {
     const missingPaths: string[] = [];
     const seen = new Set<string>();
-    for (const row of rows) {
+    for (const row of rows.slice(0, RECENT_FILE_ICON_HYDRATION_LIMIT)) {
         if (normalizeIconBase64(row.iconBase64)) continue;
         const normalizedPath = normalizePathKey(row.path);
         if (!normalizedPath || seen.has(normalizedPath)) continue;
@@ -673,6 +727,7 @@ async function hydrateRecentFileCandidateIcons(rows: RecentFileSearchResult[]): 
     try {
         const iconRows = await invokeOrThrow<Array<string | null>>("extract_icons_from_paths", {
             paths: missingPaths,
+            maxEdge: 128,
         });
         if (requestId !== recentFileIconHydrationRequestId) return;
 
@@ -1680,11 +1735,10 @@ watch(
         }
 
         if (!searchKeyword.value.trim()) return;
-        const targets = results.map((result) => ({
-            categoryId: result.primaryCategoryId,
-            itemId: result.item.id,
-        }));
-        void store.hydrateMissingIconsForItems(targets);
+        const targets = collectVisibleSearchHydrationTargets(results);
+        void store.hydrateLauncherIconsForVisibleItems(targets, {
+            maxEdge: getSearchResultIconMaxEdge(),
+        });
     },
     { immediate: true }
 );
@@ -1722,19 +1776,10 @@ watch(
     [pinnedMergedItems, mergedRecentDisplayItems, searchKeyword],
     ([pinned, recent, keyword]) => {
         if (keyword.trim()) return;
-        const targets = [
-            ...pinned.map((item) => ({
-                categoryId: item.primaryCategoryId,
-                itemId: item.item.id,
-            })),
-            ...recent
-                .filter((item): item is Extract<HomeRecentDisplayItem, RecentUsedMergedItem> => "recent" in item)
-                .map((item) => ({
-                    categoryId: item.recent.categoryId,
-                    itemId: item.item.id,
-                })),
-        ];
-        void store.hydrateMissingIconsForItems(targets);
+        const targets = collectVisibleHomeHydrationTargets(pinned, recent);
+        void store.hydrateLauncherIconsForVisibleItems(targets, {
+            maxEdge: getHomeIconMaxEdge(),
+        });
     },
     { immediate: true }
 );

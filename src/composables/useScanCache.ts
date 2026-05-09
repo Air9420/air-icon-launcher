@@ -27,6 +27,16 @@ let cacheLoadPromise: Promise<void> | null = null;
 const iconHydrationPromises = new Map<string, Promise<string | null>>();
 const resolvedLnkTargetCache = new Map<string, string | null>();
 let launcherPathKeyCache: { fingerprint: string; keys: Set<string> } | null = null;
+const pendingResolvedLnkTargets = new Map<string, Promise<string | null>>();
+
+export function clearScanCacheStateForTests(): void {
+  cachedScanResult = null;
+  cacheLoadPromise = null;
+  iconHydrationPromises.clear();
+  resolvedLnkTargetCache.clear();
+  launcherPathKeyCache = null;
+  pendingResolvedLnkTargets.clear();
+}
 
 export function useScanCache() {
   const isCacheReady = ref(false);
@@ -78,6 +88,9 @@ export function useScanCache() {
       for (const item of items) {
         if (item.path) {
           paths.push(item.path);
+          if (item.resolvedPath) {
+            paths.push(`resolved:${item.resolvedPath}`);
+          }
         }
       }
     }
@@ -94,30 +107,51 @@ export function useScanCache() {
 
     const keys = new Set<string>();
 
-    for (const [, items] of Object.entries(launcherStore.launcherItemsByCategoryId)) {
+    for (const [categoryId, items] of Object.entries(launcherStore.launcherItemsByCategoryId)) {
       for (const item of items) {
         if (!item.path) continue;
 
-        let pathToAdd = item.path;
+        let pathToAdd = item.resolvedPath || item.path;
 
         if (item.path.toLowerCase().endsWith('.lnk')) {
-          if (resolvedLnkTargetCache.has(item.path)) {
+          if (item.resolvedPath) {
+            pathToAdd = item.resolvedPath;
+            resolvedLnkTargetCache.set(item.path, item.resolvedPath);
+          } else if (resolvedLnkTargetCache.has(item.path)) {
             const cachedTarget = resolvedLnkTargetCache.get(item.path);
             if (cachedTarget) {
               pathToAdd = cachedTarget;
             }
           } else {
             try {
-              const result = await invoke<string>('resolve_lnk_target', { path: item.path });
-              if (result.ok && result.value) {
-                pathToAdd = result.value;
-                resolvedLnkTargetCache.set(item.path, result.value);
+              let pending = pendingResolvedLnkTargets.get(item.path);
+              if (!pending) {
+                pending = invoke<string>('resolve_lnk_target', { path: item.path })
+                  .then((result) => {
+                    if (result.ok && result.value) {
+                      resolvedLnkTargetCache.set(item.path, result.value);
+                      return result.value;
+                    }
+                    resolvedLnkTargetCache.set(item.path, null);
+                    return null;
+                  })
+                  .catch((e) => {
+                    resolvedLnkTargetCache.set(item.path, null);
+                    debugWarn("failed to resolve lnk:", item.path, e);
+                    return null;
+                  })
+                  .finally(() => {
+                    pendingResolvedLnkTargets.delete(item.path);
+                  });
+                pendingResolvedLnkTargets.set(item.path, pending);
+              }
+              const resolved = await pending;
+              if (resolved) {
+                pathToAdd = resolved;
+                launcherStore.setLauncherItemResolvedPath(categoryId, item.id, resolved);
                 debugLog("resolved lnk:", item.path, "->", pathToAdd);
-              } else {
-                resolvedLnkTargetCache.set(item.path, null);
               }
             } catch (e) {
-              resolvedLnkTargetCache.set(item.path, null);
               debugWarn("failed to resolve lnk:", item.path, e);
             }
           }

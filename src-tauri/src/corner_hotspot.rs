@@ -629,6 +629,7 @@ pub fn start_corner_hotspot_monitor(app: AppHandle) {
     }
 }
 
+#[allow(dead_code)]
 pub fn stop_corner_hotspot_monitor() {
     CORNER_HOTSPOT_RUNNING.store(false, Ordering::Relaxed);
     if let Ok(mut handle_guard) = CORNER_HOTSPOT_HANDLE.write() {

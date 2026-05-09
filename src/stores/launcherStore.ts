@@ -115,11 +115,31 @@ type ImportLauncherSnapshotPayload = {
   recentUsedItems?: RecentUsedItem[];
 };
 
-function normalizeOptionalPath(value: string | null | undefined): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
+    function normalizeOptionalPath(value: string | null | undefined): string | undefined {
+      if (typeof value !== "string") return undefined;
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    }
+
+    function compactImportedLauncherItem(item: LauncherItem): LauncherItem {
+      if (item.itemType !== "file") return item;
+      if (normalizeHasCustomIcon(item.hasCustomIcon)) return item;
+      return {
+        ...item,
+        iconBase64: null,
+        hasCustomIcon: false,
+      };
+    }
+
+    function compactDerivedFileIcon(item: LauncherItem): LauncherItem {
+      if (item.itemType !== "file") return item;
+      if (normalizeHasCustomIcon(item.hasCustomIcon)) return item;
+      return {
+        ...item,
+        iconBase64: null,
+        hasCustomIcon: false,
+      };
+    }
 
 function isLnkPath(path: string | null | undefined): boolean {
   const normalizedPath = normalizeOptionalPath(path);
@@ -141,6 +161,8 @@ export const useLauncherStore = defineStore(
 
     const rustSearchResults = ref<RustSearchResult[]>([]);
     const isRustSearchReady = ref(false);
+    const pendingDerivedIconRefreshKeys = new Set<string>();
+    const pendingLnkResolveKeys = new Set<string>();
 
     function createLauncherItemId() {
       return `item-${crypto.randomUUID()}`;
@@ -256,8 +278,12 @@ export const useLauncherStore = defineStore(
           nextResolvedPath = explicitResolvedPath;
         } else if (patch.path !== undefined) {
           if (isLnkPath(nextPath)) {
-            nextResolvedPath = undefined;
-            shouldResolveLnkPath = true;
+            const normalizedNextPath = normalizeOptionalPath(nextPath);
+            const currentNormalizedPath = normalizeOptionalPath(currentItem.path);
+            if (normalizedNextPath !== currentNormalizedPath) {
+              nextResolvedPath = undefined;
+              shouldResolveLnkPath = true;
+            }
           } else {
             nextResolvedPath = normalizeOptionalPath(nextPath);
           }
@@ -618,10 +644,11 @@ export const useLauncherStore = defineStore(
           launchDependencies: [],
           launchDelaySeconds: 0,
         };
+        const storedItem = compactDerivedFileIcon(nextItem);
         if (itemType === "file" && isLnkPath(itemPath)) {
-          resolveTargets.push({ itemId: nextItem.id, path: itemPath });
+          resolveTargets.push({ itemId: storedItem.id, path: itemPath });
         }
-        return nextItem;
+        return storedItem;
       });
 
       setLauncherItemsByCategoryId(categoryId, [...existing, ...nextItems]);
@@ -662,7 +689,7 @@ export const useLauncherStore = defineStore(
           cacheOriginalIconForFileItem(itemType, itemPath, iconBase64);
           const id = createLauncherItemId();
           allIds.push(id);
-          batchItems.push({
+          const nextItem: LauncherItem = {
             id,
             name: getNameFromPath(paths[i]),
             path: itemPath,
@@ -677,7 +704,8 @@ export const useLauncherStore = defineStore(
             hasCustomIcon: false,
             launchDependencies: [],
             launchDelaySeconds: 0,
-          });
+          };
+          batchItems.push(compactDerivedFileIcon(nextItem));
           if (itemType === "file" && isLnkPath(itemPath)) {
             resolveTargets.push({ itemId: id, path: itemPath });
           }
@@ -721,7 +749,11 @@ export const useLauncherStore = defineStore(
         const icon = pathToIcon.get(item.path);
         if (icon === undefined) return item;
         changed = true;
-        const updated = { ...item, iconBase64: icon, hasCustomIcon: false };
+        const updated = compactDerivedFileIcon({
+          ...item,
+          iconBase64: icon,
+          hasCustomIcon: false,
+        });
         updatedItems.push(updated);
         return updated;
       });
@@ -757,9 +789,10 @@ export const useLauncherStore = defineStore(
         launchDependencies: [],
         launchDelaySeconds: 0,
       };
-      setLauncherItemsByCategoryId(categoryId, [...existing, newItem]);
-      itemEventBus.emit({ type: 'item:created', categoryId, item: newItem });
-      return newItem.id;
+      const storedItem = compactDerivedFileIcon(newItem);
+      setLauncherItemsByCategoryId(categoryId, [...existing, storedItem]);
+      itemEventBus.emit({ type: 'item:created', categoryId, item: storedItem });
+      return storedItem.id;
     }
 
     function createLauncherItemInCategory(
@@ -810,14 +843,15 @@ export const useLauncherStore = defineStore(
         ),
         launchDelaySeconds: normalizeDelaySeconds(payload.launchDelaySeconds),
       };
+      const storedItem = compactDerivedFileIcon(newItem);
 
-      setLauncherItemsByCategoryId(categoryId, [...existing, newItem]);
-      itemEventBus.emit({ type: 'item:created', categoryId, item: newItem });
+      setLauncherItemsByCategoryId(categoryId, [...existing, storedItem]);
+      itemEventBus.emit({ type: 'item:created', categoryId, item: storedItem });
       if (newItem.itemType === "file" && isLnkPath(newItem.path)) {
         queueResolveLnkTargets(categoryId, [{ itemId: newItem.id, path: newItem.path }]);
       }
 
-      return id;
+      return storedItem.id;
     }
 
     function updateLauncherItemIcon(
@@ -869,6 +903,7 @@ export const useLauncherStore = defineStore(
         resolvedPath: normalized,
       };
       setLauncherItemsByCategoryId(categoryId, next);
+      pendingLnkResolveKeys.delete(`${categoryId}:${itemId}`);
       itemEventBus.emit({ type: "item:updated", categoryId, item: next[index] });
       return true;
     }
@@ -881,12 +916,65 @@ export const useLauncherStore = defineStore(
       for (const target of targets) {
         const normalizedPath = normalizeOptionalPath(target.path);
         if (!normalizedPath || !isLnkPath(normalizedPath)) continue;
+        const item = getLauncherItemById(categoryId, target.itemId);
+        if (!item || item.itemType !== "file") continue;
+        if (normalizeOptionalPath(item.path) !== normalizedPath) continue;
+        if (normalizeOptionalPath(item.resolvedPath)) continue;
+        const queueKey = `${categoryId}:${target.itemId}`;
+        if (pendingLnkResolveKeys.has(queueKey)) continue;
+        pendingLnkResolveKeys.add(queueKey);
         void invoke<string | null>("resolve_lnk_target", { path: normalizedPath })
           .then((result) => {
             const resolved = result.ok ? normalizeOptionalPath(result.value ?? undefined) : undefined;
             setLauncherItemResolvedPath(categoryId, target.itemId, resolved);
           })
-          .catch(() => {});
+          .catch(() => {})
+          .finally(() => {
+            pendingLnkResolveKeys.delete(queueKey);
+          });
+      }
+    }
+
+    function markPendingDerivedIconRefresh(targets: LauncherItemRef[]) {
+      for (const target of targets) {
+        pendingDerivedIconRefreshKeys.add(`${target.categoryId}:${target.itemId}`);
+      }
+    }
+
+    function consumePendingDerivedIconRefresh(targets: LauncherItemRef[]): LauncherItemRef[] {
+      const refreshTargets: LauncherItemRef[] = [];
+      for (const target of targets) {
+        const key = `${target.categoryId}:${target.itemId}`;
+        if (!pendingDerivedIconRefreshKeys.has(key)) continue;
+        pendingDerivedIconRefreshKeys.delete(key);
+        refreshTargets.push(target);
+      }
+      return refreshTargets;
+    }
+
+    async function hydrateLauncherIconsForVisibleItems(
+      targets: LauncherItemRef[],
+      options: { maxEdge?: number } = {},
+    ): Promise<void> {
+      const forcedTargets = consumePendingDerivedIconRefresh(targets);
+      if (forcedTargets.length > 0) {
+        await hydrateMissingIconsForItems(forcedTargets, {
+          forceReplace: true,
+          skipCache: true,
+          maxEdge: options.maxEdge,
+        });
+      }
+
+      const forcedKeys = new Set(
+        forcedTargets.map((target) => `${target.categoryId}:${target.itemId}`),
+      );
+      const normalTargets = targets.filter(
+        (target) => !forcedKeys.has(`${target.categoryId}:${target.itemId}`),
+      );
+      if (normalTargets.length > 0) {
+        await hydrateMissingIconsForItems(normalTargets, {
+          maxEdge: options.maxEdge,
+        });
       }
     }
 
@@ -1017,8 +1105,11 @@ export const useLauncherStore = defineStore(
         nextItems[categoryId] = categoryItems.map((item) => {
           const normalizedImportedItem = normalizeImportedLauncherItem(
             item as LauncherItem & { originalIconBase64?: string | null },
+            { cacheDerivedIcon: false },
           );
-          const nextItem = applyCachedOriginalIcon(normalizedImportedItem);
+          const nextItem = compactImportedLauncherItem(
+            applyCachedOriginalIcon(normalizedImportedItem),
+          );
           const importedHadDerivedIcon =
             shouldRefreshDerivedIcon(normalizedImportedItem);
           const stillMissingDerivedIcon =
@@ -1043,10 +1134,7 @@ export const useLauncherStore = defineStore(
       await new Promise<void>(resolve => setTimeout(resolve, 0));
       launcherItemsByCategoryId.value = nextItems;
       if (options.refreshDerivedIcons && refreshTargets.length > 0) {
-        void hydrateMissingIconsForItems(refreshTargets, {
-          forceReplace: true,
-          skipCache: true,
-        });
+        markPendingDerivedIconRefresh(refreshTargets);
       }
       if (!options.suppressEvents) {
         for (const [categoryId, categoryItems] of Object.entries(items)) {
@@ -1138,12 +1226,12 @@ export const useLauncherStore = defineStore(
         launchDependencies: [],
         launchDelaySeconds: 0,
       };
-
+      const storedItem = compactDerivedFileIcon(newItem);
       const existing = getLauncherItemsByCategoryId(targetCategoryId);
-      setLauncherItemsByCategoryId(targetCategoryId, [...existing, newItem]);
-      itemEventBus.emit({ type: "item:created", categoryId: targetCategoryId, item: newItem });
+      setLauncherItemsByCategoryId(targetCategoryId, [...existing, storedItem]);
+      itemEventBus.emit({ type: "item:created", categoryId: targetCategoryId, item: storedItem });
 
-      return itemId;
+      return storedItem.id;
     }
 
     return {
@@ -1176,6 +1264,7 @@ export const useLauncherStore = defineStore(
       resetLauncherItemIcon,
       hasCustomIcon,
       hydrateMissingIconsForItems,
+      hydrateLauncherIconsForVisibleItems,
       rustSearchMergedResults,
       clearSearch,
       getLauncherItemMergeKey,

@@ -625,6 +625,7 @@ impl ConfigManager {
         fs::remove_file(&backup_path).map_err(|e| e.to_string())
     }
 
+    #[allow(dead_code)]
     pub fn cleanup_old_backups(&self, retention: usize) -> AppResult<()> {
         let backups = self.list_backups().map_err(|e| AppError::internal(e))?;
 

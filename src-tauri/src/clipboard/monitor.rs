@@ -1,13 +1,16 @@
 use super::types::{ClipboardConfig, ClipboardRecord};
 use crate::clipboard::cache::{ClipboardCache, EventDeduplicator};
 use crate::clipboard::image::{get_clipboard_image, save_image_atomic};
-use crate::clipboard::platform::{get_clipboard_text, set_clipboard_text};
+use crate::clipboard::platform::get_clipboard_text;
 use crate::clipboard::ClipboardState;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+#[cfg(not(target_os = "windows"))]
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(not(target_os = "windows"))]
+use std::time::Duration;
 use tauri::AppHandle;
 use tauri::{Emitter, Manager};
 

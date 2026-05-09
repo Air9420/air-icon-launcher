@@ -3,11 +3,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, Manager};
-
-#[cfg(target_os = "windows")]
-use crate::clipboard_listener::listen_clipboard;
+use tauri::{AppHandle, Emitter};
 
 pub mod cache;
 pub mod image;
@@ -16,9 +12,9 @@ pub mod platform;
 pub mod types;
 pub mod writer;
 
-pub use cache::{ClipboardCache, EventDeduplicator};
-pub use image::{get_clipboard_image, save_image_atomic, set_clipboard_image_from_png};
-pub use monitor::{get_default_storage_path, start_clipboard_monitor, stop_clipboard_monitor};
+pub use cache::ClipboardCache;
+pub use image::set_clipboard_image_from_png;
+pub use monitor::{start_clipboard_monitor, stop_clipboard_monitor};
 pub use platform::{get_clipboard_text, set_clipboard_text};
 pub use types::{ClipboardConfig, ClipboardConfigDebug, ClipboardConfigPatch, ClipboardRecord};
 
@@ -123,7 +119,10 @@ fn clipboard_config_from_app_config(app_config: &crate::config::AppConfig) -> Cl
     }
 }
 
-fn enforce_runtime_max_records(state: &Arc<ClipboardState>, max_records: usize) -> Result<(), String> {
+fn enforce_runtime_max_records(
+    state: &Arc<ClipboardState>,
+    max_records: usize,
+) -> Result<(), String> {
     if max_records == 0 {
         return Ok(());
     }
@@ -300,38 +299,16 @@ mod tests {
         assert_eq!(runtime.max_records, 2);
         assert_eq!(runtime.max_image_size_mb, 4.0);
         assert!(runtime.encrypted);
-        assert_eq!(runtime.storage_path, Some(storage_path.to_string_lossy().to_string()));
+        assert_eq!(
+            runtime.storage_path,
+            Some(storage_path.to_string_lossy().to_string())
+        );
         assert_eq!(state.storage_path.lock().unwrap().clone(), storage_path);
         assert_eq!(state.cache.lock().unwrap().get_all().len(), 2);
         assert!(state.database.lock().unwrap().is_some());
 
         let _ = std::fs::remove_dir_all(&base);
     }
-}
-
-fn generate_id() -> String {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let random: u32 = rand();
-    format!("cb-{}-{:08x}", ts, random)
-}
-
-fn rand() -> u32 {
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
-    let state = RandomState::new();
-    let mut hasher = state.build_hasher();
-    hasher.write_u32(get_timestamp() as u32);
-    hasher.finish() as u32
-}
-
-fn get_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 fn simple_hash(data: &[u8]) -> String {

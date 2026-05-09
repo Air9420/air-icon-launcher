@@ -699,9 +699,9 @@ describe("launcherStore - pure functions", () => {
       expect(invokeSpy).not.toHaveBeenCalled();
     });
 
-    it("reuses cached derived icons during repeated imports", async () => {
+    it("keeps imported default file icons compact until visible hydration runs", async () => {
       setCachedLauncherIcon("C:\\a.exe", "cached-icon");
-      vi.spyOn(invokeWrapper, "invoke").mockResolvedValue({
+      const invokeSpy = vi.spyOn(invokeWrapper, "invoke").mockResolvedValue({
         ok: true,
         value: ["real-icon"],
       } as Awaited<ReturnType<typeof invokeWrapper.invoke>>);
@@ -727,15 +727,16 @@ describe("launcherStore - pure functions", () => {
 
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-      const refreshed = store.getLauncherItemsByCategoryId("cat-1")[0];
-      expect(refreshed.iconBase64).toBe("cached-icon");
-      expect(refreshed.hasCustomIcon).toBe(false);
+      const imported = store.getLauncherItemsByCategoryId("cat-1")[0];
+      expect(imported.iconBase64).toBeNull();
+      expect(imported.hasCustomIcon).toBe(false);
       expect(getCachedLauncherIcon("C:\\a.exe")).toBe("cached-icon");
-      expect(invokeWrapper.invoke).not.toHaveBeenCalled();
+      expect(invokeSpy).not.toHaveBeenCalled();
     });
 
-    it("refreshes imported derived file icons when payload still carries one", async () => {
-      vi.spyOn(invokeWrapper, "invoke").mockResolvedValue({
+    it("refreshes imported derived file icons lazily when visible hydration runs", async () => {
+      setCachedLauncherIcon("C:\\a.exe", "cached-icon");
+      const invokeSpy = vi.spyOn(invokeWrapper, "invoke").mockResolvedValue({
         ok: true,
         value: ["real-icon"],
       } as Awaited<ReturnType<typeof invokeWrapper.invoke>>);
@@ -759,12 +760,18 @@ describe("launcherStore - pure functions", () => {
         { refreshDerivedIcons: true }
       );
 
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await store.hydrateMissingIconsForItems([
+        {
+          categoryId: "cat-1",
+          itemId: "item-1",
+        },
+      ]);
 
       const refreshed = store.getLauncherItemsByCategoryId("cat-1")[0];
       expect(refreshed.iconBase64).toBe("real-icon");
       expect(refreshed.hasCustomIcon).toBe(false);
       expect(getCachedLauncherIcon("C:\\a.exe")).toBe("real-icon");
+      expect(invokeSpy).toHaveBeenCalledTimes(1);
     });
 
     it("does not refresh imported custom icons", async () => {
@@ -820,6 +827,39 @@ describe("launcherStore - pure functions", () => {
       const imported = store.getLauncherItemsByCategoryId("cat-1")[0];
       expect(imported.iconBase64).toBe("custom-icon");
       expect(imported.hasCustomIcon).toBe(true);
+    });
+
+    it("does not resolve unchanged lnk paths again when resolvedPath already exists", async () => {
+      const invokeSpy = vi.spyOn(invokeWrapper, "invoke").mockResolvedValue({
+        ok: true,
+        value: "C:\\real.exe",
+      } as Awaited<ReturnType<typeof invokeWrapper.invoke>>);
+
+      await store.importLauncherItems({
+        "cat-1": [
+          {
+            id: "item-1",
+            name: "Shortcut",
+            path: "C:\\Shortcut.lnk",
+            resolvedPath: "C:\\real.exe",
+            itemType: "file",
+            isDirectory: false,
+            iconBase64: null,
+            hasCustomIcon: false,
+            launchDependencies: [],
+            launchDelaySeconds: 0,
+          },
+        ],
+      });
+
+      store.updateLauncherItem("cat-1", "item-1", {
+        path: "C:\\Shortcut.lnk",
+      });
+
+      expect(store.getLauncherItemById("cat-1", "item-1")?.resolvedPath).toBe(
+        "C:\\real.exe"
+      );
+      expect(invokeSpy).not.toHaveBeenCalled();
     });
   });
 

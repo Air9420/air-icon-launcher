@@ -132,7 +132,8 @@ export function shouldRefreshDerivedIcon(item: LauncherItem): boolean {
 }
 
 export function normalizeImportedLauncherItem(
-    item: LauncherItem & { originalIconBase64?: string | null }
+    item: LauncherItem & { originalIconBase64?: string | null },
+    options: { cacheDerivedIcon?: boolean } = {}
 ): LauncherItem {
     const { originalIconBase64: _legacyOriginalIcon, ...rest } = item;
     const normalizedResolvedPath =
@@ -142,7 +143,7 @@ export function normalizeImportedLauncherItem(
     const normalizedIcon = normalizeIconBase64(item.iconBase64);
     const hasCustomIcon = resolveLegacyHasCustomIcon(item);
 
-    if (rest.itemType === "file" && !hasCustomIcon) {
+    if (rest.itemType === "file" && (!hasCustomIcon || options.cacheDerivedIcon === true)) {
         cacheOriginalIconForFileItem(rest.itemType, rest.path, normalizedIcon);
     }
 
@@ -161,6 +162,7 @@ export function isHttpUrl(url: string): boolean {
 type IconHydrationOptions = {
     forceReplace?: boolean;
     skipCache?: boolean;
+    maxEdge?: number;
 };
 
 export function useItemsHelper(
@@ -204,6 +206,10 @@ export function useItemsHelper(
         if (!Array.isArray(targets) || targets.length === 0) return;
         const forceReplace = options.forceReplace === true;
         const skipCache = options.skipCache === true;
+        const maxEdge =
+            typeof options.maxEdge === "number" && Number.isFinite(options.maxEdge)
+                ? Math.max(32, Math.min(256, Math.round(options.maxEdge)))
+                : undefined;
         const iconUpdatesByCategory = new Map<string, Map<string, string>>();
 
         function queueIconUpdate(categoryId: string, itemId: string, iconBase64: string) {
@@ -321,6 +327,7 @@ export function useItemsHelper(
         try {
             const result = await invoke<Array<string | null>>("extract_icons_from_paths", {
                 paths: uniquePaths,
+                maxEdge,
             });
 
             if (!result.ok) {

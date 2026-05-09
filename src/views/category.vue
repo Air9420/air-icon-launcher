@@ -60,11 +60,13 @@
         <template v-if="isSearchActive">
             <div
                 v-if="categorySearchItems.length > 0"
+                ref="searchResultsContainerRef"
                 class="icon-container search-results-container"
                 :class="{ 'has-selection': hasSelection }"
                 :style="{ '--cols': launcherCols }"
                 data-menu-type="Icon-View"
                 :data-category-id="categoryId"
+                @scroll.passive="onIconContainerScroll"
             >
                 <div
                     v-for="entry in categorySearchItems"
@@ -131,6 +133,7 @@
         <template v-else>
             <draggable
                 v-model="items"
+                ref="iconContainerRef"
                 item-key="id"
                 class="icon-container"
                 :class="{ 'has-selection': hasSelection }"
@@ -147,6 +150,7 @@
                 :disabled="hasSelection || !isManualSort"
                 data-menu-type="Icon-View"
                 :data-category-id="categoryId"
+                @scroll.passive="onIconContainerScroll"
             >
                 <template #item="{ element }">
                     <div
@@ -334,6 +338,7 @@ import type { LauncherItem, RustSearchResult } from "../stores/launcherStore";
 import SearchBox from "../components/SearchBox.vue";
 import { launchStoredItem } from "../utils/launcher-service";
 import { SEARCH_THROTTLE_MS } from "../utils/search-config";
+import { collectVisibleGridHydrationTargets } from "../utils/icon-hydration-window";
 
 const props = defineProps<{
     categoryId: string;
@@ -355,6 +360,8 @@ const isCategorySearchPending = ref(false);
 const launcherColsOptions = [4, 5, 6] as const;
 const searchBoxRef = ref<InstanceType<typeof SearchBox> | null>(null);
 const categoryViewRef = ref<HTMLElement | null>(null);
+const iconContainerRef = ref<HTMLElement | null>(null);
+const searchResultsContainerRef = ref<HTMLElement | null>(null);
 const backBtnRef = ref<HTMLButtonElement | null>(null);
 const selectedItemIds = ref<string[]>([]);
 const activeBulkPanel = ref<"move" | "edit" | null>(null);
@@ -389,6 +396,8 @@ let unlistenShow: (() => void) | null = null;
 let ensureIndexPromise: Promise<void> | null = null;
 let categorySearchRequestId = 0;
 let categorySearchContextId = 0;
+let resizeObserver: ResizeObserver | null = null;
+let removeWindowResizeListener: (() => void) | null = null;
 
 onMounted(async () => {
     const win = getCurrentWindow();
@@ -420,15 +429,35 @@ onMounted(async () => {
     document.addEventListener("keydown", onCategoryKeydown, true);
     document.addEventListener("mousedown", onCategoryMouseDown, true);
 
+    const onResize = () => {
+        scheduleVisibleIconHydration();
+    };
+    if (typeof ResizeObserver !== "undefined") {
+        resizeObserver = new ResizeObserver(() => {
+            scheduleVisibleIconHydration();
+        });
+        if (categoryViewRef.value) {
+            resizeObserver.observe(categoryViewRef.value);
+        }
+    } else {
+        window.addEventListener("resize", onResize);
+        removeWindowResizeListener = () => {
+            window.removeEventListener("resize", onResize);
+        };
+    }
+
     nextTick(() => {
         resetTabCycleState();
         searchBoxRef.value?.focus();
+        scheduleVisibleIconHydration();
     });
 });
 
 onUnmounted(() => {
     if (unlistenFocus) unlistenFocus();
     if (unlistenShow) unlistenShow();
+    resizeObserver?.disconnect();
+    removeWindowResizeListener?.();
     document.removeEventListener("keydown", onCategoryKeydown, true);
     document.removeEventListener("mousedown", onCategoryMouseDown, true);
 });
@@ -499,17 +528,71 @@ const focusedLauncherItemId = computed<string | null>(() => {
     return list[safeIndex]?.id ?? null;
 });
 
-watch(
-    items,
-    (list) => {
-        const targets = list.map((item) => ({
-            categoryId: props.categoryId,
-            itemId: item.id,
-        }));
-        void store.hydrateMissingIconsForItems(targets);
-    },
-    { immediate: true }
-);
+function getActiveIconContainer(): HTMLElement | null {
+    const unwrap = (value: unknown): HTMLElement | null => {
+        if (value instanceof HTMLElement) return value;
+        if (
+            value &&
+            typeof value === "object" &&
+            "$el" in value &&
+            (value as { $el?: unknown }).$el instanceof HTMLElement
+        ) {
+            return (value as { $el: HTMLElement }).$el;
+        }
+        return null;
+    };
+    if (isSearchActive.value) {
+        return unwrap(searchResultsContainerRef.value);
+    }
+    return unwrap(iconContainerRef.value);
+}
+
+function getVisibleHydrationTargets(): Array<{ categoryId: string; itemId: string }> {
+    const visibleItemIds = visibleLauncherItems.value.map((item) => item.id);
+    if (visibleItemIds.length === 0) return [];
+
+    const container = getActiveIconContainer();
+    const cols = Math.max(1, Number(launcherCols.value ?? 1));
+    const firstItemHeight = container
+        ?.querySelector<HTMLElement>(".icon-item")
+        ?.getBoundingClientRect().height ?? 0;
+    const rowHeight = firstItemHeight > 0
+        ? Math.round(firstItemHeight + 14)
+        : (container
+            ? Math.max(1, Math.round(container.clientWidth / cols) + 14)
+            : 0);
+
+    return collectVisibleGridHydrationTargets({
+        categoryId: props.categoryId,
+        itemIds: visibleItemIds,
+        cols,
+        scrollTop: container?.scrollTop ?? 0,
+        clientHeight: container?.clientHeight ?? 0,
+        rowHeight,
+        bufferRows: 1,
+        fallbackVisibleRows: 3,
+    });
+}
+
+function getVisibleIconMaxEdge(): number | undefined {
+    const container = getActiveIconContainer();
+    const iconNode = container?.querySelector<HTMLElement>(".icon-item .icon-img");
+    const iconSize = iconNode?.getBoundingClientRect().width ?? 0;
+    if (iconSize <= 0) return undefined;
+    return Math.max(32, Math.min(256, Math.round(iconSize)));
+}
+
+const scheduleVisibleIconHydration = useThrottleFn(() => {
+    const targets = getVisibleHydrationTargets();
+    if (targets.length === 0) return;
+    void store.hydrateLauncherIconsForVisibleItems(targets, {
+        maxEdge: getVisibleIconMaxEdge(),
+    });
+}, 80, true);
+
+function onIconContainerScroll() {
+    scheduleVisibleIconHydration();
+}
 
 watch(
     itemById,
@@ -545,11 +628,7 @@ watch(
     categorySearchItems,
     (results) => {
         if (!isSearchActive.value || results.length === 0) return;
-        const targets = results.map((entry) => ({
-            categoryId: props.categoryId,
-            itemId: entry.item.id,
-        }));
-        void store.hydrateMissingIconsForItems(targets);
+        scheduleVisibleIconHydration();
     },
     { immediate: true }
 );
@@ -656,6 +735,14 @@ watch(
 
         await applyCategorySearch(keyword, requestId);
     }
+);
+
+watch(
+    [items, categorySearchItems, launcherCols, isSearchActive],
+    () => {
+        scheduleVisibleIconHydration();
+    },
+    { immediate: true }
 );
 
 watchEffect(() => {

@@ -554,11 +554,38 @@ function resolveImportedHasCustomIcon(item: ImportedLauncherItem): boolean {
     return normalizeImportedIconBase64(item.icon_base64 ?? null) !== originalIcon;
 }
 
+function compactImportedLauncherItems(
+    categories: ImportedCategory[]
+): ImportedCategory[] {
+    return categories.map((category) => ({
+        ...category,
+        items: (category.items || []).map((item) => {
+            const itemType = item.item_type || "file";
+            const iconBase64 = normalizeImportedIconBase64(item.icon_base64 ?? null);
+            const hasCustomIcon = resolveImportedHasCustomIcon(item);
+
+            if (itemType === "file" && !hasCustomIcon) {
+                return {
+                    ...item,
+                    icon_base64: null,
+                    has_custom_icon: undefined,
+                };
+            }
+
+            return {
+                ...item,
+                icon_base64: iconBase64,
+                has_custom_icon: hasCustomIcon ? true : undefined,
+            };
+        }),
+    }));
+}
+
 export function mapImportedLauncherItems(
     categories: ImportedCategory[]
 ): Record<string, LauncherItem[]> {
     const itemsMap: Record<string, LauncherItem[]> = {};
-    for (const category of categories) {
+    for (const category of compactImportedLauncherItems(categories)) {
         itemsMap[category.id] = (category.items || []).map((item) => {
             const itemType = item.item_type || "file";
             const resolvedPath =

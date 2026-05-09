@@ -1,6 +1,7 @@
 const STORAGE_KEY = "__launcher_icon_cache__";
 const CACHE_VERSION = 1;
-const MAX_ICON_CACHE_ENTRIES = 300;
+const MAX_ICON_CACHE_ENTRIES = 180;
+const MAX_CACHED_ICON_BASE64_LENGTH = 256 * 1024;
 const CACHE_PERSIST_TIMEOUT_MS = 1000;
 
 type LauncherIconCacheEntry = {
@@ -30,6 +31,10 @@ function normalizeBase64Value(value: unknown): string | null {
 
 function normalizePathKey(path: string): string {
     return path.trim().replace(/\//g, "\\").toLowerCase();
+}
+
+function canCacheIconBase64(iconBase64: string): boolean {
+    return iconBase64.length > 0 && iconBase64.length <= MAX_CACHED_ICON_BASE64_LENGTH;
 }
 
 function ensureCacheLoaded(): void {
@@ -146,7 +151,7 @@ export function getCachedLauncherIcon(path: string): string | null {
 export function setCachedLauncherIcon(path: string, iconBase64: string): void {
     const normalizedPath = path.trim();
     const normalizedIcon = normalizeBase64Value(iconBase64);
-    if (!normalizedPath || !normalizedIcon) return;
+    if (!normalizedPath || !normalizedIcon || !canCacheIconBase64(normalizedIcon)) return;
 
     ensureCacheLoaded();
     cacheEntries.set(normalizePathKey(normalizedPath), {
@@ -168,7 +173,7 @@ export function setCachedLauncherIcons(entries: Array<{ path: string; iconBase64
     for (const entry of entries) {
         const normalizedPath = entry?.path?.trim() ?? "";
         const normalizedIcon = normalizeBase64Value(entry?.iconBase64);
-        if (!normalizedPath || !normalizedIcon) continue;
+        if (!normalizedPath || !normalizedIcon || !canCacheIconBase64(normalizedIcon)) continue;
 
         cacheEntries.set(normalizePathKey(normalizedPath), {
             path: normalizedPath,

@@ -289,4 +289,38 @@ describe("useDataManagement helpers", () => {
     expect(itemsMap["cat-1"][0].hasCustomIcon).toBe(true);
     expect(itemsMap["cat-1"][1].hasCustomIcon).toBe(false);
   });
+
+  it("compacts default file icons while keeping custom icons during import", () => {
+    const itemsMap = mapImportedLauncherItems([
+      {
+        id: "cat-1",
+        name: "工具",
+        items: [
+          {
+            id: "item-1",
+            name: "Default",
+            path: "C:\\Default.exe",
+            item_type: "file",
+            is_directory: false,
+            icon_base64: "default-icon",
+            has_custom_icon: false,
+          },
+          {
+            id: "item-2",
+            name: "Custom",
+            path: "C:\\Custom.exe",
+            item_type: "file",
+            is_directory: false,
+            icon_base64: "custom-icon",
+            has_custom_icon: true,
+          },
+        ],
+      },
+    ]);
+
+    expect(itemsMap["cat-1"][0].iconBase64).toBeNull();
+    expect(itemsMap["cat-1"][0].hasCustomIcon).toBe(false);
+    expect(itemsMap["cat-1"][1].iconBase64).toBe("custom-icon");
+    expect(itemsMap["cat-1"][1].hasCustomIcon).toBe(true);
+  });
 });

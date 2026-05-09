@@ -1,4 +1,4 @@
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import { useLauncherStore, type RecentUsedMergedItem, type PinnedMergedItem } from "../stores/launcherStore";
 import {
     normalizeExternalExecutableIdentity,
@@ -7,7 +7,6 @@ import {
 } from "../stores/statsStore";
 import { useUIStore } from "../stores/uiStore";
 import { useCategoryStore } from "../stores/categoryStore";
-import { invoke } from "../utils/invoke-wrapper";
 import { normalizePathKey } from "../utils/scan-fallback";
 import {
     getRecentRecommendationTailQuota,
@@ -29,16 +28,11 @@ export type ExternalRecentDisplayItem = {
 
 export type HomeRecentDisplayItem = RecentDisplayItem | ExternalRecentDisplayItem;
 
-const sharedLnkTargetByPath = ref<Record<string, string | null>>({});
-const sharedResolvingLnkPaths = new Set<string>();
-
 export function useHomePageState() {
     const store = useLauncherStore();
     const statsStore = useStatsStore();
     const uiStore = useUIStore();
     const categoryStore = useCategoryStore();
-    const lnkTargetByPath = sharedLnkTargetByPath;
-    const resolvingLnkPaths = sharedResolvingLnkPaths;
 
     function toPathKey(path: string | null | undefined): string {
         if (!path) return "";
@@ -53,43 +47,9 @@ export function useHomePageState() {
         return normalizeExternalExecutableIdentity(key);
     }
 
-    function ensureLnkTargetResolved(
-        categoryId: string,
-        itemId: string,
-        path: string | null | undefined,
-    ): void {
-        if (!path) return;
-        const trimmed = path.trim();
-        if (!trimmed || !trimmed.toLowerCase().endsWith(".lnk")) return;
-        if (Object.prototype.hasOwnProperty.call(lnkTargetByPath.value, trimmed)) return;
-        if (resolvingLnkPaths.has(trimmed)) return;
-        resolvingLnkPaths.add(trimmed);
-
-        void invoke<string | null>("resolve_lnk_target", { path: trimmed })
-            .then((result) => {
-                const target = result.ok && result.value ? result.value : null;
-                lnkTargetByPath.value = {
-                    ...lnkTargetByPath.value,
-                    [trimmed]: target,
-                };
-                if (target) {
-                    store.setLauncherItemResolvedPath(categoryId, itemId, target);
-                }
-            })
-            .catch(() => {
-                lnkTargetByPath.value = {
-                    ...lnkTargetByPath.value,
-                    [trimmed]: null,
-                };
-            })
-            .finally(() => {
-                resolvingLnkPaths.delete(trimmed);
-            });
-    }
-
     function collectAllLauncherPathKeys(): Set<string> {
         const keys = new Set<string>();
-        for (const [categoryId, items] of Object.entries(store.launcherItemsByCategoryId)) {
+        for (const [, items] of Object.entries(store.launcherItemsByCategoryId)) {
             for (const item of items) {
                 const rawPathKey = toPathKey(item.path);
                 if (!rawPathKey) continue;
@@ -107,17 +67,6 @@ export function useHomePageState() {
                         keys.add(persistedIdentity);
                     }
                     continue;
-                }
-
-                ensureLnkTargetResolved(categoryId, item.id, item.path);
-                const resolvedTarget = item.path ? lnkTargetByPath.value[item.path.trim()] : null;
-                const resolvedKey = toPathKey(resolvedTarget);
-                if (resolvedKey) {
-                    keys.add(resolvedKey);
-                }
-                const resolvedIdentityKey = toIdentityKey(resolvedTarget);
-                if (resolvedIdentityKey) {
-                    keys.add(resolvedIdentityKey);
                 }
             }
         }

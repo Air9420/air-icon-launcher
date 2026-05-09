@@ -183,6 +183,7 @@ export function useMenuActions(options: UseMenuActionsOptions) {
         try {
             const iconBase64s = await invoke<Array<string | null>>("extract_icons_from_paths", {
                 paths: paths,
+                maxEdge: 128,
             });
 
             const directories = paths.map((path) => {

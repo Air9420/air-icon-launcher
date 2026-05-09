@@ -7,6 +7,10 @@ use std::{
 };
 use tauri::{AppHandle, DragDropEvent, Emitter, Manager, State, WindowEvent};
 
+const DEFAULT_ICON_MAX_EDGE: u32 = 128;
+const MIN_ICON_MAX_EDGE: u32 = 32;
+const MAX_ICON_MAX_EDGE: u32 = 256;
+
 #[derive(Default)]
 pub struct DragDropState {
     last_drop: Mutex<Option<DropRecord>>,
@@ -40,6 +44,12 @@ pub struct DropRecord {
 pub struct DropIconsEvent {
     pub drop_id: String,
     pub icon_base64s: Vec<Option<String>>,
+}
+
+fn normalize_icon_max_edge(max_edge: Option<u32>) -> u32 {
+    max_edge
+        .unwrap_or(DEFAULT_ICON_MAX_EDGE)
+        .clamp(MIN_ICON_MAX_EDGE, MAX_ICON_MAX_EDGE)
 }
 
 /// 为主窗口注册“拖拽文件/图标进入并释放”的监听，并把结果发送到前端事件中。
@@ -86,7 +96,7 @@ pub fn setup_drag_drop(app: &AppHandle) {
         let paths_bg = paths.clone();
         std::thread::spawn(move || {
             let path_bufs: Vec<PathBuf> = paths_bg.iter().map(PathBuf::from).collect();
-            let icon_base64s = extract_icon_base64s(&path_bufs);
+            let icon_base64s = extract_icon_base64s(&path_bufs, None);
 
             if let Ok(mut guard) = app_handle_bg.state::<DragDropState>().last_drop.lock() {
                 if let Some(last) = guard.as_mut() {
@@ -180,9 +190,9 @@ pub fn get_last_drop(state: State<'_, DragDropState>) -> Option<DropRecord> {
 
 /// 从给定的路径列表中提取图标 base64 数据（用于手动添加项目）。
 #[tauri::command]
-pub fn extract_icons_from_paths(paths: Vec<String>) -> Vec<Option<String>> {
+pub fn extract_icons_from_paths(paths: Vec<String>, max_edge: Option<u32>) -> Vec<Option<String>> {
     let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-    extract_icon_base64s(&path_bufs)
+    extract_icon_base64s(&path_bufs, max_edge)
 }
 
 /// 将操作系统回调提供的物理坐标转换为前端可用于 elementFromPoint 的逻辑坐标。
@@ -219,8 +229,9 @@ fn extract_paths_and_directories(paths: Vec<PathBuf>) -> (Vec<String>, Vec<Strin
 }
 
 /// 从拖入的路径中提取可作为图标缓存的 base64 数据。
-fn extract_icon_base64s(paths: &[PathBuf]) -> Vec<Option<String>> {
+fn extract_icon_base64s(paths: &[PathBuf], max_edge: Option<u32>) -> Vec<Option<String>> {
     use rayon::prelude::*;
+    let max_edge = normalize_icon_max_edge(max_edge);
 
     paths
         .par_iter()
@@ -252,13 +263,42 @@ fn extract_icon_base64s(paths: &[PathBuf]) -> Vec<Option<String>> {
                 {
                     None
                 }
+            } else if ext.as_deref() == Some("svg") {
+                std::fs::read(path)
+                    .ok()
+                    .map(|bytes| format!("data:image/svg+xml;base64,{}", STANDARD.encode(bytes)))
             } else if let Ok(bytes) = std::fs::read(path) {
-                Some(STANDARD.encode(bytes))
+                encode_raster_icon_bytes(&bytes, max_edge)
             } else {
                 None
             }
         })
         .collect()
+}
+
+fn encode_raster_icon_bytes(bytes: &[u8], max_edge: u32) -> Option<String> {
+    use image::{codecs::png::PngEncoder, imageops::FilterType, ColorType, GenericImageView, ImageEncoder};
+
+    let image = image::load_from_memory(bytes).ok()?;
+    let (width, height) = image.dimensions();
+    if width == 0 || height == 0 {
+        return None;
+    }
+
+    let max_dimension = width.max(height);
+    let resized = if max_dimension > max_edge {
+        image.resize(max_edge, max_edge, FilterType::Lanczos3)
+    } else {
+        image
+    };
+
+    let rgba = resized.to_rgba8();
+    let (next_width, next_height) = rgba.dimensions();
+    let mut png_bytes = Vec::new();
+    PngEncoder::new(&mut png_bytes)
+        .write_image(rgba.as_raw(), next_width, next_height, ColorType::Rgba8.into())
+        .ok()?;
+    Some(STANDARD.encode(png_bytes))
 }
 
 /// 在 Windows 上解析 .lnk 快捷方式指向的真实路径，用于获取不带叠加层的目标图标。
@@ -473,4 +513,99 @@ fn new_drop_id() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos().to_string())
         .unwrap_or_else(|_| "0".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use image::{codecs::png::PngEncoder, ColorType, ImageEncoder, Rgba, RgbaImage};
+
+    fn write_test_png(width: u32, height: u32) -> Vec<u8> {
+        let mut image = RgbaImage::new(width, height);
+        for (x, y, pixel) in image.enumerate_pixels_mut() {
+            let red = (x % 255) as u8;
+            let green = (y % 255) as u8;
+            *pixel = Rgba([red, green, 180, 255]);
+        }
+
+        let mut png_bytes = Vec::new();
+        PngEncoder::new(&mut png_bytes)
+            .write_image(image.as_raw(), width, height, ColorType::Rgba8.into())
+            .expect("test png encoding should succeed");
+        png_bytes
+    }
+
+    fn write_temp_png_file(width: u32, height: u32) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        let unique = format!(
+            "air-icon-launcher-icon-test-{}-{}.png",
+            width,
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        );
+        path.push(unique);
+        std::fs::write(&path, write_test_png(width, height))
+            .expect("test png file should be writable");
+        path
+    }
+
+    #[test]
+    fn extract_icons_from_paths_should_shrink_large_raster_images() {
+        let path = write_temp_png_file(384, 256);
+        let result = extract_icons_from_paths(vec![path.to_string_lossy().to_string()], None);
+
+        let icon = result
+            .into_iter()
+            .next()
+            .flatten()
+            .expect("icon should be extracted");
+
+        let bytes = STANDARD
+            .decode(icon.strip_prefix("data:image/png;base64,").unwrap_or(&icon))
+            .expect("icon should be decodable");
+        let decoded = image::load_from_memory(&bytes).expect("decoded icon should be valid image");
+        assert!(
+            decoded.width() <= 128 && decoded.height() <= 128,
+            "expected icon to be scaled down, got {}x{}",
+            decoded.width(),
+            decoded.height()
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn extract_icons_from_paths_should_preserve_svg_data_uri_prefix() {
+        let mut path = std::env::temp_dir();
+        let unique = format!(
+            "air-icon-launcher-icon-test-{}.svg",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        );
+        path.push(unique);
+        std::fs::write(
+            &path,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" fill="#00a2ff"/></svg>"##,
+        )
+        .expect("test svg file should be writable");
+
+        let result = extract_icons_from_paths(vec![path.to_string_lossy().to_string()], None);
+        let icon = result
+            .into_iter()
+            .next()
+            .flatten()
+            .expect("svg icon should be extracted");
+
+        assert!(
+            icon.starts_with("data:image/svg+xml;base64,"),
+            "expected svg icon to keep a svg data uri prefix, got {icon}"
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
 }

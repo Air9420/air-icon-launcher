@@ -151,7 +151,8 @@ fn scan_installed_apps_windows(app: AppHandle) -> AppResult<Vec<InstalledAppEntr
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
         let icon_start = std::time::Instant::now();
-        let icon_base64s: Vec<Option<String>> = drag::extract_icons_from_paths(icon_paths.clone());
+        let icon_base64s: Vec<Option<String>> =
+            drag::extract_icons_from_paths(icon_paths.clone(), None);
         eprintln!(
             "[scan_installed_apps] 图标提取耗时: {:?}",
             icon_start.elapsed()
@@ -812,7 +813,7 @@ fn normalize_name_for_matching(value: &str) -> String {
 }
 
 pub fn extract_icon_for_path(icon_path: &str) -> Option<String> {
-    drag::extract_icons_from_paths(vec![icon_path.to_string()])
+    drag::extract_icons_from_paths(vec![icon_path.to_string()], None)
         .into_iter()
         .next()
         .flatten()

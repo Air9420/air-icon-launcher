@@ -41,6 +41,7 @@ pub struct HotkeyConfig {
 }
 
 impl HotkeyConfig {
+    #[allow(dead_code)]
     pub fn matches(&self, vk: u32, ctrl: bool, shift: bool, alt: bool, win: bool) -> bool {
         self.vk == vk
             && self.ctrl == ctrl
@@ -72,6 +73,7 @@ pub fn register_hotkey(config: HotkeyConfig) {
     REGISTERED_MODS.store(mods, Ordering::Relaxed);
 }
 
+#[allow(dead_code)]
 pub fn unregister_hotkey() {
     REGISTERED_VK.store(0, Ordering::Relaxed);
     REGISTERED_MODS.store(0, Ordering::Relaxed);
@@ -81,6 +83,7 @@ pub fn enable_hook(enabled: bool) {
     HOOK_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
+#[allow(dead_code)]
 pub fn is_hook_enabled() -> bool {
     HOOK_ENABLED.load(Ordering::Relaxed)
 }

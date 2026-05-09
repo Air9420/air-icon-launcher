@@ -742,7 +742,10 @@ async function hydrateMissingIconsForItems(
     if (fileItems.length > 0) {
         const paths = fileItems.map((t) => t.item.path);
         try {
-            const result = await invoke<Array<string | null>>("extract_icons_from_paths", { paths });
+            const result = await invoke<Array<string | null>>("extract_icons_from_paths", {
+                paths,
+                maxEdge: 128,
+            });
             for (let i = 0; i < fileItems.length; i++) {
                 const icon = result[i];
                 if (icon) {
