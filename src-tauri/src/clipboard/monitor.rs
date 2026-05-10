@@ -8,9 +8,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 #[cfg(not(target_os = "windows"))]
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(not(target_os = "windows"))]
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 use tauri::{Emitter, Manager};
 
@@ -96,7 +96,7 @@ pub fn start_clipboard_monitor(app_handle: AppHandle, state: Arc<ClipboardState>
         *s = Some(sender.clone());
     }
 
-    crate::clipboard::writer::start_writer_thread(receiver.clone(), state.clone());
+    let _ = crate::clipboard::writer::start_writer_thread(receiver.clone(), state.clone());
 
     let cache = state.cache.clone();
     let last_content_hash = state.last_content_hash.clone();
@@ -177,6 +177,9 @@ pub fn stop_clipboard_monitor(state: &Arc<ClipboardState>) {
     {
         stop_clipboard_listener();
     }
+
+    let mut cache = state.cache.lock().unwrap();
+    cache.clear_and_release();
 }
 
 fn process_clipboard_change(

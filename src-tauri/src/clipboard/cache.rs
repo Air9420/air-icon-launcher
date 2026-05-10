@@ -66,6 +66,9 @@ impl ClipboardCache {
                 removed.push(old);
             }
         }
+        if !removed.is_empty() {
+            self.release_excess_capacity();
+        }
         removed
     }
 
@@ -82,13 +85,43 @@ impl ClipboardCache {
     }
 
     pub fn remove_by_ids(&mut self, ids: &[String]) -> Vec<ClipboardRecord> {
-        ids.iter()
-            .filter_map(|id| self.remove_by_id(id))
-            .collect()
+        ids.iter().filter_map(|id| self.remove_by_id(id)).collect()
     }
 
     pub(crate) fn clear_buffer_hashes(&mut self) {
         self.buffer_hashes.clear();
+    }
+
+    pub fn clear_and_release(&mut self) {
+        self.list = VecDeque::new();
+        self.hash_index = HashSet::new();
+        self.content_index = HashMap::new();
+        self.buffer_hashes = HashSet::new();
+    }
+
+    fn release_excess_capacity(&mut self) {
+        let retained_records = self.list.len().max(1);
+        let should_release = self.list.capacity() > retained_records.saturating_mul(2)
+            || self.hash_index.capacity() > retained_records.saturating_mul(2)
+            || self.content_index.capacity() > retained_records.saturating_mul(2)
+            || self.buffer_hashes.capacity() > retained_records.saturating_mul(2);
+
+        if !should_release {
+            return;
+        }
+
+        self.list.shrink_to_fit();
+        self.hash_index.shrink_to_fit();
+        self.content_index.shrink_to_fit();
+        self.buffer_hashes.shrink_to_fit();
+    }
+
+    #[cfg(test)]
+    fn retained_capacity(&self) -> usize {
+        self.list.capacity()
+            + self.hash_index.capacity()
+            + self.content_index.capacity()
+            + self.buffer_hashes.capacity()
     }
 
     pub fn get_all(&self) -> Vec<ClipboardRecord> {
@@ -123,5 +156,50 @@ impl EventDeduplicator {
         self.last_event_hash = Some(hash.to_string());
         self.last_event_time = Some(now);
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(index: usize) -> ClipboardRecord {
+        ClipboardRecord {
+            id: format!("clip-{index}"),
+            record_type: "text".to_string(),
+            text_content: Some("x".repeat(1024)),
+            image_path: None,
+            hash: format!("hash-{index}"),
+            timestamp: index as u64,
+        }
+    }
+
+    #[test]
+    fn clear_and_release_drops_cached_records_and_reserved_capacity() {
+        let mut cache = ClipboardCache::new();
+        for index in 0..128 {
+            cache.push_with_limit(record(index), 0);
+        }
+        assert!(cache.retained_capacity() > 0);
+
+        cache.clear_and_release();
+
+        assert!(cache.get_all().is_empty());
+        assert_eq!(cache.retained_capacity(), 0);
+    }
+
+    #[test]
+    fn enforce_max_records_releases_excess_capacity_after_pruning() {
+        let mut cache = ClipboardCache::new();
+        for index in 0..128 {
+            cache.push_with_limit(record(index), 0);
+        }
+        let capacity_before = cache.retained_capacity();
+
+        let removed = cache.enforce_max_records(2);
+
+        assert_eq!(removed.len(), 126);
+        assert_eq!(cache.get_all().len(), 2);
+        assert!(cache.retained_capacity() < capacity_before);
     }
 }

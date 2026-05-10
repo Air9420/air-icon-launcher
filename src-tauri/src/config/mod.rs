@@ -1,8 +1,10 @@
 pub mod types;
 
 use crate::error::{AppError, AppResult};
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
+use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
@@ -11,11 +13,56 @@ pub use types::*;
 pub const CONFIG_VERSION: &str = "1.0";
 const AI_ORGANIZER_API_KEY_ENV_VAR: &str = "AIR_ICON_LAUNCHER_AI_API_KEY";
 
-fn write_atomically(path: &Path, data: &[u8]) -> Result<(), String> {
+fn write_json_pretty_atomically<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     let temp_path = path.with_extension("tmp");
-    fs::write(&temp_path, data).map_err(|e| e.to_string())?;
-    fs::rename(&temp_path, path).map_err(|e| e.to_string())
+    let result = (|| {
+        let file = fs::File::create(&temp_path).map_err(|e| e.to_string())?;
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer_pretty(&mut writer, value).map_err(|e| e.to_string())?;
+        writer.flush().map_err(|e| e.to_string())
+    })();
+
+    if let Err(err) = result {
+        let _ = fs::remove_file(&temp_path);
+        return Err(err);
+    }
+
+    fs::rename(&temp_path, path).map_err(|e| {
+        let _ = fs::remove_file(&temp_path);
+        e.to_string()
+    })
 }
+
+fn write_json_pretty_to_file<T: Serialize>(path: &Path, value: &T) -> AppResult<()> {
+    let file = fs::File::create(path).map_err(|e| AppError::io_error(e.to_string()))?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer_pretty(&mut writer, value)
+        .map_err(|e| AppError::new("SERIALIZE_ERROR", e.to_string()))?;
+    writer
+        .flush()
+        .map_err(|e| AppError::io_error(e.to_string()))
+}
+
+fn release_operation_memory() {
+    release_operation_memory_impl();
+}
+
+#[cfg(target_os = "windows")]
+fn release_operation_memory_impl() {
+    use windows::Win32::System::Memory::{GetProcessHeap, HeapCompact, HEAP_FLAGS};
+    use windows::Win32::System::ProcessStatus::EmptyWorkingSet;
+    use windows::Win32::System::Threading::GetCurrentProcess;
+
+    unsafe {
+        if let Ok(heap) = GetProcessHeap() {
+            let _ = HeapCompact(heap, HEAP_FLAGS(0));
+        }
+        let _ = EmptyWorkingSet(GetCurrentProcess());
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn release_operation_memory_impl() {}
 
 fn normalize_api_key(raw: &str) -> String {
     raw.trim().to_string()
@@ -136,19 +183,56 @@ fn preserve_missing_imported_config_fields(
     Ok(())
 }
 
-fn deserialize_export_data_with_current_config(
-    content: &str,
+#[derive(Deserialize)]
+struct RawExportData {
+    version: String,
+    export_time: u64,
+    launcher_data: Option<LauncherData>,
+    settings: Option<serde_json::Value>,
+    plugins: Option<Vec<PluginData>>,
+}
+
+fn export_data_from_raw(
+    mut raw: RawExportData,
     current_config: &AppConfig,
 ) -> AppResult<ExportData> {
-    let mut raw: serde_json::Value =
-        serde_json::from_str(content).map_err(|e| AppError::new("PARSE_ERROR", e.to_string()))?;
-
-    if let Some(settings) = raw.get_mut("settings") {
+    if let Some(settings) = raw.settings.as_mut() {
         preserve_missing_imported_config_fields(settings, current_config)
             .map_err(|e| AppError::new("PARSE_ERROR", e))?;
     }
 
-    serde_json::from_value(raw).map_err(|e| AppError::new("PARSE_ERROR", e.to_string()))
+    let settings = raw
+        .settings
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|e| AppError::new("PARSE_ERROR", e.to_string()))?;
+
+    Ok(ExportData {
+        version: raw.version,
+        export_time: raw.export_time,
+        launcher_data: raw.launcher_data,
+        settings,
+        plugins: raw.plugins,
+    })
+}
+
+fn deserialize_export_data_reader_with_current_config<R: Read>(
+    reader: R,
+    current_config: &AppConfig,
+) -> AppResult<ExportData> {
+    let raw: RawExportData =
+        serde_json::from_reader(reader).map_err(|e| AppError::new("PARSE_ERROR", e.to_string()))?;
+    export_data_from_raw(raw, current_config)
+}
+
+#[cfg(test)]
+fn deserialize_export_data_with_current_config(
+    content: &str,
+    current_config: &AppConfig,
+) -> AppResult<ExportData> {
+    let raw: RawExportData =
+        serde_json::from_str(content).map_err(|e| AppError::new("PARSE_ERROR", e.to_string()))?;
+    export_data_from_raw(raw, current_config)
 }
 
 fn apply_app_config_patch(config: &mut AppConfig, patch: AppConfigPatch) {
@@ -490,9 +574,8 @@ impl ConfigManager {
     }
 
     pub fn save_config(&self, config: &AppConfig) -> Result<(), String> {
-        let content =
-            serde_json::to_string_pretty(&redacted_config(config)).map_err(|e| e.to_string())?;
-        write_atomically(&self.config_path, content.as_bytes())
+        let redacted = redacted_config(config);
+        write_json_pretty_atomically(&self.config_path, &redacted)
     }
 
     pub fn save_config_with_runtime_ai_key(&self, config: &AppConfig) -> Result<(), String> {
@@ -516,8 +599,7 @@ impl ConfigManager {
 
     pub fn save_launcher_data(&self, data: &LauncherData) -> Result<(), String> {
         let sanitized = sanitize_launcher_data(data.clone());
-        let content = serde_json::to_string_pretty(&sanitized).map_err(|e| e.to_string())?;
-        write_atomically(&self.launcher_data_path, content.as_bytes())
+        write_json_pretty_atomically(&self.launcher_data_path, &sanitized)
     }
 
     pub fn get_backups_dir(&self) -> PathBuf {
@@ -538,16 +620,24 @@ impl ConfigManager {
         let backup_path = self.backups_dir.join(&backup_name);
         let redacted = redacted_config(config);
 
-        let backup_data = serde_json::json!({
-            "version": CONFIG_VERSION,
-            "backup_time": timestamp,
-            "config": redacted,
-            "launcher_data": launcher_data,
-        });
+        #[derive(Serialize)]
+        struct BackupData<'a> {
+            version: &'static str,
+            backup_time: u64,
+            config: AppConfig,
+            launcher_data: &'a LauncherData,
+        }
 
-        let content = serde_json::to_string_pretty(&backup_data).map_err(|e| e.to_string())?;
-
-        write_atomically(&backup_path, content.as_bytes())?;
+        write_json_pretty_atomically(
+            &backup_path,
+            &BackupData {
+                version: CONFIG_VERSION,
+                backup_time: timestamp,
+                config: redacted,
+                launcher_data,
+            },
+        )?;
+        release_operation_memory();
 
         Ok(backup_path.to_string_lossy().to_string())
     }
@@ -597,10 +687,9 @@ impl ConfigManager {
             return Err("Backup file not found".to_string());
         }
 
-        let content = fs::read_to_string(&backup_path).map_err(|e| e.to_string())?;
-
         let mut backup: serde_json::Value =
-            serde_json::from_str(&content).map_err(|e| e.to_string())?;
+            serde_json::from_reader(fs::File::open(&backup_path).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
         let current_config = self.load_config();
 
         if let Some(config) = backup.get_mut("config") {
@@ -775,6 +864,7 @@ pub fn restore_backup(
             Some(&app_handle),
             Some(clipboard_state.inner()),
         );
+        release_operation_memory();
         return Err(err);
     }
     if let Err(err) = manager
@@ -788,6 +878,7 @@ pub fn restore_backup(
             Some(&app_handle),
             Some(clipboard_state.inner()),
         );
+        release_operation_memory();
         return Err(err);
     }
     if let Err(err) =
@@ -801,10 +892,17 @@ pub fn restore_backup(
             Some(&app_handle),
             Some(clipboard_state.inner()),
         );
+        release_operation_memory();
         return Err(err);
     }
 
-    Ok(current_export_data(&manager))
+    drop(previous_launcher_data);
+    drop(previous_config);
+    drop(launcher_data);
+    drop(config);
+    let current = current_export_data(&manager);
+    release_operation_memory();
+    Ok(current)
 }
 
 #[tauri::command]
@@ -978,6 +1076,7 @@ fn import_data_with_rollback(
             app_handle,
             clipboard_state,
         );
+        release_operation_memory();
         return Err(err);
     }
 
@@ -991,9 +1090,13 @@ fn import_data_with_rollback(
             app_handle,
             clipboard_state,
         );
+        release_operation_memory();
         return Err(err);
     }
 
+    drop(previous_launcher_data);
+    drop(previous_config);
+    release_operation_memory();
     Ok(())
 }
 
@@ -1034,24 +1137,18 @@ pub fn export_to_file(
 
     match format.as_str() {
         "json" => {
-            let content = serde_json::to_string_pretty(&data)
-                .map_err(|e| AppError::new("SERIALIZE_ERROR", e.to_string()))?;
-            fs::write(&path, content).map_err(|e| AppError::io_error(e.to_string()))?;
+            write_json_pretty_to_file(&path, &data)?;
         }
         "zip" => {
-            use std::io::Write;
             let file = fs::File::create(&path).map_err(|e| AppError::io_error(e.to_string()))?;
             let mut zip = zip::ZipWriter::new(file);
             let options = zip::write::FileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated);
 
-            let json_content = serde_json::to_string_pretty(&data)
-                .map_err(|e| AppError::new("SERIALIZE_ERROR", e.to_string()))?;
-
             zip.start_file("export.json", options)
                 .map_err(|e| AppError::new("ZIP_ERROR", e.to_string()))?;
-            zip.write_all(json_content.as_bytes())
-                .map_err(|e| AppError::new("ZIP_ERROR", e.to_string()))?;
+            serde_json::to_writer_pretty(&mut zip, &data)
+                .map_err(|e| AppError::new("SERIALIZE_ERROR", e.to_string()))?;
 
             zip.finish()
                 .map_err(|e| AppError::new("ZIP_ERROR", e.to_string()))?;
@@ -1064,6 +1161,8 @@ pub fn export_to_file(
         }
     }
 
+    drop(data);
+    release_operation_memory();
     Ok(())
 }
 
@@ -1075,24 +1174,18 @@ pub fn export_data_to_file(path: String, format: String, data: serde_json::Value
 
     match format.as_str() {
         "json" => {
-            let content = serde_json::to_string_pretty(&data)
-                .map_err(|e| AppError::new("SERIALIZE_ERROR", e.to_string()))?;
-            fs::write(&path, content).map_err(|e| AppError::io_error(e.to_string()))?;
+            write_json_pretty_to_file(&path, &data)?;
         }
         "zip" => {
-            use std::io::Write;
             let file = fs::File::create(&path).map_err(|e| AppError::io_error(e.to_string()))?;
             let mut zip = zip::ZipWriter::new(file);
             let options = zip::write::FileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated);
 
-            let json_content = serde_json::to_string_pretty(&data)
-                .map_err(|e| AppError::new("SERIALIZE_ERROR", e.to_string()))?;
-
             zip.start_file("export.json", options)
                 .map_err(|e| AppError::new("ZIP_ERROR", e.to_string()))?;
-            zip.write_all(json_content.as_bytes())
-                .map_err(|e| AppError::new("ZIP_ERROR", e.to_string()))?;
+            serde_json::to_writer_pretty(&mut zip, &data)
+                .map_err(|e| AppError::new("SERIALIZE_ERROR", e.to_string()))?;
 
             zip.finish()
                 .map_err(|e| AppError::new("ZIP_ERROR", e.to_string()))?;
@@ -1105,6 +1198,8 @@ pub fn export_data_to_file(path: String, format: String, data: serde_json::Value
         }
     }
 
+    drop(data);
+    release_operation_memory();
     Ok(())
 }
 
@@ -1128,14 +1223,10 @@ pub fn import_from_file(
             .by_name("export.json")
             .map_err(|e| AppError::new("ZIP_ERROR", format!("File not found in zip: {}", e)))?;
 
-        let mut content = String::new();
-        std::io::Read::read_to_string(&mut json_file, &mut content)
-            .map_err(|e| AppError::io_error(e.to_string()))?;
-
-        deserialize_export_data_with_current_config(&content, &current_config)?
+        deserialize_export_data_reader_with_current_config(&mut json_file, &current_config)?
     } else {
-        let content = fs::read_to_string(&path).map_err(|e| AppError::io_error(e.to_string()))?;
-        deserialize_export_data_with_current_config(&content, &current_config)?
+        let file = fs::File::open(&path).map_err(|e| AppError::io_error(e.to_string()))?;
+        deserialize_export_data_reader_with_current_config(file, &current_config)?
     };
 
     import_data_with_rollback(
@@ -1146,7 +1237,9 @@ pub fn import_from_file(
         Some(clipboard_state.inner()),
     )?;
 
-    Ok(current_export_data(&manager))
+    let current = current_export_data(&manager);
+    release_operation_memory();
+    Ok(current)
 }
 
 #[cfg(test)]
@@ -1175,6 +1268,56 @@ mod tests {
         ));
         std::fs::create_dir_all(&base).unwrap();
         base
+    }
+
+    #[test]
+    fn write_json_pretty_atomically_writes_valid_json_without_prebuilt_string() {
+        let base = create_test_base("json-writer");
+        let path = base.join("data.json");
+        let value = serde_json::json!({
+            "settings": {
+                "theme": "dark"
+            },
+            "launcher_data": {
+                "categories": []
+            }
+        });
+
+        write_json_pretty_atomically(&path, &value).unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed, value);
+        assert!(raw.contains('\n'));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn write_json_pretty_atomically_removes_temp_file_after_serialize_error() {
+        use serde::ser::{Serialize, Serializer};
+
+        struct FailingSerialize;
+
+        impl Serialize for FailingSerialize {
+            fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                Err(serde::ser::Error::custom("forced serialize failure"))
+            }
+        }
+
+        let base = create_test_base("json-writer-fail");
+        let path = base.join("data.json");
+
+        let err = write_json_pretty_atomically(&path, &FailingSerialize).unwrap_err();
+
+        assert!(err.contains("forced serialize failure"));
+        assert!(!path.exists());
+        assert!(!path.with_extension("tmp").exists());
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

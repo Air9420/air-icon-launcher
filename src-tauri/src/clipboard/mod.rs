@@ -384,10 +384,7 @@ pub fn get_clipboard_history(
 pub fn clear_clipboard_history(state: tauri::State<'_, Arc<ClipboardState>>) -> Result<(), String> {
     {
         let mut cache = state.cache.lock().unwrap();
-        cache.list.clear();
-        cache.hash_index.clear();
-        cache.content_index.clear();
-        cache.buffer_hashes.clear();
+        cache.clear_and_release();
     }
 
     if let Some(db) = state.database.lock().unwrap().as_ref() {
