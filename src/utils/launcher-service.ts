@@ -17,7 +17,8 @@ export interface LaunchStoredItemOptions {
 }
 
 export function ensureUrlProtocol(url: string): string {
-    if (url.startsWith("http://") || url.startsWith("https://")) {
+    const trimmed = url.trim();
+    if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
         return url;
     }
     return `https://${url}`;

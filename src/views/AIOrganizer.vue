@@ -263,6 +263,7 @@ import { discoverPatterns } from "../utils/classification/pattern-discovery";
 import { useRuleProposalStore } from "../utils/classification/rule-proposal";
 import { useWebAiExportStore } from "../composables/useWebAiExport";
 import { extractErrorMessage, invokeOrThrow } from "../utils/invoke-wrapper";
+import { getScannedLauncherFilePath, getScannedLauncherUrl, getScannedLaunchType } from "../utils/scanned-app-launch";
 import { writeTextFileViaCommand } from "../utils/system-commands";
 
 type DraftSuggestionItem = OrganizerSuggestionItem & {
@@ -868,11 +869,22 @@ async function applySuggestions() {
 
             nextItemsByCategoryId[categoryId] = selectedItems.map((item) => {
                 const iconBase64 = item.icon_base64 ?? null;
+                const scanEntry = {
+                    path: item.path,
+                    targetPath: item.target_path,
+                    launchType: item.launch_type,
+                    source: item.source,
+                };
+                const launchType = getScannedLaunchType(scanEntry);
+                const launcherPath = getScannedLauncherFilePath(scanEntry);
+                const launcherUrl = getScannedLauncherUrl(scanEntry);
                 return {
                     id: launcherStore.createLauncherItemId(),
                     name: item.name,
-                    path: item.path,
-                    itemType: "file",
+                    path: launchType === "file" ? launcherPath : "",
+                    resolvedPath: launchType === "file" ? launcherPath : undefined,
+                    url: launchType === "file" ? undefined : launcherUrl,
+                    itemType: launchType === "file" ? "file" : "url",
                     isDirectory: false,
                     iconBase64,
                     hasCustomIcon: false,

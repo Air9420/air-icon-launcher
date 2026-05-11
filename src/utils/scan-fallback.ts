@@ -4,6 +4,7 @@ import {
   type ScannedMatchType,
   type ScannedSearchMatch,
 } from "../types/scan-cache";
+import { normalizeScannedLaunchKey } from "./scanned-app-launch";
 
 const NOISE_NAMES = new Set([
   "uninstall", "unins", "卸载", "删除",
@@ -110,13 +111,18 @@ function getExeStem(path: string): string {
     .trim() || "";
 }
 
+function getSearchablePath(entry: ScannedAppEntry): string {
+  return entry.targetPath?.trim() || entry.path;
+}
+
 function isNonLauncherExecutable(path: string): boolean {
   return NON_LAUNCHER_EXECUTABLES.has(getExeStem(path));
 }
 
 function isInstallerEntry(entry: ScannedAppEntry): boolean {
-  const normalizedPath = entry.path.replace(/\\/g, "/").toLowerCase();
-  const exeStem = getExeStem(entry.path);
+  const searchablePath = getSearchablePath(entry);
+  const normalizedPath = searchablePath.replace(/\\/g, "/").toLowerCase();
+  const exeStem = getExeStem(searchablePath);
   const lowerName = entry.name.toLowerCase();
 
   if (INSTALLER_ONLY_EXE_STEMS.has(exeStem)) return true;
@@ -131,10 +137,11 @@ function isInstallerEntry(entry: ScannedAppEntry): boolean {
 }
 
 function isRuntimeComponent(entry: ScannedAppEntry): boolean {
-  const normalizedPath = entry.path.replace(/\\/g, "/").toLowerCase();
+  const searchablePath = getSearchablePath(entry);
+  const normalizedPath = searchablePath.replace(/\\/g, "/").toLowerCase();
   const lowerName = entry.name.toLowerCase();
   const lowerPublisher = (entry.publisher || "").toLowerCase();
-  const exeStem = getExeStem(entry.path);
+  const exeStem = getExeStem(searchablePath);
   const isPackageCache = COMPONENT_PATH_KEYWORDS.some((kw) => normalizedPath.includes(kw));
   const hasComponentName = COMPONENT_NAME_KEYWORDS.some((kw) => lowerName.includes(kw));
   const hasComponentExe = COMPONENT_EXE_STEMS.has(exeStem);
@@ -169,15 +176,16 @@ export function matchScannedApps(
   const results: ScannedSearchMatch[] = [];
 
   for (const entry of apps) {
-    const pathKey = normalizePathKey(entry.path);
+    const pathKey = normalizeScannedLaunchKey(entry);
     if (launcherPathKeys.has(pathKey)) continue;
     if (isNoiseName(entry.name)) continue;
-    if (isNonLauncherExecutable(entry.path)) continue;
+    const searchablePath = getSearchablePath(entry);
+    if (isNonLauncherExecutable(searchablePath)) continue;
 
     const name = entry.name.toLowerCase();
     const namePinyinFull = normalizePinyin(entry.namePinyinFull);
     const namePinyinInitial = normalizePinyin(entry.namePinyinInitial);
-    const exeStem = getExeStem(entry.path);
+    const exeStem = getExeStem(searchablePath);
     if (isRuntimeComponent(entry)) continue;
 
     let score = 0;
@@ -239,7 +247,7 @@ export function matchScannedApps(
     }
 
     if (score > 0) {
-      const uninstallCandidate = isUninstallPath(entry.path);
+      const uninstallCandidate = isUninstallPath(searchablePath);
       const installerCandidate = isInstallerEntry(entry);
       let mergedEntry: ScannedAppEntry = entry;
       if (uninstallCandidate) {

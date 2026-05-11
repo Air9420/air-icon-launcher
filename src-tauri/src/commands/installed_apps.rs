@@ -34,9 +34,25 @@ struct ScanRoot {
 pub struct InstalledAppEntry {
     pub name: String,
     pub path: String,
+    pub target_path: Option<String>,
+    pub launch_type: InstalledAppLaunchType,
     pub icon_base64: Option<String>,
     pub source: String,
     pub publisher: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InstalledAppLaunchType {
+    File,
+    Shell,
+    Protocol,
+}
+
+impl Default for InstalledAppLaunchType {
+    fn default() -> Self {
+        InstalledAppLaunchType::File
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -50,6 +66,9 @@ pub struct IconUpdateEvent {
 struct CandidateApp {
     display_name: String,
     launch_path: PathBuf,
+    real_target_path: Option<PathBuf>,
+    target_arguments: Option<String>,
+    launch_type: InstalledAppLaunchType,
     dedupe_path: PathBuf,
     icon_path: PathBuf,
     source: &'static str,
@@ -81,52 +100,55 @@ pub async fn scan_installed_apps(app: AppHandle) -> AppResult<Vec<InstalledAppEn
 fn scan_installed_apps_windows(app: AppHandle) -> AppResult<Vec<InstalledAppEntry>> {
     let start_total = std::time::Instant::now();
 
-    let ((registry_candidates, registry_elapsed), ((desktop_candidates, desktop_elapsed), ((start_menu_candidates, start_menu_elapsed), (apps_folder_candidates, apps_folder_elapsed)))) =
-        rayon::join(
-            || {
-                let start = std::time::Instant::now();
-                (collect_registry_candidates(), start.elapsed())
-            },
-            || {
-                rayon::join(
-                    || {
-                        let start = std::time::Instant::now();
-                        (
-                            collect_candidates_from_roots(
-                                &collect_desktop_roots(),
-                                MAX_SCAN_RESULTS,
-                            ),
-                            start.elapsed(),
-                        )
-                    },
-                    || {
-                        rayon::join(
-                            || {
-                                let start = std::time::Instant::now();
-                                (
-                                    collect_candidates_from_roots(
-                                        &collect_start_menu_roots(),
-                                        MAX_SCAN_RESULTS
-                                            .saturating_mul(START_MENU_OVERSCAN_FACTOR),
-                                    ),
-                                    start.elapsed(),
-                                )
-                            },
-                            || {
-                                let start = std::time::Instant::now();
-                                (
-                                    collect_apps_folder_candidates(
-                                        MAX_SCAN_RESULTS
-                                            .saturating_mul(APPS_FOLDER_OVERSCAN_FACTOR),
-                                    ),
-                                    start.elapsed(),
-                                )
-                            },
-                        )
-                    },
-                )
-            },
-        );
+    let (
+        (registry_candidates, registry_elapsed),
+        (
+            (desktop_candidates, desktop_elapsed),
+            (
+                (start_menu_candidates, start_menu_elapsed),
+                (apps_folder_candidates, apps_folder_elapsed),
+            ),
+        ),
+    ) = rayon::join(
+        || {
+            let start = std::time::Instant::now();
+            (collect_registry_candidates(), start.elapsed())
+        },
+        || {
+            rayon::join(
+                || {
+                    let start = std::time::Instant::now();
+                    (
+                        collect_candidates_from_roots(&collect_desktop_roots(), MAX_SCAN_RESULTS),
+                        start.elapsed(),
+                    )
+                },
+                || {
+                    rayon::join(
+                        || {
+                            let start = std::time::Instant::now();
+                            (
+                                collect_candidates_from_roots(
+                                    &collect_start_menu_roots(),
+                                    MAX_SCAN_RESULTS.saturating_mul(START_MENU_OVERSCAN_FACTOR),
+                                ),
+                                start.elapsed(),
+                            )
+                        },
+                        || {
+                            let start = std::time::Instant::now();
+                            (
+                                collect_apps_folder_candidates(
+                                    MAX_SCAN_RESULTS.saturating_mul(APPS_FOLDER_OVERSCAN_FACTOR),
+                                ),
+                                start.elapsed(),
+                            )
+                        },
+                    )
+                },
+            )
+        },
+    );
 
     eprintln!(
         "[scan_installed_apps] 注册表读取耗时: {:?}，候选数: {}",
@@ -177,6 +199,11 @@ fn scan_installed_apps_windows(app: AppHandle) -> AppResult<Vec<InstalledAppEntr
         .map(|candidate| InstalledAppEntry {
             name: candidate.display_name.clone(),
             path: candidate.launch_path.to_string_lossy().to_string(),
+            target_path: candidate
+                .real_target_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().to_string()),
+            launch_type: candidate.launch_type,
             icon_base64: None,
             source: candidate.source.to_string(),
             publisher: candidate.publisher.clone(),
@@ -205,7 +232,10 @@ fn scan_installed_apps_windows(app: AppHandle) -> AppResult<Vec<InstalledAppEntr
     let icon_start = std::time::Instant::now();
     let extracted_icons = drag::extract_icons_from_paths(icon_extract_paths, None);
     let mut icon_base64s: Vec<Option<String>> = vec![None; icon_paths.len()];
-    for ((idx, _), icon) in icon_extract_jobs.into_iter().zip(extracted_icons.into_iter()) {
+    for ((idx, _), icon) in icon_extract_jobs
+        .into_iter()
+        .zip(extracted_icons.into_iter())
+    {
         if idx < icon_base64s.len() {
             icon_base64s[idx] = icon;
         }
@@ -447,6 +477,9 @@ fn build_candidate_from_registry(key: &RegKey) -> Option<CandidateApp> {
     Some(CandidateApp {
         display_name,
         launch_path,
+        real_target_path: Some(dedupe_path.clone()),
+        target_arguments: None,
+        launch_type: InstalledAppLaunchType::File,
         dedupe_path,
         icon_path,
         source: "注册表",
@@ -671,17 +704,43 @@ fn sort_and_dedupe_candidates(
     let mut seen_aliases = HashSet::<String>::new();
     let mut seen_semantics = HashSet::<String>::new();
     let mut seen_real_targets = HashSet::<String>::new();
+    let mut seen_launch_families = HashSet::<String>::new();
     let mut deduped = Vec::new();
 
     for candidate in candidates {
         let path_key = normalize_path_key(&candidate.dedupe_path);
         let alias_key = normalize_alias_key(&candidate.launch_path, &candidate.display_name);
-        let semantic_key = normalize_semantic_launch_key(&candidate.launch_path, &candidate.display_name);
-        let real_target_key = normalize_real_launch_target_key(&candidate.launch_path);
+        let semantic_key =
+            normalize_semantic_launch_key(&candidate.launch_path, &candidate.display_name);
+        let real_target_path = candidate
+            .real_target_path
+            .as_deref()
+            .unwrap_or(&candidate.launch_path);
+        let shell_target_has_arguments = candidate.launch_type == InstalledAppLaunchType::Shell
+            && candidate
+                .target_arguments
+                .as_deref()
+                .map(str::trim)
+                .map(|value| !value.is_empty())
+                .unwrap_or(false);
+        let real_target_key = if shell_target_has_arguments {
+            String::new()
+        } else {
+            normalize_real_launch_target_key(real_target_path)
+        };
+        let launch_family_key = if shell_target_has_arguments {
+            String::new()
+        } else {
+            normalize_launch_family_key(real_target_path, &candidate.display_name)
+        };
+        let shell_target_with_args_key = normalize_shell_target_with_args_key(&candidate);
         if (!path_key.is_empty() && seen_paths.contains(&path_key))
             || (!alias_key.is_empty() && seen_aliases.contains(&alias_key))
             || (!semantic_key.is_empty() && seen_semantics.contains(&semantic_key))
             || (!real_target_key.is_empty() && seen_real_targets.contains(&real_target_key))
+            || (!launch_family_key.is_empty() && seen_launch_families.contains(&launch_family_key))
+            || (!shell_target_with_args_key.is_empty()
+                && seen_semantics.contains(&shell_target_with_args_key))
         {
             continue;
         }
@@ -697,6 +756,12 @@ fn sort_and_dedupe_candidates(
         }
         if !real_target_key.is_empty() {
             seen_real_targets.insert(real_target_key);
+        }
+        if !launch_family_key.is_empty() {
+            seen_launch_families.insert(launch_family_key);
+        }
+        if !shell_target_with_args_key.is_empty() {
+            seen_semantics.insert(shell_target_with_args_key);
         }
 
         deduped.push(candidate);
@@ -755,10 +820,14 @@ fn build_candidate_from_path(
     };
 
     let icon_path = determine_candidate_icon_path(&extension, source, path, &launch_path);
+    let real_target_path = Some(launch_path.clone());
 
     Some(CandidateApp {
         display_name,
         launch_path,
+        real_target_path,
+        target_arguments: None,
+        launch_type: InstalledAppLaunchType::File,
         dedupe_path,
         icon_path,
         source,
@@ -866,10 +935,7 @@ fn is_supported_launch_path(path: &Path) -> bool {
         .map(|ext| ext.to_ascii_lowercase());
 
     match extension.as_deref() {
-        Some("exe")
-        | Some("lnk")
-        | Some("cmd")
-        | Some("appref-ms") => true,
+        Some("exe") | Some("lnk") | Some("cmd") | Some("appref-ms") => true,
         _ => false,
     }
 }
@@ -961,7 +1027,50 @@ fn normalize_semantic_launch_key(path: &Path, display_name: &str) -> String {
 }
 
 #[cfg(windows)]
+fn normalize_shell_target_with_args_key(candidate: &CandidateApp) -> String {
+    if candidate.launch_type != InstalledAppLaunchType::Shell {
+        return String::new();
+    }
+
+    let Some(target) = candidate.real_target_path.as_deref() else {
+        return String::new();
+    };
+    let target_key = normalize_path_key(target);
+    if target_key.is_empty() {
+        return String::new();
+    }
+
+    let args_key = candidate
+        .target_arguments
+        .as_deref()
+        .map(normalize_command_arguments_key)
+        .unwrap_or_default();
+    if args_key.is_empty() {
+        format!("shell_target::{target_key}")
+    } else {
+        format!("shell_target::{target_key}::{args_key}")
+    }
+}
+
+#[cfg(windows)]
+fn normalize_command_arguments_key(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('"')
+        .replace('/', "\\")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
+#[cfg(windows)]
 fn normalize_real_launch_target_key(path: &Path) -> String {
+    let target = path.to_string_lossy();
+    if is_protocol_launch_target(&target) {
+        return target.trim().to_ascii_lowercase();
+    }
+
     let extension = path
         .extension()
         .and_then(|ext| ext.to_str())
@@ -984,6 +1093,131 @@ fn normalize_real_launch_target_key(path: &Path) -> String {
     }
 
     normalize_path_key(path)
+}
+
+#[cfg(windows)]
+fn is_protocol_launch_target(value: &str) -> bool {
+    let trimmed = value.trim();
+    let Some(colon_index) = trimmed.find(':') else {
+        return false;
+    };
+    let scheme = &trimmed[..colon_index];
+    if scheme.len() < 2 {
+        return false;
+    }
+    let mut chars = scheme.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_alphabetic() {
+        return false;
+    }
+    chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
+}
+
+#[cfg(windows)]
+fn is_absolute_windows_file_path(value: &str) -> bool {
+    let trimmed = value.trim();
+    let bytes = trimmed.as_bytes();
+    if bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+    {
+        return true;
+    }
+    trimmed.starts_with(r"\\")
+}
+
+#[cfg(windows)]
+fn classify_launch_target(
+    launch: &str,
+    real_target: Option<&PathBuf>,
+    target_arguments: Option<&str>,
+) -> InstalledAppLaunchType {
+    if is_protocol_launch_target(launch) {
+        return if launch
+            .trim()
+            .to_ascii_lowercase()
+            .starts_with("shell:appsfolder\\")
+        {
+            InstalledAppLaunchType::Shell
+        } else {
+            InstalledAppLaunchType::Protocol
+        };
+    }
+    if let Some(target) = real_target {
+        let target_text = target.to_string_lossy();
+        if is_protocol_launch_target(&target_text) {
+            return InstalledAppLaunchType::Protocol;
+        }
+    }
+    if target_arguments
+        .map(str::trim)
+        .map(|value| !value.is_empty())
+        .unwrap_or(false)
+    {
+        return InstalledAppLaunchType::Shell;
+    }
+    if real_target
+        .map(|target| is_supported_launch_path(target))
+        .unwrap_or(false)
+        && real_target
+            .map(|target| is_absolute_windows_file_path(&target.to_string_lossy()))
+            .unwrap_or(false)
+    {
+        return InstalledAppLaunchType::File;
+    }
+    InstalledAppLaunchType::Shell
+}
+
+#[cfg(windows)]
+fn normalize_launch_family_key(path: &Path, display_name: &str) -> String {
+    if normalize_real_launch_target_key(path).is_empty() {
+        return String::new();
+    }
+
+    let parent = path.parent().map(normalize_path_key).unwrap_or_default();
+    if parent.is_empty() {
+        return String::new();
+    }
+
+    let token = primary_product_token(display_name);
+    if token.is_empty() {
+        return String::new();
+    }
+
+    format!("{parent}::{token}")
+}
+
+#[cfg(windows)]
+fn primary_product_token(display_name: &str) -> String {
+    const GENERIC_TOKENS: &[&str] = &[
+        "app",
+        "desktop",
+        "exe",
+        "launcher",
+        "microsoft",
+        "program",
+        "setup",
+        "user",
+        "version",
+        "版本",
+    ];
+
+    normalize_name_for_matching(display_name)
+        .split_whitespace()
+        .find(|token| {
+            if token.chars().all(|ch| ch.is_ascii_digit()) {
+                return false;
+            }
+            if token.len() < 2 {
+                return false;
+            }
+            !GENERIC_TOKENS.contains(token)
+        })
+        .unwrap_or_default()
+        .to_string()
 }
 
 #[cfg(windows)]
@@ -1020,7 +1254,10 @@ pub fn extract_icon_for_path(icon_path: &str) -> Option<String> {
 #[cfg(windows)]
 fn resolve_apps_folder_icon_path(path: &str) -> Option<String> {
     let normalized = path.trim();
-    if !normalized.to_ascii_lowercase().starts_with("shell:appsfolder\\") {
+    if !normalized
+        .to_ascii_lowercase()
+        .starts_with("shell:appsfolder\\")
+    {
         return None;
     }
 
@@ -1079,10 +1316,7 @@ fn resolve_apps_folder_icon_path(path: &str) -> Option<String> {
 }
 
 #[cfg(windows)]
-fn resolve_apps_folder_manifest_executable(
-    install_location: &str,
-    aumid: &str,
-) -> Option<PathBuf> {
+fn resolve_apps_folder_manifest_executable(install_location: &str, aumid: &str) -> Option<PathBuf> {
     let app_id = aumid.split('!').nth(1)?.trim();
     if app_id.is_empty() {
         return None;
@@ -1241,6 +1475,12 @@ struct AppsFolderItemRaw {
     #[serde(default)]
     #[serde(rename = "Path")]
     path: String,
+    #[serde(default)]
+    #[serde(rename = "TargetPath")]
+    target_path: Option<String>,
+    #[serde(default)]
+    #[serde(rename = "Arguments")]
+    arguments: Option<String>,
 }
 
 #[cfg(windows)]
@@ -1249,35 +1489,39 @@ fn collect_apps_folder_candidates(max_candidates: usize) -> Vec<CandidateApp> {
         return Vec::new();
     }
 
-    let script = "$items=(New-Object -ComObject Shell.Application).NameSpace('shell:AppsFolder').Items();$items | Where-Object { $_.Path -and $_.Name } | Select-Object Name,Path | ConvertTo-Json -Compress";
-    let output = match Command::new("powershell")
-        .args(["-NoProfile", "-Command", script])
-        .output()
-    {
-        Ok(output) if output.status.success() => output,
-        _ => return Vec::new(),
+    let script_with_target = "$items=(New-Object -ComObject Shell.Application).NameSpace('shell:AppsFolder').Items();$items | Where-Object { $_.Path -and $_.Name } | Select-Object Name,Path,@{Name='TargetPath';Expression={ try { $_.ExtendedProperty('System.Link.TargetParsingPath') } catch { $null } }},@{Name='Arguments';Expression={ try { $_.ExtendedProperty('System.Link.Arguments') } catch { $null } }} | ConvertTo-Json -Compress";
+    let script_legacy =
+        "$items=(New-Object -ComObject Shell.Application).NameSpace('shell:AppsFolder').Items();$items | Where-Object { $_.Path -and $_.Name } | Select-Object Name,Path | ConvertTo-Json -Compress";
+
+    let try_read_items = |script: &str| -> Option<Vec<AppsFolderItemRaw>> {
+        let output = Command::new("powershell")
+            .args(["-NoProfile", "-Command", script])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let stdout = String::from_utf8(output.stdout).ok()?;
+        let raw = stdout.trim();
+        if raw.is_empty() {
+            return None;
+        }
+        let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+        if value.is_array() {
+            serde_json::from_value(value).ok()
+        } else {
+            serde_json::from_value(value)
+                .ok()
+                .map(|item: AppsFolderItemRaw| vec![item])
+        }
     };
 
-    let stdout = match String::from_utf8(output.stdout) {
-        Ok(text) => text,
-        Err(_) => return Vec::new(),
-    };
-    let raw = stdout.trim();
-    if raw.is_empty() {
-        return Vec::new();
-    }
-
-    let value: serde_json::Value = match serde_json::from_str(raw) {
-        Ok(value) => value,
-        Err(_) => return Vec::new(),
-    };
-
-    let items: Vec<AppsFolderItemRaw> = if value.is_array() {
-        serde_json::from_value(value).unwrap_or_default()
-    } else {
-        serde_json::from_value(value)
-            .map(|item: AppsFolderItemRaw| vec![item])
-            .unwrap_or_default()
+    let items = match try_read_items(script_with_target) {
+        Some(items) if !items.is_empty() => items,
+        _ => match try_read_items(script_legacy) {
+            Some(items) => items,
+            None => return Vec::new(),
+        },
     };
 
     let mut out = Vec::new();
@@ -1297,7 +1541,7 @@ fn collect_apps_folder_candidates(max_candidates: usize) -> Vec<CandidateApp> {
         if lowered_raw_path.starts_with("http://") || lowered_raw_path.starts_with("https://") {
             continue;
         }
-        let launch = if raw_path.contains('!') {
+        let launch = if raw_path.contains('!') && !is_protocol_launch_target(raw_path) {
             format!(r"shell:AppsFolder\{raw_path}")
         } else {
             raw_path.to_string()
@@ -1307,11 +1551,31 @@ fn collect_apps_folder_candidates(max_candidates: usize) -> Vec<CandidateApp> {
             continue;
         }
         let launch_path = PathBuf::from(&launch);
+        let real_target_path = item
+            .target_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from);
+        let target_arguments = item
+            .arguments
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let launch_type = classify_launch_target(
+            &launch,
+            real_target_path.as_ref(),
+            target_arguments.as_deref(),
+        );
         out.push(CandidateApp {
             display_name,
             dedupe_path: launch_path.clone(),
             launch_path: launch_path.clone(),
             icon_path: launch_path.clone(),
+            real_target_path,
+            target_arguments,
+            launch_type,
             source: "应用目录",
             source_rank: 19,
             publisher: None,
@@ -1331,6 +1595,10 @@ pub fn quick_scan_registry() -> AppResult<Vec<InstalledAppEntry>> {
             .map(|candidate| InstalledAppEntry {
                 name: candidate.display_name,
                 path: candidate.launch_path.to_string_lossy().to_string(),
+                target_path: candidate
+                    .real_target_path
+                    .map(|path| path.to_string_lossy().to_string()),
+                launch_type: candidate.launch_type,
                 icon_base64: None,
                 source: candidate.source.to_string(),
                 publisher: candidate.publisher,
@@ -1346,8 +1614,12 @@ pub fn quick_scan_registry() -> AppResult<Vec<InstalledAppEntry>> {
 
 #[cfg(all(test, windows))]
 mod tests {
-    use super::determine_candidate_icon_path;
+    use super::{
+        classify_launch_target, determine_candidate_icon_path, sort_and_dedupe_candidates,
+        CandidateApp, InstalledAppLaunchType,
+    };
     use std::path::Path;
+    use std::path::PathBuf;
 
     #[test]
     fn desktop_shortcuts_use_launch_path_icon() {
@@ -1368,5 +1640,241 @@ mod tests {
         let icon_path = determine_candidate_icon_path("lnk", "开始菜单", shortcut, launch);
 
         assert_eq!(icon_path, shortcut.to_path_buf());
+    }
+
+    #[test]
+    fn dedupe_prefers_shared_real_target_between_registry_and_appsfolder() {
+        let registry = CandidateApp {
+            display_name: "Clash Verge".to_string(),
+            launch_path: PathBuf::from(r"Z:\Apps\clash-verge-rev\clash-verge.exe"),
+            real_target_path: Some(PathBuf::from(r"Z:\Apps\clash-verge-rev\clash-verge.exe")),
+            target_arguments: None,
+            launch_type: super::InstalledAppLaunchType::File,
+            dedupe_path: PathBuf::from(r"Z:\Apps\clash-verge-rev\clash-verge.exe"),
+            icon_path: PathBuf::from(r"Z:\Apps\clash-verge-rev\clash-verge.exe"),
+            source: "注册表",
+            source_rank: 0,
+            publisher: Some("Clash".to_string()),
+        };
+        let apps_folder = CandidateApp {
+            display_name: "Clash Verge".to_string(),
+            launch_path: PathBuf::from(
+                r"shell:AppsFolder\io.github.clash-verge-rev.clash-verge-rev",
+            ),
+            real_target_path: Some(PathBuf::from(r"Z:\Apps\clash-verge-rev\clash-verge.exe")),
+            target_arguments: None,
+            launch_type: super::InstalledAppLaunchType::Shell,
+            dedupe_path: PathBuf::from(
+                r"shell:AppsFolder\io.github.clash-verge-rev.clash-verge-rev",
+            ),
+            icon_path: PathBuf::from(r"shell:AppsFolder\io.github.clash-verge-rev.clash-verge-rev"),
+            source: "应用目录",
+            source_rank: 19,
+            publisher: None,
+        };
+
+        let deduped = sort_and_dedupe_candidates(vec![apps_folder, registry], 10);
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].source, "注册表");
+    }
+
+    #[test]
+    fn dedupe_prefers_shared_real_target_between_registry_and_shortcut() {
+        let registry = CandidateApp {
+            display_name: "ATK V HUB2.3.68".to_string(),
+            launch_path: PathBuf::from(r"Z:\Apps\ATK_V_HUB\ATK V HUB.exe"),
+            real_target_path: Some(PathBuf::from(r"Z:\Apps\ATK_V_HUB\ATK V HUB.exe")),
+            target_arguments: None,
+            launch_type: super::InstalledAppLaunchType::File,
+            dedupe_path: PathBuf::from(r"Z:\Apps\ATK_V_HUB\ATK V HUB.exe"),
+            icon_path: PathBuf::from(r"Z:\Apps\ATK_V_HUB\ATK V HUB.exe"),
+            source: "注册表",
+            source_rank: 0,
+            publisher: None,
+        };
+        let desktop = CandidateApp {
+            display_name: "ATK V HUB".to_string(),
+            launch_path: PathBuf::from(r"Z:\Apps\ATK_V_HUB\ATK V HUB.exe"),
+            real_target_path: Some(PathBuf::from(r"Z:\Apps\ATK_V_HUB\ATK V HUB.exe")),
+            target_arguments: None,
+            launch_type: super::InstalledAppLaunchType::File,
+            dedupe_path: PathBuf::from(r"C:\Users\Air\Desktop\ATK V HUB.lnk"),
+            icon_path: PathBuf::from(r"Z:\Apps\ATK_V_HUB\ATK V HUB.exe"),
+            source: "桌面",
+            source_rank: 10,
+            publisher: None,
+        };
+
+        let deduped = sort_and_dedupe_candidates(vec![desktop, registry], 10);
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].source, "注册表");
+    }
+
+    #[test]
+    fn dedupe_highly_similar_launch_entries_in_same_directory() {
+        let registry = CandidateApp {
+            display_name: "迅雷".to_string(),
+            launch_path: PathBuf::from(r"Z:\Apps\迅雷\Thunder\Program\Thunder.exe"),
+            real_target_path: Some(PathBuf::from(r"Z:\Apps\迅雷\Thunder\Program\Thunder.exe")),
+            target_arguments: None,
+            launch_type: super::InstalledAppLaunchType::File,
+            dedupe_path: PathBuf::from(r"Z:\Apps\迅雷\Thunder\Program\Thunder.exe"),
+            icon_path: PathBuf::from(r"Z:\Apps\迅雷\Thunder\Program\Thunder.exe"),
+            source: "注册表",
+            source_rank: 0,
+            publisher: None,
+        };
+        let desktop = CandidateApp {
+            display_name: "迅雷".to_string(),
+            launch_path: PathBuf::from(r"Z:\Apps\迅雷\Thunder\Program\ThunderStart.exe"),
+            real_target_path: Some(PathBuf::from(
+                r"Z:\Apps\迅雷\Thunder\Program\ThunderStart.exe",
+            )),
+            target_arguments: None,
+            launch_type: super::InstalledAppLaunchType::File,
+            dedupe_path: PathBuf::from(r"C:\Users\Air\Desktop\迅雷.lnk"),
+            icon_path: PathBuf::from(r"Z:\Apps\迅雷\Thunder\Program\ThunderStart.exe"),
+            source: "桌面",
+            source_rank: 10,
+            publisher: None,
+        };
+
+        let deduped = sort_and_dedupe_candidates(vec![desktop, registry], 10);
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].source, "注册表");
+    }
+
+    #[test]
+    fn dedupe_appsfolder_shell_entries_with_same_target_and_arguments() {
+        let first = CandidateApp {
+            display_name: "Developer Command Prompt for VS 2022".to_string(),
+            launch_path: PathBuf::from(r"Microsoft.AutoGenerated.{A49227EA-5AF0-D494-A3F1-0918A278ED71}"),
+            real_target_path: Some(PathBuf::from(r"C:\Windows\system32\cmd.exe")),
+            target_arguments: Some(
+                r#"/k "Z:\Microsoft Visual Studio\Common7\Tools\VsDevCmd.bat""#.to_string(),
+            ),
+            launch_type: super::InstalledAppLaunchType::Shell,
+            dedupe_path: PathBuf::from(r"Microsoft.AutoGenerated.{A49227EA-5AF0-D494-A3F1-0918A278ED71}"),
+            icon_path: PathBuf::from(r"Microsoft.AutoGenerated.{A49227EA-5AF0-D494-A3F1-0918A278ED71}"),
+            source: "应用目录",
+            source_rank: 19,
+            publisher: None,
+        };
+        let duplicate = CandidateApp {
+            display_name: "Developer Command Prompt VS 2022".to_string(),
+            launch_path: PathBuf::from(r"Microsoft.AutoGenerated.{00000000-0000-0000-0000-000000000000}"),
+            real_target_path: Some(PathBuf::from(r"C:\Windows\system32\cmd.exe")),
+            target_arguments: Some(
+                r#"/k "Z:/Microsoft Visual Studio/Common7/Tools/VsDevCmd.bat""#.to_string(),
+            ),
+            launch_type: super::InstalledAppLaunchType::Shell,
+            dedupe_path: PathBuf::from(r"Microsoft.AutoGenerated.{00000000-0000-0000-0000-000000000000}"),
+            icon_path: PathBuf::from(r"Microsoft.AutoGenerated.{00000000-0000-0000-0000-000000000000}"),
+            source: "应用目录",
+            source_rank: 19,
+            publisher: None,
+        };
+
+        let deduped = sort_and_dedupe_candidates(vec![duplicate, first], 10);
+
+        assert_eq!(deduped.len(), 1);
+    }
+
+    #[test]
+    fn keeps_appsfolder_shell_entries_with_same_target_but_different_arguments() {
+        let first = CandidateApp {
+            display_name: "x64 Native Tools Command Prompt for VS 2022".to_string(),
+            launch_path: PathBuf::from(r"Microsoft.AutoGenerated.{06502445-358D-DEB3-552B-FEEC9328749A}"),
+            real_target_path: Some(PathBuf::from(r"C:\Windows\system32\cmd.exe")),
+            target_arguments: Some(
+                r#"/k "Z:\Microsoft Visual Studio\Common7\Tools\VsDevCmd.bat" -arch=x64"#.to_string(),
+            ),
+            launch_type: super::InstalledAppLaunchType::Shell,
+            dedupe_path: PathBuf::from(r"Microsoft.AutoGenerated.{06502445-358D-DEB3-552B-FEEC9328749A}"),
+            icon_path: PathBuf::from(r"Microsoft.AutoGenerated.{06502445-358D-DEB3-552B-FEEC9328749A}"),
+            source: "应用目录",
+            source_rank: 19,
+            publisher: None,
+        };
+        let second = CandidateApp {
+            display_name: "x86 Native Tools Command Prompt for VS 2022".to_string(),
+            launch_path: PathBuf::from(r"Microsoft.AutoGenerated.{9A78A9A9-93AC-3F80-DDFF-BA2C0AC81260}"),
+            real_target_path: Some(PathBuf::from(r"C:\Windows\system32\cmd.exe")),
+            target_arguments: Some(
+                r#"/k "Z:\Microsoft Visual Studio\Common7\Tools\VsDevCmd.bat" -arch=x86"#.to_string(),
+            ),
+            launch_type: super::InstalledAppLaunchType::Shell,
+            dedupe_path: PathBuf::from(r"Microsoft.AutoGenerated.{9A78A9A9-93AC-3F80-DDFF-BA2C0AC81260}"),
+            icon_path: PathBuf::from(r"Microsoft.AutoGenerated.{9A78A9A9-93AC-3F80-DDFF-BA2C0AC81260}"),
+            source: "应用目录",
+            source_rank: 19,
+            publisher: None,
+        };
+
+        let deduped = sort_and_dedupe_candidates(vec![first, second], 10);
+
+        assert_eq!(deduped.len(), 2);
+    }
+
+    #[test]
+    fn apps_folder_raw_accepts_null_target_path() {
+        let raw = r#"{"Name":"Codex","Path":"OpenAI.Codex_2p2nqsd0c76g0!App","TargetPath":null}"#;
+        let item: super::AppsFolderItemRaw = serde_json::from_str(raw).unwrap();
+        assert_eq!(item.name, "Codex");
+        assert_eq!(item.target_path, None);
+        assert_eq!(item.arguments, None);
+    }
+
+    #[test]
+    fn classifies_appsfolder_aumid_as_shell_even_with_shell_prefix() {
+        assert_eq!(
+            classify_launch_target(
+                r"shell:AppsFolder\OpenAI.Codex_2p2nqsd0c76g0!App",
+                None,
+                None
+            ),
+            InstalledAppLaunchType::Shell
+        );
+    }
+
+    #[test]
+    fn classifies_protocol_launch_target_before_target_path() {
+        let target = PathBuf::from(r"steam://rungameid/937310");
+
+        assert_eq!(
+            classify_launch_target(r"steam://rungameid/937310", Some(&target), None),
+            InstalledAppLaunchType::Protocol
+        );
+    }
+
+    #[test]
+    fn classifies_known_folder_target_with_real_exe_as_file() {
+        let target =
+            PathBuf::from(r"C:\Program Files (x86)\VB\Voicemeeter\VoicemeeterBUSGEQ15.exe");
+
+        assert_eq!(
+            classify_launch_target(
+                r"{7C5A40EF-A0FB-4BFC-874A-C0F2E0B9FA8E}\VB\Voicemeeter\VoicemeeterBUSGEQ15.exe",
+                Some(&target),
+                None
+            ),
+            InstalledAppLaunchType::File
+        );
+    }
+
+    #[test]
+    fn classifies_appsfolder_entries_with_arguments_as_shell() {
+        let target = PathBuf::from(r"C:\Program Files\Microsoft Office\root\Client\AppVLP.exe");
+
+        assert_eq!(
+            classify_launch_target(
+                r"Microsoft.Office.DATABASECOMPARE.EXE.15",
+                Some(&target),
+                Some(
+                    r#""C:\Program Files (x86)\Microsoft Office\Office16\DCF\DATABASECOMPARE.EXE""#
+                )
+            ),
+            InstalledAppLaunchType::Shell
+        );
     }
 }

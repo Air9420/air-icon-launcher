@@ -9,6 +9,8 @@ export type ScannedMatchType =
 export interface ScannedAppEntry {
   name: string;
   path: string;
+  targetPath?: string | null;
+  launchType?: "file" | "shell" | "protocol";
   source: string;
   publisher: string | null;
   iconBase64: string | null;

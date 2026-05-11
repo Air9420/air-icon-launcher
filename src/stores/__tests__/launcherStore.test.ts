@@ -275,6 +275,78 @@ describe("launcherStore - pure functions", () => {
       ).toBe(true);
     });
 
+    it("adds scanned AppsFolder entries with resolved file target as file items", async () => {
+      await store.addScannedAppToLauncher({
+        name: "15 Bands Graphic EQ",
+        path: "{7C5A40EF-A0FB-4BFC-874A-C0F2E0B9FA8E}\\VB\\Voicemeeter\\VoicemeeterBUSGEQ15.exe",
+        targetPath: "C:\\Program Files (x86)\\VB\\Voicemeeter\\VoicemeeterBUSGEQ15.exe",
+        launchType: "file",
+        source: "应用目录",
+        publisher: null,
+        iconBase64: "icon",
+      } as any);
+
+      const item = Object.values(store.launcherItemsByCategoryId).flat()[0];
+
+      expect(item.itemType).toBe("file");
+      expect(item.path).toBe("C:\\Program Files (x86)\\VB\\Voicemeeter\\VoicemeeterBUSGEQ15.exe");
+      expect(item.resolvedPath).toBe("C:\\Program Files (x86)\\VB\\Voicemeeter\\VoicemeeterBUSGEQ15.exe");
+    });
+
+    it("adds scanned AppsFolder AUMIDs as URL-style shell launch items", async () => {
+      await store.addScannedAppToLauncher({
+        name: "Codex",
+        path: "shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App",
+        targetPath: null,
+        launchType: "shell",
+        source: "应用目录",
+        publisher: null,
+        iconBase64: null,
+      } as any);
+
+      const item = Object.values(store.launcherItemsByCategoryId).flat()[0];
+
+      expect(item.itemType).toBe("url");
+      expect(item.path).toBe("");
+      expect(item.url).toBe("shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App");
+    });
+
+    it("adds scanned bare AppsFolder IDs with a shell prefix for persistent launch", async () => {
+      await store.addScannedAppToLauncher({
+        name: "Database Compare",
+        path: "Microsoft.Office.DATABASECOMPARE.EXE.15",
+        targetPath: "C:\\Program Files\\Microsoft Office\\root\\Client\\AppVLP.exe",
+        launchType: "shell",
+        source: "应用目录",
+        publisher: null,
+        iconBase64: null,
+      } as any);
+
+      const item = Object.values(store.launcherItemsByCategoryId).flat()[0];
+
+      expect(item.itemType).toBe("url");
+      expect(item.path).toBe("");
+      expect(item.url).toBe("shell:AppsFolder\\Microsoft.Office.DATABASECOMPARE.EXE.15");
+    });
+
+    it("adds scanned protocol entries as URL launch items without treating them as files", async () => {
+      await store.addScannedAppToLauncher({
+        name: "Infinitode 2",
+        path: "steam://rungameid/937310",
+        targetPath: null,
+        launchType: "protocol",
+        source: "应用目录",
+        publisher: null,
+        iconBase64: null,
+      } as any);
+
+      const item = Object.values(store.launcherItemsByCategoryId).flat()[0];
+
+      expect(item.itemType).toBe("url");
+      expect(item.path).toBe("");
+      expect(item.url).toBe("steam://rungameid/937310");
+    });
+
     it("moveLauncherItems moves items and remaps dependency category", () => {
       const stats = useStatsStore();
       store.addLauncherItemsToCategory("cat-1", {
@@ -760,7 +832,7 @@ describe("launcherStore - pure functions", () => {
         { refreshDerivedIcons: true }
       );
 
-      await store.hydrateMissingIconsForItems([
+      await store.hydrateLauncherIconsForVisibleItems([
         {
           categoryId: "cat-1",
           itemId: "item-1",

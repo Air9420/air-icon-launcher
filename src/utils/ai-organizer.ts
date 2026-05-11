@@ -1,6 +1,8 @@
 export type InstalledAppScanItem = {
     name: string;
     path: string;
+    target_path?: string | null;
+    launch_type?: "file" | "shell" | "protocol";
     icon_base64: string | null;
     source: string;
     publisher?: string | null;
@@ -11,11 +13,17 @@ import {
     normalizeApp as normalizeAppForPipelineRaw,
     type NormalizedApp as PipelineNormalizedApp,
 } from "./classification";
+import { getScannedLauncherFilePath } from "./scanned-app-launch";
 
 function normalizeAppForPipeline(app: InstalledAppScanItem): PipelineNormalizedApp {
     return normalizeAppForPipelineRaw({
         name: app.name,
-        path: app.path,
+        path: getScannedLauncherFilePath({
+            path: app.path,
+            targetPath: app.target_path,
+            launchType: app.launch_type,
+            source: app.source,
+        }) || app.path,
         icon_base64: app.icon_base64,
         source: app.source,
         publisher: app.publisher,
@@ -706,9 +714,13 @@ function getCategorySortRank(key: string): number {
     return 1;
 }
 
-export function isLikelyNonLaunchableItem(app: Pick<InstalledAppScanItem, "name" | "path">): boolean {
+export function isLikelyNonLaunchableItem(
+    app: Pick<InstalledAppScanItem, "name" | "path"> & Partial<Pick<InstalledAppScanItem, "target_path" | "launch_type" | "source">>
+): boolean {
     const normalizedName = normalizeTextForMatching(normalizeAppName(app.name || ""));
-    const normalizedPath = normalizeTextForMatching(app.path || "");
+    const normalizedPath = normalizeTextForMatching(
+        getScannedLauncherFilePath(app) || app.path || ""
+    );
 
     if (!normalizedName && !normalizedPath) {
         return false;

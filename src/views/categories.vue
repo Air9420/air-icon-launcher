@@ -192,6 +192,7 @@ import { invokeOrThrow } from "../utils/invoke-wrapper";
 import { launchStoredItem } from "../utils/launcher-service";
 import { SEARCH_THROTTLE_MS } from "../utils/search-config";
 import { buildSearchIconHydrationPlan } from "../utils/search-icon-hydration";
+import { getScannedIconLookupPath, getScannedLaunchCommandTarget } from "../utils/scanned-app-launch";
 import { openPathWithSystem } from "../utils/system-commands";
 import {
     reconcileVisibleHydrationState,
@@ -1020,8 +1021,9 @@ async function onBrowserSearch() {
 }
 
 async function onSelectScannedApp(entry: ScannedAppEntry) {
+    const launchTarget = getScannedLaunchCommandTarget(entry);
     try {
-        await invokeOrThrow("launch_scanned_app", { path: entry.path });
+        await invokeOrThrow("launch_scanned_app", { path: launchTarget });
     } catch (e) {
         showToast(`无法启动 ${entry.name}，可能已被卸载`, { type: "error" });
         return;
@@ -1030,13 +1032,15 @@ async function onSelectScannedApp(entry: ScannedAppEntry) {
     const itemId = await store.addScannedAppToLauncher({
         name: entry.name,
         path: entry.path,
+        targetPath: entry.targetPath,
+        launchType: entry.launchType,
         source: entry.source,
         publisher: entry.publisher,
         iconBase64: entry.iconBase64,
     });
 
     if (itemId) {
-        invokeOrThrow("extract_icon_lazy", { path: entry.path }).catch(() => {});
+        invokeOrThrow("extract_icon_lazy", { path: getScannedIconLookupPath(entry) }).catch(() => {});
     }
 
     closeSearchHistoryPanel();

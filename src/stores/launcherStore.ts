@@ -22,6 +22,12 @@ import {
 } from "../composables/useItemsHelper";
 import { useSearchSync } from "../composables/useSearchSync";
 import { usePinningHelper } from "../composables/usePinningHelper";
+import {
+  getScannedLauncherFilePath,
+  getScannedLauncherUrl,
+  getScannedLaunchType,
+  type ScannedLaunchType,
+} from "../utils/scanned-app-launch";
 
 export type LauncherItem = {
   id: string;
@@ -1183,14 +1189,26 @@ export const useLauncherStore = defineStore(
     }
 
     async function addScannedAppToLauncher(
-      scannedApp: { name: string; path: string; source: string; publisher: string | null; iconBase64: string | null },
+      scannedApp: {
+        name: string;
+        path: string;
+        targetPath?: string | null;
+        launchType?: ScannedLaunchType | null;
+        source: string;
+        publisher: string | null;
+        iconBase64: string | null;
+      },
     ): Promise<string> {
       const { classifyInstalledApp } = await import("../utils/classification/pipeline");
       const { normalizeApp } = await import("../utils/classification/normalizer");
+      const launchType = getScannedLaunchType(scannedApp);
+      const launcherPath = getScannedLauncherFilePath(scannedApp);
+      const launcherUrl = getScannedLauncherUrl(scannedApp);
+      const classificationPath = launcherPath || scannedApp.path;
 
       const normalized = normalizeApp({
         name: scannedApp.name,
-        path: scannedApp.path,
+        path: classificationPath,
         icon_base64: scannedApp.iconBase64,
         source: scannedApp.source,
         publisher: scannedApp.publisher,
@@ -1217,9 +1235,10 @@ export const useLauncherStore = defineStore(
       const newItem: LauncherItem = {
         id: itemId,
         name: scannedApp.name,
-        path: scannedApp.path,
-        resolvedPath: normalizeOptionalPath(scannedApp.path),
-        itemType: "file",
+        path: launchType === "file" ? launcherPath : "",
+        resolvedPath: launchType === "file" ? normalizeOptionalPath(launcherPath) : undefined,
+        url: launchType === "file" ? undefined : launcherUrl,
+        itemType: launchType === "file" ? "file" : "url",
         isDirectory: false,
         iconBase64: scannedApp.iconBase64,
         hasCustomIcon: false,

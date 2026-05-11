@@ -4,14 +4,14 @@ use base64::Engine as _;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use reqwest::{header::CONTENT_TYPE, redirect::Policy, Client, Url};
+#[cfg(target_os = "windows")]
+use rusqlite::{Connection, OpenFlags};
 use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
-#[cfg(target_os = "windows")]
-use rusqlite::{Connection, OpenFlags};
 #[cfg(target_os = "windows")]
 use windows::Win32::Foundation::HWND;
 #[cfg(target_os = "windows")]
@@ -93,6 +93,90 @@ pub fn open_url(url: String) -> AppResult<()> {
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+pub(crate) fn is_apps_folder_shell_target(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed
+        .to_ascii_lowercase()
+        .starts_with("shell:appsfolder\\")
+    {
+        return true;
+    }
+    if trimmed.starts_with('{') && trimmed.contains("}\\") {
+        return true;
+    }
+    if trimmed.to_ascii_lowercase().starts_with("microsoft.") {
+        return true;
+    }
+    trimmed.contains('!') && !trimmed.contains('\\') && !trimmed.contains('/')
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn normalize_apps_folder_shell_target_id(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed
+        .to_ascii_lowercase()
+        .starts_with("shell:appsfolder\\")
+    {
+        return trimmed
+            .split_once('\\')
+            .map(|(_, id)| id)
+            .unwrap_or(trimmed)
+            .trim()
+            .to_string();
+    }
+
+    trimmed.to_string()
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn open_apps_folder_shell_target(value: &str) -> AppResult<()> {
+    let apps_folder_id = normalize_apps_folder_shell_target_id(value);
+    if apps_folder_id.is_empty() {
+        return Err(AppError::invalid_input("AppsFolder target cannot be empty"));
+    }
+
+    let escaped_target_id = apps_folder_id.replace('\'', "''");
+    let script = r#"
+$TargetId = '__APPS_FOLDER_TARGET_ID__'
+$shell = New-Object -ComObject Shell.Application
+$folder = $shell.NameSpace('shell:AppsFolder')
+if ($null -eq $folder) {
+    Write-Error 'AppsFolder namespace is unavailable'
+    exit 2
+}
+$item = $folder.ParseName($TargetId)
+if ($null -eq $item) {
+    Write-Error "AppsFolder item not found: $TargetId"
+    exit 3
+}
+$item.InvokeVerb('open')
+"#
+    .replace("__APPS_FOLDER_TARGET_ID__", &escaped_target_id);
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .output()
+        .map_err(|e| AppError::internal(format!("Failed to open AppsFolder item: {}", e)))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let details = if !stderr.is_empty() {
+        stderr
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        format!("exit code {:?}", output.status.code())
+    };
+    Err(AppError::internal(format!(
+        "Failed to open AppsFolder item '{}': {}",
+        apps_folder_id, details
+    )))
+}
+
 #[tauri::command]
 pub fn open_path(path: String) -> AppResult<()> {
     let trimmed = path.trim();
@@ -163,10 +247,9 @@ pub fn reveal_in_explorer(path: String) -> AppResult<()> {
     #[cfg(target_os = "linux")]
     {
         if let Some(parent) = target.parent() {
-            Command::new("xdg-open")
-                .arg(parent)
-                .spawn()
-                .map_err(|e| AppError::internal(format!("Failed to reveal path on Linux: {}", e)))?;
+            Command::new("xdg-open").arg(parent).spawn().map_err(|e| {
+                AppError::internal(format!("Failed to reveal path on Linux: {}", e))
+            })?;
             return Ok(());
         }
         return open_path(trimmed.to_string());
@@ -175,6 +258,10 @@ pub fn reveal_in_explorer(path: String) -> AppResult<()> {
 
 #[cfg(target_os = "windows")]
 fn open_url_with_shell_execute(url: &str) -> AppResult<()> {
+    if is_apps_folder_shell_target(url) {
+        return open_apps_folder_shell_target(url);
+    }
+
     let operation = widestring("open");
     let target = widestring(url);
 
@@ -368,7 +455,10 @@ pub fn get_current_monitor_fingerprint(
 }
 
 #[tauri::command]
-pub fn get_recent_files(limit: Option<u32>, include_icons: Option<bool>) -> AppResult<Vec<RecentFileEntry>> {
+pub fn get_recent_files(
+    limit: Option<u32>,
+    include_icons: Option<bool>,
+) -> AppResult<Vec<RecentFileEntry>> {
     let target_limit = limit.unwrap_or(40).clamp(1, 120) as usize;
     let should_include_icons = include_icons.unwrap_or(false);
 
@@ -401,7 +491,12 @@ fn get_recent_files_windows(limit: usize, include_icons: bool) -> AppResult<Vec<
 
     for entry in read_dir.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()).map(|ext| ext.eq_ignore_ascii_case("lnk")) != Some(true) {
+        if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("lnk"))
+            != Some(true)
+        {
             continue;
         }
 
@@ -422,14 +517,13 @@ fn get_recent_files_windows(limit: usize, include_icons: bool) -> AppResult<Vec<
     let mut entries: Vec<RecentFileEntry> = Vec::new();
 
     for (lnk_path, used_at) in candidates {
-        let Some(target_path) = crate::drag::resolve_windows_shortcut_target_pathbuf(&lnk_path) else {
+        let Some(target_path) = crate::drag::resolve_windows_shortcut_target_pathbuf(&lnk_path)
+        else {
             continue;
         };
 
         let target_path_str = target_path.to_string_lossy().to_string();
-        let normalized_key = target_path_str
-            .replace('/', "\\")
-            .to_ascii_lowercase();
+        let normalized_key = target_path_str.replace('/', "\\").to_ascii_lowercase();
         if normalized_key.is_empty() || !dedupe.insert(normalized_key) {
             continue;
         }
@@ -439,7 +533,7 @@ fn get_recent_files_windows(limit: usize, include_icons: bool) -> AppResult<Vec<
         }
 
         let icon_base64 = if include_icons {
-                crate::drag::extract_icons_from_paths(vec![target_path_str.clone()], None)
+            crate::drag::extract_icons_from_paths(vec![target_path_str.clone()], None)
                 .into_iter()
                 .next()
                 .flatten()
@@ -960,7 +1054,9 @@ fn extract_browser_search_template(preferences: &serde_json::Value) -> Option<&s
         })
         .or_else(|| {
             preferences
-                .pointer("/account_values/default_search_provider_data/mirrored_template_url_data/url")
+                .pointer(
+                    "/account_values/default_search_provider_data/mirrored_template_url_data/url",
+                )
                 .and_then(|v| v.as_str())
         })
         .or_else(|| {
@@ -1033,7 +1129,8 @@ fn read_search_template_from_web_data_file(
     fs::copy(web_data_path, &temp_copy).ok()?;
 
     let result = (|| {
-        let conn = Connection::open_with_flags(&temp_copy, OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+        let conn =
+            Connection::open_with_flags(&temp_copy, OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
         read_search_template_by_meta(&conn)
             .or_else(|| read_search_template_by_candidate(&conn, kind))
     })();
@@ -1048,11 +1145,9 @@ fn read_search_template_by_meta(conn: &Connection) -> Option<String> {
         "Default Search Provider ID",
         "Default Search Provider ID Backup",
     ] {
-        if let Ok(id_text) = conn.query_row(
-            "SELECT value FROM meta WHERE key = ?1",
-            [key],
-            |row| row.get::<_, String>(0),
-        ) {
+        if let Ok(id_text) = conn.query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| {
+            row.get::<_, String>(0)
+        }) {
             if let Ok(default_id) = id_text.parse::<i64>() {
                 if let Ok(url) = conn.query_row(
                     "SELECT url FROM keywords WHERE id = ?1",
@@ -1114,10 +1209,9 @@ fn read_search_template_by_candidate(conn: &Connection, kind: BrowserKind) -> Op
 fn fallback_browser_search_template(kind: BrowserKind) -> Option<&'static str> {
     match kind {
         BrowserKind::Edge => Some("https://www.bing.com/search?q={searchTerms}"),
-        BrowserKind::Chrome
-        | BrowserKind::Chromium
-        | BrowserKind::Brave
-        | BrowserKind::Vivaldi => Some("https://www.google.com/search?q={searchTerms}"),
+        BrowserKind::Chrome | BrowserKind::Chromium | BrowserKind::Brave | BrowserKind::Vivaldi => {
+            Some("https://www.google.com/search?q={searchTerms}")
+        }
         _ => None,
     }
 }
@@ -1259,6 +1353,38 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
+    fn detects_appsfolder_shell_target_variants() {
+        assert!(is_apps_folder_shell_target(
+            r"shell:AppsFolder\Microsoft.AutoGenerated.{A49227EA-5AF0-D494-A3F1-0918A278ED71}"
+        ));
+        assert!(is_apps_folder_shell_target(
+            r"Microsoft.AutoGenerated.{A49227EA-5AF0-D494-A3F1-0918A278ED71}"
+        ));
+        assert!(is_apps_folder_shell_target(
+            r"OpenAI.Codex_2p2nqsd0c76g0!App"
+        ));
+        assert!(!is_apps_folder_shell_target(
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn normalizes_appsfolder_shell_target_before_parse_name() {
+        assert_eq!(
+            normalize_apps_folder_shell_target_id(
+                r"shell:AppsFolder\Microsoft.AutoGenerated.{A49227EA-5AF0-D494-A3F1-0918A278ED71}"
+            ),
+            "Microsoft.AutoGenerated.{A49227EA-5AF0-D494-A3F1-0918A278ED71}"
+        );
+        assert_eq!(
+            normalize_apps_folder_shell_target_id(r"OpenAI.Codex_2p2nqsd0c76g0!App"),
+            "OpenAI.Codex_2p2nqsd0c76g0!App"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
     fn extracts_search_template_from_chromium_preferences() {
         let preferences = serde_json::json!({
             "default_search_provider_data": {
@@ -1307,7 +1433,10 @@ mod tests {
     #[test]
     fn percent_encodes_numeric_and_non_ascii_queries() {
         assert_eq!(percent_encode_query("12345678"), "12345678");
-        assert_eq!(percent_encode_query("你好 world"), "%E4%BD%A0%E5%A5%BD%20world");
+        assert_eq!(
+            percent_encode_query("你好 world"),
+            "%E4%BD%A0%E5%A5%BD%20world"
+        );
     }
 
     #[test]
@@ -1322,7 +1451,9 @@ mod tests {
 
     #[test]
     fn rejects_internal_browser_search_template() {
-        assert!(!is_usable_search_template("http://search/?q={searchTerms}&"));
+        assert!(!is_usable_search_template(
+            "http://search/?q={searchTerms}&"
+        ));
         assert!(is_usable_search_template(
             "https://www.bing.com/search?q={searchTerms}"
         ));
@@ -1336,21 +1467,24 @@ mod tests {
             "qweqweqwe",
         );
 
-        assert_eq!(
-            url,
-            "https://www.google.com/search?q=qweqweqwe&source="
-        );
+        assert_eq!(url, "https://www.google.com/search?q=qweqweqwe&source=");
     }
 
     #[cfg(target_os = "windows")]
     #[test]
     fn detects_browser_kind_from_registry_metadata() {
         assert_eq!(
-            detect_browser_kind("MSEdgeHTM", r#"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"#),
+            detect_browser_kind(
+                "MSEdgeHTM",
+                r#"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"#
+            ),
             BrowserKind::Edge
         );
         assert_eq!(
-            detect_browser_kind("FirefoxURL-308046B0AF4A39CB", r#"C:\Program Files\Mozilla Firefox\firefox.exe"#),
+            detect_browser_kind(
+                "FirefoxURL-308046B0AF4A39CB",
+                r#"C:\Program Files\Mozilla Firefox\firefox.exe"#
+            ),
             BrowserKind::Firefox
         );
     }

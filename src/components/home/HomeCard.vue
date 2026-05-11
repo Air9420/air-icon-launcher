@@ -38,6 +38,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useLongPress } from "../../composables/useLongPress";
+import { getLauncherItemBadgeText } from "../../utils/scanned-app-launch";
 
 const props = defineProps<{
     itemId: string;
@@ -46,6 +47,7 @@ const props = defineProps<{
     name: string;
     iconBase64?: string | null;
     itemType?: 'file' | 'url';
+    url?: string | null;
     hasDependencies?: boolean;
     featureBadgeText?: string;
     menuType?: string;
@@ -97,11 +99,11 @@ const isLaunching = computed(() => props.launchStatus === "launching");
 const isSuccess = computed(() => props.launchStatus === "success");
 const hideName = computed(() => (props.cols ?? 5) >= 7);
 const featureBadgeText = computed(() => props.featureBadgeText?.trim() || "");
-const badgeText = computed(() => {
-    if (props.itemType === "url") return "URL";
-    if (props.hasDependencies) return "依赖";
-    return "";
-});
+const badgeText = computed(() => getLauncherItemBadgeText({
+    itemType: props.itemType,
+    url: props.url,
+    launchDependencies: props.hasDependencies ? [true] : [],
+}));
 const cornerBadgeText = computed(() => {
     if (featureBadgeText.value) {
         return badgeText.value

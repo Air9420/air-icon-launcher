@@ -100,10 +100,10 @@
                         </div>
                     </div>
                     <div
-                        v-if="entry.item.itemType === 'url' || hasLaunchDependencies(entry.item)"
+                        v-if="getLauncherBadgeText(entry.item)"
                         class="url-badge"
                     >
-                        {{ entry.item.itemType === "url" ? "URL" : "依赖" }}
+                        {{ getLauncherBadgeText(entry.item) }}
                     </div>
                     <div v-if="isItemPinned(entry.item.id)" class="pinned-badge">
                         📌
@@ -183,10 +183,10 @@
                             </div>
                         </div>
                         <div
-                            v-if="element.itemType === 'url' || hasLaunchDependencies(element)"
+                            v-if="getLauncherBadgeText(element)"
                             class="url-badge"
                         >
-                            {{ element.itemType === "url" ? "URL" : "依赖" }}
+                            {{ getLauncherBadgeText(element) }}
                         </div>
                         <div v-if="isItemPinned(element.id)" class="pinned-badge">
                             📌
@@ -337,6 +337,7 @@ import { useCategoryStore } from "../stores/categoryStore";
 import type { LauncherItem, RustSearchResult } from "../stores/launcherStore";
 import SearchBox from "../components/SearchBox.vue";
 import { launchStoredItem } from "../utils/launcher-service";
+import { getLauncherItemBadgeText } from "../utils/scanned-app-launch";
 import { SEARCH_THROTTLE_MS } from "../utils/search-config";
 import { collectVisibleGridHydrationTargets } from "../utils/icon-hydration-window";
 import { shouldSkipVisibleHydration, type WindowVisibilityState } from "../utils/window-visibility";
@@ -1200,8 +1201,12 @@ function getFallbackText(name: string) {
     return text.slice(0, 1).toUpperCase();
 }
 
-function hasLaunchDependencies(item: LauncherItem): boolean {
-    return Array.isArray(item.launchDependencies) && item.launchDependencies.length > 0;
+function getLauncherBadgeText(item: LauncherItem): string {
+    return getLauncherItemBadgeText({
+        itemType: item.itemType,
+        url: item.url,
+        launchDependencies: item.launchDependencies,
+    });
 }
 </script>
 

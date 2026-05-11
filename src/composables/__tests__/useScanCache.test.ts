@@ -376,4 +376,136 @@ describe("matchScannedApps", () => {
       "C:\\Google\\Chrome.exe"
     );
   });
+
+  it("deduplicates scanned protocol entries after they are stored as URL items", async () => {
+    const store = useLauncherStore();
+    await store.importLauncherItems({
+      "cat-1": [
+        {
+          id: "item-1",
+          name: "Infinitode 2",
+          path: "",
+          url: "steam://rungameid/937310",
+          itemType: "url",
+          isDirectory: false,
+          iconBase64: null,
+          hasCustomIcon: false,
+          launchDependencies: [],
+          launchDelaySeconds: 0,
+        },
+      ],
+    });
+
+    vi.spyOn(invokeWrapper, "invoke").mockResolvedValueOnce({
+      ok: true,
+      value: {
+        apps: [
+          {
+            name: "Infinitode 2",
+            path: "steam://rungameid/937310",
+            launchType: "protocol",
+            targetPath: null,
+            source: "应用目录",
+            publisher: null,
+            iconBase64: null,
+            namePinyinFull: "",
+            namePinyinInitial: "",
+          },
+        ],
+      },
+    } as any);
+
+    const cache = useScanCache();
+    const section = await cache.getFallbackSection("infinitode");
+
+    expect(section).toBeNull();
+  });
+
+  it("deduplicates scanned AppsFolder AUMIDs after they are stored as URL items", async () => {
+    const store = useLauncherStore();
+    await store.importLauncherItems({
+      "cat-1": [
+        {
+          id: "item-1",
+          name: "Codex",
+          path: "",
+          url: "shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App",
+          itemType: "url",
+          isDirectory: false,
+          iconBase64: null,
+          hasCustomIcon: false,
+          launchDependencies: [],
+          launchDelaySeconds: 0,
+        },
+      ],
+    });
+
+    vi.spyOn(invokeWrapper, "invoke").mockResolvedValueOnce({
+      ok: true,
+      value: {
+        apps: [
+          {
+            name: "Codex",
+            path: "shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App",
+            launchType: "shell",
+            targetPath: null,
+            source: "应用目录",
+            publisher: null,
+            iconBase64: null,
+            namePinyinFull: "",
+            namePinyinInitial: "",
+          },
+        ],
+      },
+    } as any);
+
+    const cache = useScanCache();
+    const section = await cache.getFallbackSection("codex");
+
+    expect(section).toBeNull();
+  });
+
+  it("deduplicates scanned bare AppsFolder IDs after they are stored with shell prefix", async () => {
+    const store = useLauncherStore();
+    await store.importLauncherItems({
+      "cat-1": [
+        {
+          id: "item-1",
+          name: "Database Compare",
+          path: "",
+          url: "shell:AppsFolder\\Microsoft.Office.DATABASECOMPARE.EXE.15",
+          itemType: "url",
+          isDirectory: false,
+          iconBase64: null,
+          hasCustomIcon: false,
+          launchDependencies: [],
+          launchDelaySeconds: 0,
+        },
+      ],
+    });
+
+    vi.spyOn(invokeWrapper, "invoke").mockResolvedValueOnce({
+      ok: true,
+      value: {
+        apps: [
+          {
+            name: "Database Compare",
+            path: "Microsoft.Office.DATABASECOMPARE.EXE.15",
+            launchType: "shell",
+            targetPath: "C:\\Program Files\\Microsoft Office\\root\\Client\\AppVLP.exe",
+            source: "应用目录",
+            publisher: null,
+            iconBase64: null,
+            namePinyinFull: "",
+            namePinyinInitial: "",
+          },
+        ],
+      },
+    } as any);
+
+    const cache = useScanCache();
+    const section = await cache.getFallbackSection("database");
+
+    expect(section).toBeNull();
+  });
 });

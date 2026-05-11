@@ -18,6 +18,7 @@
                 :name="getName(item)"
                 :icon-base64="getIconBase64(item)"
                 :item-type="getItemType(item)"
+                :url="getItemUrl(item)"
                 :has-dependencies="getHasDependencies(item)"
                 :feature-badge-text="getFeatureBadgeText(item)"
                 :launch-status="getLaunchStatusByItem(item, getLaunchStatus)"
@@ -105,6 +106,13 @@ function getItemType(item: HomeRecentDisplayItem): "file" | "url" {
         return "file";
     }
     return item.item.itemType;
+}
+
+function getItemUrl(item: HomeRecentDisplayItem): string | null {
+    if (isExternalItem(item)) {
+        return null;
+    }
+    return item.item.url ?? null;
 }
 
 function getHasDependencies(item: HomeRecentDisplayItem): boolean {

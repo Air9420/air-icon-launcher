@@ -142,6 +142,9 @@ export function useScanCache() {
             paths.push(`resolved:${item.resolvedPath}`);
           }
         }
+        if (item.url) {
+          paths.push(`url:${item.url}`);
+        }
       }
     }
 
@@ -159,6 +162,11 @@ export function useScanCache() {
 
     for (const [categoryId, items] of Object.entries(launcherStore.launcherItemsByCategoryId)) {
       for (const item of items) {
+        if (item.itemType === "url" && item.url) {
+          keys.add(normalizePathKey(item.url));
+          continue;
+        }
+
         if (!item.path) continue;
 
         let pathToAdd = item.resolvedPath || item.path;
@@ -226,7 +234,12 @@ export function useScanCache() {
 
   function updateCachedEntryIcon(path: string, iconBase64: string) {
     if (!cachedScanResult) return;
-    const target = cachedScanResult.apps.find((entry) => entry.path === path);
+    const pathKey = normalizePathKey(path);
+    const target = cachedScanResult.apps.find(
+      (entry) =>
+        normalizePathKey(entry.path) === pathKey ||
+        normalizePathKey(entry.targetPath ?? "") === pathKey
+    );
     if (target) {
       target.iconBase64 = iconBase64;
     }
@@ -235,19 +248,20 @@ export function useScanCache() {
   async function hydrateEntryIcon(entry: ScannedAppEntry): Promise<ScannedAppEntry> {
     if (entry.iconBase64) return entry;
 
-    let pending = iconHydrationPromises.get(entry.path);
+    const iconLookupPath = entry.targetPath?.trim() || entry.path;
+    let pending = iconHydrationPromises.get(iconLookupPath);
     if (!pending) {
       pending = (async () => {
-        const result = await invoke<string | null>("extract_icon_lazy", { path: entry.path });
+        const result = await invoke<string | null>("extract_icon_lazy", { path: iconLookupPath });
         if (!result.ok || !result.value) {
           return null;
         }
-        updateCachedEntryIcon(entry.path, result.value);
+        updateCachedEntryIcon(iconLookupPath, result.value);
         return result.value;
       })().finally(() => {
-        iconHydrationPromises.delete(entry.path);
+        iconHydrationPromises.delete(iconLookupPath);
       });
-      iconHydrationPromises.set(entry.path, pending);
+      iconHydrationPromises.set(iconLookupPath, pending);
     }
 
     const iconBase64 = await pending;

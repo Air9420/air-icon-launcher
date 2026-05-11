@@ -10,6 +10,7 @@
             <template #item="{ element, index }">
                 <HomeCard :item-id="element.item.id" :category-id="element.primaryCategoryId" :name="element.item.name"
                     :icon-base64="element.item.iconBase64" :item-type="element.item.itemType"
+                    :url="element.item.url"
                     :has-dependencies="element.item.launchDependencies.length > 0"
                     :launch-status="getLaunchStatus(element.item.id)"
                     :cols="layout.cols" menu-type="Icon-Item" home-section="pinned"

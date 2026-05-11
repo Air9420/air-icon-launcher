@@ -12,6 +12,10 @@ use tauri::Manager;
 pub struct CachedAppEntry {
     pub name: String,
     pub path: String,
+    #[serde(default)]
+    pub target_path: Option<String>,
+    #[serde(default)]
+    pub launch_type: installed_apps::InstalledAppLaunchType,
     pub source: String,
     pub publisher: Option<String>,
     pub icon_base64: Option<String>,
@@ -70,6 +74,8 @@ pub fn write_cache(app: &AppHandle, entries: &[InstalledAppEntry], scan_type: &s
             .map(|e| CachedAppEntry {
                 name: e.name.clone(),
                 path: e.path.clone(),
+                target_path: e.target_path.clone(),
+                launch_type: e.launch_type,
                 source: e.source.clone(),
                 publisher: e.publisher.clone(),
                 icon_base64: e.icon_base64.clone(),
@@ -110,8 +116,18 @@ pub fn read_scan_cache(app: AppHandle) -> AppResult<Option<ScanCache>> {
 
 #[tauri::command]
 pub fn launch_scanned_app(path: String) -> AppResult<()> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::invalid_input("Path cannot be empty"));
+    }
+
+    #[cfg(target_os = "windows")]
+    if crate::system::is_apps_folder_shell_target(trimmed) {
+        return crate::system::open_apps_folder_shell_target(trimmed);
+    }
+
     let status = std::process::Command::new("cmd")
-        .args(["/C", "start", "", &path])
+        .args(["/C", "start", "", trimmed])
         .spawn();
     match status {
         Ok(_) => Ok(()),
