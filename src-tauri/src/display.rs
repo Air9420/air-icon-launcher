@@ -9,6 +9,8 @@ use windows::Win32::Devices::Display::{
 };
 #[cfg(windows)]
 use windows::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS, WIN32_ERROR};
+#[cfg(windows)]
+use windows::Win32::Graphics::Gdi::{DISPLAY_DEVICEW, EnumDisplayDevicesW};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayTopology {
@@ -158,25 +160,45 @@ pub fn get_current_display_mode() -> AppResult<String> {
 }
 
 pub(crate) fn get_display_count_internal() -> AppResult<u32> {
-    let topology = get_display_topology()?;
-    let count = match topology {
-        DisplayTopology::Internal => 1,
-        DisplayTopology::Extend => 2,
-        DisplayTopology::Clone => 2,
-        DisplayTopology::External => 1,
-        DisplayTopology::Unknown(_) => {
-            let mut num_paths = 0u32;
-            let mut num_modes = 0u32;
-            let size_status = unsafe {
-                GetDisplayConfigBufferSizes(QDC_DATABASE_CURRENT, &mut num_paths, &mut num_modes)
-            };
-            if size_status.is_ok() {
-                num_paths.max(1)
-            } else {
-                1
-            }
+    let count = get_display_path_count()?;
+    Ok(count.max(1))
+}
+
+#[cfg(windows)]
+fn get_display_path_count() -> AppResult<u32> {
+    let mut display_device: DISPLAY_DEVICEW = unsafe { std::mem::zeroed() };
+    display_device.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
+
+    let mut count = 0u32;
+    let mut device_index = 0u32;
+
+    loop {
+        let result = unsafe {
+            EnumDisplayDevicesW(None, device_index, &mut display_device, 0)
+        };
+
+        if !result.as_bool() {
+            break;
         }
-    };
+
+        let state_flags = display_device.StateFlags;
+        let is_disconnected = (state_flags & 0x20000000) != 0;
+
+        if !is_disconnected {
+            count += 1;
+        }
+
+        device_index += 1;
+
+        if device_index > 16 {
+            break;
+        }
+    }
+
+    if count == 0 {
+        count = 1;
+    }
+
     Ok(count)
 }
 
