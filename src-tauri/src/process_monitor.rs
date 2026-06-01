@@ -71,6 +71,23 @@ const NOISY_PATH_PARTS: &[&str] = &[
     "\\windows\\servicing\\",
     "\\windows\\microsoft.net\\",
     "\\windows\\assembly\\",
+    // 临时目录
+    "\\appdata\\local\\temp\\",
+    "\\windows\\temp\\",
+    // NVIDIA 驱动安装目录
+    "\\nvidia\\nvapp\\",
+    "\\nvidia corporation\\nvidia app\\updateframework\\",
+    // 反作弊引擎
+    "\\anticheatexpert\\",
+];
+
+/// 文件名中包含这些关键词的 exe 视为安装包/更新器，自动过滤
+const INSTALLER_NAME_KEYWORDS: &[&str] = &[
+    "installer",
+    "setup",
+    "updater",
+    "update",
+    "uninstall",
 ];
 
 #[cfg(target_os = "windows")]
@@ -141,6 +158,14 @@ pub fn start_process_monitor(app: AppHandle) {
         }
         let exe_name = file_name_lower(path);
         if NOISY_EXECUTABLE_NAMES.iter().any(|name| *name == exe_name) {
+            return true;
+        }
+        // 新增：安装包/更新器名称模式匹配
+        let exe_name_stem = exe_name.trim_end_matches(".exe");
+        if INSTALLER_NAME_KEYWORDS
+            .iter()
+            .any(|keyword| exe_name_stem.contains(keyword))
+        {
             return true;
         }
         false
