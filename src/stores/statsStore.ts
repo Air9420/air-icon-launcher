@@ -57,6 +57,25 @@ const NOISY_EXTERNAL_PATH_PARTS = [
   "\\windows\\microsoft.net\\",
   "\\windows\\assembly\\",
   "\\users\\air\\appdata\\local\\programs\\microsoft vs code\\",
+  // 临时目录
+  "\\appdata\\local\\temp\\",
+  "\\windows\\temp\\",
+  // 下载目录
+  "\\google下载目录\\",
+  "\\downloads\\",
+  // NVIDIA 驱动安装目录
+  "\\nvidia\\nvapp\\",
+  "\\nvidia corporation\\nvidia app\\updateframework\\",
+  // 反作弊引擎
+  "\\anticheatexpert\\",
+];
+/** 文件名（不含 .exe）中包含这些关键词的视为安装包/更新器，自动过滤 */
+const NOISY_EXTERNAL_NAME_PATTERNS = [
+  "installer",
+  "setup",
+  "updater",
+  "update",
+  "uninstall",
 ];
 const MIN_TIME_SLOT_RECOMMENDATION_LAUNCHES = 3;
 const MIN_TIME_SLOT_RECOMMENDATION_TOTAL_LAUNCHES = 5;
@@ -262,7 +281,14 @@ function isNoisyExternalPath(path: string): boolean {
     return true;
   }
   const executableName = getExecutableNameFromPath(pathKey);
-  return NOISY_EXTERNAL_EXECUTABLE_NAMES.has(executableName);
+  if (NOISY_EXTERNAL_EXECUTABLE_NAMES.has(executableName)) {
+    return true;
+  }
+  const nameStem = executableName.replace(/\.exe$/, "");
+  if (NOISY_EXTERNAL_NAME_PATTERNS.some((pattern) => nameStem.includes(pattern))) {
+    return true;
+  }
+  return false;
 }
 
 function normalizeExternalRecentLaunchRecord(
