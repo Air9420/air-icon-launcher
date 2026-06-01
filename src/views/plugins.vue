@@ -58,6 +58,8 @@ async function onRefresh() {
     try {
         await refreshPlugins();
         showToast("插件列表已刷新", { type: "success" });
+    } catch (e) {
+        showToast("刷新插件失败：" + (e instanceof Error ? e.message : String(e)), { type: "error" });
     } finally {
         loading.value = false;
     }

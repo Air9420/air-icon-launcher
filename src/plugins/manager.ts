@@ -481,6 +481,7 @@ export function usePluginManager() {
       }
     } catch (error) {
       console.error("Failed to refresh plugins:", error);
+      throw error;
     }
   }
 
