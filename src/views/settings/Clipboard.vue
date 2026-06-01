@@ -242,6 +242,8 @@ async function onSelectStoragePath() {
         }
     } catch (e) {
         console.error("Failed to select storage path:", e);
+        showToast("存储路径迁移失败：" + (e instanceof Error ? e.message : String(e)), { type: "error" });
+        migrationProgress.value = 0;
     } finally {
         isMigrating.value = false;
         isProcessing.value = false;
@@ -270,6 +272,8 @@ async function onResetStoragePath() {
         await new Promise(resolve => setTimeout(resolve, 300));
     } catch (e) {
         console.error("Failed to reset storage path:", e);
+        showToast("重置存储路径失败：" + (e instanceof Error ? e.message : String(e)), { type: "error" });
+        migrationProgress.value = 0;
     } finally {
         isMigrating.value = false;
         isProcessing.value = false;
