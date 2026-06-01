@@ -96,9 +96,8 @@ function onUnblockExternal(path: string) {
 }
 
 async function onRevealInExplorer(path: string) {
-    try {
-        await invoke("reveal_in_explorer", { path });
-    } catch {
+    const result = await invoke("reveal_in_explorer", { path });
+    if (!result.ok) {
         showToast("路径不存在或无法访问", { type: "error" });
     }
 }
