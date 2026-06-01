@@ -910,6 +910,8 @@ export function useMenuActions(options: UseMenuActionsOptions) {
         }
         if (action.kind === "copy-clipboard-item") return onCopyClipboardItem();
         if (action.kind === "locate-clipboard-item") return onLocateClipboardItem();
+        if (action.kind === "locate-clipboard-item-in-history") return onLocateClipboardItemInHistory();
+        if (action.kind === "delete-clipboard-item") return onDeleteClipboardItem();
         if (action.kind === "open-in-explorer") return onOpenInExplorer();
         if (action.kind === "block-external-item") return onBlockExternalItem();
         if (action.kind === "convert-external-item") return onConvertExternalItem();
