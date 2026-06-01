@@ -182,6 +182,7 @@ async function onRevealInExplorer(path: string) {
 
 .blocked-main {
     min-width: 0;
+    flex: 1;
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -199,6 +200,5 @@ async function onRevealInExplorer(path: string) {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    width: 250px;
 }
 </style>
