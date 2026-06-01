@@ -30,13 +30,23 @@
                         <div class="blocked-name" :title="entry.name">{{ entry.name }}</div>
                         <div class="blocked-path" :title="entry.path">{{ entry.path }}</div>
                     </div>
-                    <button
-                        class="action-btn"
-                        type="button"
-                        @click="onUnblockExternal(entry.path)"
-                    >
-                        取消屏蔽
-                    </button>
+                    <div class="blocked-actions">
+                        <button
+                            class="action-btn"
+                            type="button"
+                            @click="onRevealInExplorer(entry.path)"
+                            title="在资源管理器中打开"
+                        >
+                            打开位置
+                        </button>
+                        <button
+                            class="action-btn"
+                            type="button"
+                            @click="onUnblockExternal(entry.path)"
+                        >
+                            取消屏蔽
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -49,6 +59,7 @@ import { Store } from "../../stores";
 import { storeToRefs } from "pinia";
 import { useConfirmDialog } from "../../composables/useConfirmDialog";
 import { useStatsStore } from "../../stores/statsStore";
+import { invoke } from "../../utils/invoke-wrapper";
 
 const router = useRouter();
 const store = Store();
@@ -81,6 +92,14 @@ async function onClearRecentUsed() {
 
 function onUnblockExternal(path: string) {
     statsStore.unblockExternalLaunchPath(path);
+}
+
+async function onRevealInExplorer(path: string) {
+    try {
+        await invoke("reveal_in_explorer", { path });
+    } catch {
+        // Path doesn't exist or not accessible — silent fail
+    }
 }
 </script>
 
@@ -149,6 +168,12 @@ function onUnblockExternal(path: string) {
     border: 1px solid var(--border-color);
     border-radius: 10px;
     background: var(--bg-secondary);
+}
+
+.blocked-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
 
     & .action-btn {
         width: 80px;
