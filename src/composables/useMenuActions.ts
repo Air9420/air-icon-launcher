@@ -716,7 +716,7 @@ export function useMenuActions(options: UseMenuActionsOptions) {
         }
     }
 
-    async function onLocateClipboardItemInHistory() {
+    function onLocateClipboardItemInHistory() {
         const recordId = currentClipboardRecordId.value;
         if (!recordId) return;
         
