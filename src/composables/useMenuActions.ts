@@ -700,6 +700,35 @@ export function useMenuActions(options: UseMenuActionsOptions) {
         closeContextMenu();
     }
 
+    async function onDeleteClipboardItem() {
+        const recordId = currentClipboardRecordId.value;
+        if (!recordId) return;
+        
+        try {
+            await invoke("delete_clipboard_record", { id: recordId });
+            clipboardStore.removeClipboardRecord(recordId);
+            showToast("已删除");
+        } catch (error) {
+            console.error(error);
+            showToast("删除失败", { type: "error" });
+        } finally {
+            closeContextMenu();
+        }
+    }
+
+    async function onLocateClipboardItemInHistory() {
+        const recordId = currentClipboardRecordId.value;
+        if (!recordId) return;
+        
+        // 触发自定义事件，通知ClipboardHistory组件执行定位
+        const event = new CustomEvent("locate-clipboard-item", {
+            detail: { recordId },
+        });
+        document.dispatchEvent(event);
+        
+        closeContextMenu();
+    }
+
     async function onOpenInExplorer() {
         const rawPath = currentItemPath.value?.trim();
         if (!rawPath) {
@@ -924,6 +953,8 @@ export function useMenuActions(options: UseMenuActionsOptions) {
     return {
         onMenuAction,
         lastAction,
+        onDeleteClipboardItem,
+        onLocateClipboardItemInHistory,
     };
 }
 
