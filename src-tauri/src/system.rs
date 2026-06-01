@@ -211,6 +211,29 @@ pub fn reveal_in_explorer(path: String) -> AppResult<()> {
 
     #[cfg(target_os = "windows")]
     {
+        // Try metadata to verify actual accessibility (WindowsApps exists() returns true but is inaccessible)
+        if let Err(e) = std::fs::metadata(&target) {
+            // metadata failed but exists() was true → permission/access issue
+            // Try to open parent directory as fallback
+            if let Some(parent) = target.parent() {
+                if parent.exists() {
+                    Command::new("explorer.exe")
+                        .arg(parent.to_string_lossy().to_string())
+                        .spawn()
+                        .map_err(|e| {
+                            AppError::internal(format!("Failed to open explorer: {}", e))
+                        })?;
+                    return Ok(());
+                }
+            }
+            return Err(AppError::permission_denied(format!(
+                "Path exists but is not accessible: {:?} ({}: {})",
+                target,
+                e.kind(),
+                e
+            )));
+        }
+
         Command::new("explorer.exe")
             .arg(format!("/select,{}", target.to_string_lossy()))
             .spawn()
