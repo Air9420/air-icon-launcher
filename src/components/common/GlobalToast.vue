@@ -1,78 +1,55 @@
 <template>
     <Teleport to="body">
         <div class="toast-container">
-            <TransitionGroup name="toast">
-                <div
-                    v-for="toast in toastQueueWithOffset"
-                    :key="toast.id"
-                    class="global-toast"
-                    :class="[toast.type, toast.position, { leaving: toast.leaving }]"
-                    :style="toast.offsetStyle"
-                    @click="removeToast(toast.id)"
-                >
-                    {{ toast.message }}
-                </div>
-            </TransitionGroup>
+            <div
+                v-for="group in groupedToasts"
+                :key="group.position"
+                class="toast-group"
+                :class="`group-${group.position}`"
+            >
+                <TransitionGroup :name="`toast-${group.position}`">
+                    <div
+                        v-for="toast in group.items"
+                        :key="toast.id"
+                        class="global-toast"
+                        :class="[toast.type, toast.position, { leaving: toast.leaving }]"
+                        @click="removeToast(toast.id)"
+                    >
+                        {{ toast.message }}
+                    </div>
+                </TransitionGroup>
+            </div>
         </div>
     </Teleport>
 </template>
 
 <script setup lang="ts">
 import { computed } from "vue";
-import { useGlobalToast, type ToastItem } from "../../composables/useGlobalToast";
+import { useGlobalToast, type ToastItem, type ToastPosition } from "../../composables/useGlobalToast";
 
 const { toastQueue, removeToast } = useGlobalToast();
 
-const BASE_OFFSET = 24;
-const OFFSET_STEP = 56;
+const POSITION_GROUPS: ToastPosition[] = [
+    "top", "top-left", "top-right",
+    "bottom", "bottom-left", "bottom-right",
+];
 
-const parsePixel = (value: string | undefined, fallback: number): number => {
-    return parseInt(value || `${fallback}px`, 10);
-};
+const groupedToasts = computed(() => {
+    const groups = new Map<ToastPosition, ToastItem[]>();
 
-function getBasePositionStyle(
-    position: ToastItem["position"]
-): Record<string, string> {
-    const styles: Record<string, Record<string, string>> = {
-        top: { top: "24px", left: "50%", transform: "translateX(-50%)" },
-        "top-left": { top: "24px", left: "24px" },
-        "top-right": { top: "24px", right: "24px" },
-        bottom: { bottom: "80px", left: "50%", transform: "translateX(-50%)" },
-        "bottom-left": { bottom: "24px", left: "24px" },
-        "bottom-right": { bottom: "24px", right: "24px" },
-    };
-    return { ...styles[position] };
-}
-
-const toastQueueWithOffset = computed(() => {
-    const groups: Record<string, ToastItem[]> = {};
     toastQueue.value.forEach((toast) => {
-        const pos = toast.position;
-        if (!groups[pos]) groups[pos] = [];
-        groups[pos].push(toast);
+        if (!groups.has(toast.position)) {
+            groups.set(toast.position, []);
+        }
+        groups.get(toast.position)!.push(toast);
     });
 
-    const result: (ToastItem & { offsetStyle: Record<string, string> })[] = [];
-
-    Object.entries(groups).forEach(([pos, toasts]) => {
-        toasts.forEach((toast, index) => {
-            const baseStyle = getBasePositionStyle(pos as ToastItem["position"]);
-            const offset = index * OFFSET_STEP;
-
-            if (pos.startsWith("top")) {
-                baseStyle.top = `${parsePixel(baseStyle.top, BASE_OFFSET) + offset}px`;
-            } else if (pos.startsWith("bottom")) {
-                baseStyle.bottom = `${parsePixel(baseStyle.bottom, BASE_OFFSET) + offset}px`;
-            }
-
-            result.push({
-                ...toast,
-                offsetStyle: baseStyle,
-            });
-        });
-    });
-
-    return result;
+    return POSITION_GROUPS
+        .filter((pos) => groups.has(pos) && groups.get(pos)!.length > 0)
+        .map((pos) => ({
+            position: pos,
+            items: groups.get(pos)!,
+        }));
 });
 </script>
 
@@ -85,8 +62,58 @@ const toastQueueWithOffset = computed(() => {
     user-select: none;
 }
 
-.global-toast {
+.toast-group {
     position: fixed;
+    display: flex;
+    gap: 8px;
+    pointer-events: none;
+}
+
+.group-top {
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    flex-direction: column;
+    align-items: center;
+}
+
+.group-top-left {
+    top: 24px;
+    left: 24px;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.group-top-right {
+    top: 24px;
+    right: 24px;
+    flex-direction: column;
+    align-items: flex-end;
+}
+
+.group-bottom {
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    flex-direction: column-reverse;
+    align-items: center;
+}
+
+.group-bottom-left {
+    bottom: 24px;
+    left: 24px;
+    flex-direction: column-reverse;
+    align-items: flex-start;
+}
+
+.group-bottom-right {
+    bottom: 24px;
+    right: 24px;
+    flex-direction: column-reverse;
+    align-items: flex-end;
+}
+
+.global-toast {
     padding: 10px 20px;
     border-radius: 12px;
     font-size: 14px;
@@ -111,94 +138,76 @@ const toastQueueWithOffset = computed(() => {
     background: var(--toast-error-bg, #ef4444);
 }
 
-@keyframes toastInTop {
-    from {
-        opacity: 0;
-        transform: translateX(-50%) translateY(-20px);
-    }
-    to {
-        opacity: 1;
-        transform: translateX(-50%) translateY(0);
-    }
+// Top animations
+.toast-top-enter-active,
+.toast-top-left-enter-active,
+.toast-top-right-enter-active {
+    transition: all 0.3s ease;
 }
 
-.global-toast.top {
-    animation: toastInTop 0.3s ease forwards;
+.toast-top-leave-active,
+.toast-top-left-leave-active,
+.toast-top-right-leave-active {
+    transition: all 0.2s ease;
 }
 
-@keyframes toastInTopLeft {
-    from {
-        opacity: 0;
-        transform: translateY(-20px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+.toast-top-enter-from,
+.toast-top-left-enter-from,
+.toast-top-right-enter-from {
+    opacity: 0;
+    transform: translateY(-20px);
 }
 
-.global-toast.top-left {
-    animation: toastInTopLeft 0.3s ease forwards;
+.toast-top-leave-to,
+.toast-top-left-leave-to,
+.toast-top-right-leave-to {
+    opacity: 0;
+    transform: scale(0.9);
 }
 
-@keyframes toastInTopRight {
-    from {
-        opacity: 0;
-        transform: translateY(-20px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+.group-top .toast-top-enter-from,
+.group-top .toast-top-leave-to {
+    transform: translateX(-50%) translateY(-20px);
 }
 
-.global-toast.top-right {
-    animation: toastInTopRight 0.3s ease forwards;
+.group-top .toast-top-leave-to {
+    transform: translateX(-50%) scale(0.9);
 }
 
-@keyframes toastInBottom {
-    from {
-        opacity: 0;
-        transform: translateX(-50%) translateY(20px);
-    }
-    to {
-        opacity: 1;
-        transform: translateX(-50%) translateY(0);
-    }
+// Bottom animations
+.toast-bottom-enter-active,
+.toast-bottom-left-enter-active,
+.toast-bottom-right-enter-active {
+    transition: all 0.3s ease;
 }
 
-.global-toast.bottom {
-    animation: toastInBottom 0.3s ease forwards;
+.toast-bottom-leave-active,
+.toast-bottom-left-leave-active,
+.toast-bottom-right-leave-active {
+    transition: all 0.2s ease;
 }
 
-@keyframes toastInBottomLeft {
-    from {
-        opacity: 0;
-        transform: translateY(20px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+.toast-bottom-enter-from,
+.toast-bottom-left-enter-from,
+.toast-bottom-right-enter-from {
+    opacity: 0;
+    transform: translateY(20px);
 }
 
-.global-toast.bottom-left {
-    animation: toastInBottomLeft 0.3s ease forwards;
+.toast-bottom-leave-to,
+.toast-bottom-left-leave-to,
+.toast-bottom-right-leave-to {
+    opacity: 0;
+    transform: scale(0.9);
 }
 
-@keyframes toastInBottomRight {
-    from {
-        opacity: 0;
-        transform: translateY(20px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+.group-bottom .toast-bottom-enter-from,
+.group-bottom .toast-bottom-leave-to {
+    transform: translateX(-50%) translateY(20px);
 }
 
-.global-toast.bottom-right {
-    animation: toastInBottomRight 0.3s ease forwards;
+.group-bottom .toast-bottom-leave-to {
+    transform: translateX(-50%) scale(0.9);
 }
 
 .global-toast.leaving {
@@ -220,18 +229,6 @@ const toastQueueWithOffset = computed(() => {
     to {
         opacity: 0;
         transform: translateX(-50%) scale(0.9);
-    }
-}
-
-.global-toast.top-left.leaving,
-.global-toast.top-right.leaving {
-    animation-name: toastLeaveTopSide !important;
-}
-
-@keyframes toastLeaveTopSide {
-    to {
-        opacity: 0;
-        transform: scale(0.9);
     }
 }
 </style>
