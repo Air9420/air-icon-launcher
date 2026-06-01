@@ -87,6 +87,9 @@
                         class="history-item"
                         :ref="(el) => setItemRef(el, item.id)"
                         :data-item-id="item.id"
+                        :data-menu-type="'Clipboard-History-View'"
+                        :data-clipboard-record-id="item.id"
+                        :data-clipboard-content-type="item.content_type"
                         :class="{
                             'is-current': item.hash === currentHash,
                             'is-anchor-flashing': anchorFlashItemId === item.id,
@@ -309,6 +312,7 @@ onMounted(() => {
     document.addEventListener("keydown", onClipboardKeydown, true);
     document.addEventListener("mousedown", onClipboardMouseDown, true);
     searchInputRef.value?.addEventListener("blur", onSearchInputBlur);
+    document.addEventListener("locate-clipboard-item", onLocateClipboardItem);
     nextTick(() => {
         searchInputRef.value?.focus();
     });
@@ -318,6 +322,7 @@ onBeforeUnmount(() => {
     document.removeEventListener("keydown", onClipboardKeydown, true);
     document.removeEventListener("mousedown", onClipboardMouseDown, true);
     searchInputRef.value?.removeEventListener("blur", onSearchInputBlur);
+    document.removeEventListener("locate-clipboard-item", onLocateClipboardItem);
 
     if (scrollAnimationFrame === null) {
         if (anchorFlashTimer !== null) {
@@ -787,6 +792,24 @@ async function triggerAnchorFlash(recordId: string) {
         }
         anchorFlashTimer = null;
     }, ANCHOR_FLASH_MS);
+}
+
+function onLocateClipboardItem(event: Event) {
+    const customEvent = event as CustomEvent;
+    const { recordId } = customEvent.detail;
+
+    searchKeyword.value = "";
+
+    nextTick(() => {
+        const target = itemRefs.value[recordId];
+        const container = contentRef.value;
+        if (!target || !container) return;
+
+        triggerAnchorFlash(recordId);
+
+        const nextScrollTop = getAnchorScrollTop(container, target);
+        animateScrollTo(container, nextScrollTop);
+    });
 }
 
 function getVisibleText(record: ClipboardRecord): string {
