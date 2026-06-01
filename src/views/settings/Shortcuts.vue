@@ -64,6 +64,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { invokeOrThrow } from "../../utils/invoke-wrapper";
 import { useSettingsStore } from "../../stores";
 import { Infinite } from "@solar-icons/vue";
+import { showToast } from "../../composables/useGlobalToast";
 
 const settingsStore = useSettingsStore();
 const {
@@ -230,10 +231,13 @@ async function onRecordKeyDown(ev: KeyboardEvent) {
 
 async function onStrongShortcutModeChange(e: Event) {
     const target = e.target as HTMLInputElement;
+    const newValue = target.checked;
     try {
-        await settingsStore.setStrongShortcutMode(target.checked);
+        await settingsStore.setStrongShortcutMode(newValue);
     } catch (err) {
         console.error(err);
+        target.checked = !newValue;
+        showToast("设置失败", { type: "error" });
     }
 }
 
