@@ -79,6 +79,7 @@
 import { ref, computed, onMounted } from "vue";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { showToast } from "../../composables/useGlobalToast";
 
 const version = ref("...");
 const currentYear = computed(() => new Date().getFullYear());
@@ -98,6 +99,7 @@ async function onOpenGitHub() {
         await openUrl("https://github.com/Air9420/air-icon-launcher");
     } catch (e) {
         console.error("Failed to open GitHub:", e);
+        showToast("无法打开链接", { type: "error" });
     }
 }
 </script>
