@@ -36,7 +36,7 @@
 import { ref, type Ref } from "vue";
 import { useRouter } from "vue-router";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeOrThrow as invoke } from "../utils/invoke-wrapper";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Store } from "../stores";
 import { useCategoryStore } from "../stores/categoryStore";
