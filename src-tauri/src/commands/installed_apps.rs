@@ -2,6 +2,8 @@ use crate::commands::scan_cache;
 use crate::drag;
 use crate::error::AppError;
 use crate::error::AppResult;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use quick_xml::events::Event;
 use quick_xml::name::QName;
 use quick_xml::Reader;
@@ -1252,6 +1254,32 @@ pub fn extract_icon_for_path(icon_path: &str) -> Option<String> {
 }
 
 #[cfg(windows)]
+fn resolve_package_install_location_from_registry(package_family: &str) -> Option<String> {
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let families_key = hklm
+        .open_subkey_with_flags(
+            "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Appx\\PackageFamilies",
+            KEY_READ,
+        )
+        .ok()?;
+
+    let family_key = families_key.open_subkey_with_flags(package_family, KEY_READ).ok()?;
+
+    for subkey_name in family_key.enum_keys().filter_map(Result::ok) {
+        if let Ok(subkey) = family_key.open_subkey_with_flags(&subkey_name, KEY_READ) {
+            if let Ok(path) = subkey.get_value::<String, _>("PackageVolumePath") {
+                let trimmed = path.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
+
+#[cfg(windows)]
 fn resolve_apps_folder_icon_path(path: &str) -> Option<String> {
     let normalized = path.trim();
     if !normalized
@@ -1268,50 +1296,26 @@ fn resolve_apps_folder_icon_path(path: &str) -> Option<String> {
         .filter(|s| !s.is_empty())?;
     let family = aumid.split('!').next().filter(|s| !s.is_empty())?;
 
-    let script = format!(
-        "Get-AppxPackage | Where-Object PackageFamilyName -EQ '{}' | Select-Object -First 1 InstallLocation | ConvertTo-Json -Compress",
-        family.replace('\'', "''")
-    );
-
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-Command", &script])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    let raw = stdout.trim();
-    if raw.is_empty() {
-        return None;
-    }
-
-    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
-    let install_location = value
-        .get("InstallLocation")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())?;
+    let install_location = resolve_package_install_location_from_registry(family)?;
 
     let package_name = family.split('_').next().unwrap_or_default();
     let display_name = package_name.split('.').last().unwrap_or(package_name);
 
-    if let Some(path) = resolve_apps_folder_manifest_executable(install_location, aumid) {
+    if let Some(path) = resolve_apps_folder_manifest_executable(&install_location, aumid) {
         return Some(path.to_string_lossy().to_string());
     }
 
     if let Some(path) =
-        resolve_apps_folder_common_executable_path(install_location, package_name, display_name)
+        resolve_apps_folder_common_executable_path(&install_location, package_name, display_name)
     {
         return Some(path.to_string_lossy().to_string());
     }
 
-    if let Some(path) = resolve_apps_folder_primary_executable(install_location, display_name) {
+    if let Some(path) = resolve_apps_folder_primary_executable(&install_location, display_name) {
         return Some(path.to_string_lossy().to_string());
     }
 
-    resolve_install_location_executable(install_location, display_name)
+    resolve_install_location_executable(&install_location, display_name)
         .map(|p| p.to_string_lossy().to_string())
 }
 
@@ -1496,6 +1500,7 @@ fn collect_apps_folder_candidates(max_candidates: usize) -> Vec<CandidateApp> {
     let try_read_items = |script: &str| -> Option<Vec<AppsFolderItemRaw>> {
         let output = Command::new("powershell")
             .args(["-NoProfile", "-Command", script])
+            .creation_flags(0x08000000)
             .output()
             .ok()?;
         if !output.status.success() {

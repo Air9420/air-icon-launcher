@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri::Manager;
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::Shell::ShellExecuteW;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -126,12 +128,35 @@ pub fn launch_scanned_app(path: String) -> AppResult<()> {
         return crate::system::open_apps_folder_shell_target(trimmed);
     }
 
-    let status = std::process::Command::new("cmd")
-        .args(["/C", "start", "", trimmed])
-        .spawn();
-    match status {
-        Ok(_) => Ok(()),
-        Err(e) => Err(AppError::internal(format!("启动失败: {}", e))),
+    #[cfg(target_os = "windows")]
+    {
+        let operation = crate::system::widestring("open");
+        let target = crate::system::widestring(trimmed);
+
+        let result = unsafe {
+            ShellExecuteW(
+                windows::Win32::Foundation::HWND::default(),
+                windows::core::PCWSTR(operation.as_ptr()),
+                windows::core::PCWSTR(target.as_ptr()),
+                windows::core::PCWSTR::null(),
+                windows::core::PCWSTR::null(),
+                windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+            )
+        };
+
+        let code = result.0 as isize;
+        if code > 32 {
+            return Ok(());
+        }
+        return Err(AppError::internal(format!(
+            "启动失败: ShellExecuteW 返回错误码 {}",
+            code
+        )));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err(AppError::internal("启动失败: 不支持的操作系统"))
     }
 }
 

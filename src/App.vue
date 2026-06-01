@@ -225,6 +225,8 @@ onMounted(async () => {
     applyEffectsDisabled(!windowEffectsEnabled.value);
     watchThemeChanges();
 
+    void store.syncSearchIndex().catch(() => {});
+
     const isAutostart = await invoke<boolean>("check_is_autostart_launch");
     if (!isAutostart) {
         try {

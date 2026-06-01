@@ -136,44 +136,28 @@ pub(crate) fn open_apps_folder_shell_target(value: &str) -> AppResult<()> {
         return Err(AppError::invalid_input("AppsFolder target cannot be empty"));
     }
 
-    let escaped_target_id = apps_folder_id.replace('\'', "''");
-    let script = r#"
-$TargetId = '__APPS_FOLDER_TARGET_ID__'
-$shell = New-Object -ComObject Shell.Application
-$folder = $shell.NameSpace('shell:AppsFolder')
-if ($null -eq $folder) {
-    Write-Error 'AppsFolder namespace is unavailable'
-    exit 2
-}
-$item = $folder.ParseName($TargetId)
-if ($null -eq $item) {
-    Write-Error "AppsFolder item not found: $TargetId"
-    exit 3
-}
-$item.InvokeVerb('open')
-"#
-    .replace("__APPS_FOLDER_TARGET_ID__", &escaped_target_id);
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-Command", &script])
-        .output()
-        .map_err(|e| AppError::internal(format!("Failed to open AppsFolder item: {}", e)))?;
+    let operation = widestring("open");
+    let target = widestring(&format!("shell:AppsFolder\\{}", apps_folder_id));
 
-    if output.status.success() {
+    let result = unsafe {
+        ShellExecuteW(
+            HWND::default(),
+            windows::core::PCWSTR(operation.as_ptr()),
+            windows::core::PCWSTR(target.as_ptr()),
+            windows::core::PCWSTR::null(),
+            windows::core::PCWSTR::null(),
+            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+        )
+    };
+
+    let code = result.0 as isize;
+    if code > 32 {
         return Ok(());
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let details = if !stderr.is_empty() {
-        stderr
-    } else if !stdout.is_empty() {
-        stdout
-    } else {
-        format!("exit code {:?}", output.status.code())
-    };
     Err(AppError::internal(format!(
-        "Failed to open AppsFolder item '{}': {}",
-        apps_folder_id, details
+        "Failed to open AppsFolder item '{}': ShellExecuteW returned {}",
+        apps_folder_id, code
     )))
 }
 
@@ -281,23 +265,10 @@ fn open_url_with_shell_execute(url: &str) -> AppResult<()> {
         return Ok(());
     }
 
-    Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Start-Process -FilePath $args[0]",
-            "--",
-            url,
-        ])
-        .spawn()
-        .map_err(|e| {
-            AppError::internal(format!(
-                "Failed to open URL via ShellExecuteW ({}) and PowerShell fallback: {}",
-                code, e
-            ))
-        })?;
-
-    Ok(())
+    Err(AppError::internal(format!(
+        "Failed to open URL '{}': ShellExecuteW returned {}",
+        url, code
+    )))
 }
 
 #[cfg(target_os = "windows")]
@@ -322,27 +293,14 @@ fn open_path_with_shell_execute(path: &Path) -> AppResult<()> {
         return Ok(());
     }
 
-    Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Start-Process -LiteralPath $args[0]",
-            "--",
-            path_str.as_str(),
-        ])
-        .spawn()
-        .map_err(|e| {
-            AppError::internal(format!(
-                "Failed to open path via ShellExecuteW ({}) and PowerShell fallback: {}",
-                code, e
-            ))
-        })?;
-
-    Ok(())
+    Err(AppError::internal(format!(
+        "Failed to open path '{}': ShellExecuteW returned {}",
+        path_str, code
+    )))
 }
 
 #[cfg(target_os = "windows")]
-fn widestring(value: &str) -> Vec<u16> {
+pub(crate) fn widestring(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
