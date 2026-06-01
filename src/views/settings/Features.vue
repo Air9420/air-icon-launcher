@@ -60,6 +60,7 @@ import { storeToRefs } from "pinia";
 import { useConfirmDialog } from "../../composables/useConfirmDialog";
 import { useStatsStore } from "../../stores/statsStore";
 import { invoke } from "../../utils/invoke-wrapper";
+import { showToast } from "../../composables/useGlobalToast";
 
 const router = useRouter();
 const store = Store();
@@ -98,7 +99,7 @@ async function onRevealInExplorer(path: string) {
     try {
         await invoke("reveal_in_explorer", { path });
     } catch {
-        // Path doesn't exist or not accessible — silent fail
+        showToast("路径不存在或无法访问", { type: "error" });
     }
 }
 </script>
