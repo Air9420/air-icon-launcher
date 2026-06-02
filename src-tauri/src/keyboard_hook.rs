@@ -110,7 +110,7 @@ fn should_trigger() -> bool {
 
 #[cfg(target_os = "windows")]
 fn should_block_input() -> bool {
-    true
+    !crate::corner_hotspot::is_fullscreen_app_running()
 }
 
 #[cfg(target_os = "windows")]

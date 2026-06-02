@@ -171,8 +171,7 @@ fn get_screen_for_cursor() -> Option<(i32, i32)> {
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
-fn is_fullscreen_app_running() -> bool {
+pub fn is_fullscreen_app_running() -> bool {
     use windows::Win32::Foundation::RECT;
     use windows::Win32::Graphics::Gdi::{
         GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
@@ -226,7 +225,7 @@ fn is_fullscreen_app_running() -> bool {
 }
 
 #[cfg(not(windows))]
-fn is_fullscreen_app_running() -> bool {
+pub fn is_fullscreen_app_running() -> bool {
     false
 }
 

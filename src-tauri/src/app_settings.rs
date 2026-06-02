@@ -199,6 +199,9 @@ pub fn register_toggle_shortcut(app: &AppHandle, shortcut: &str) -> AppResult<()
         .on_shortcut(shortcut, move |app, _shortcut, event| {
             use tauri_plugin_global_shortcut::ShortcutState;
             if event.state == ShortcutState::Pressed {
+                if crate::corner_hotspot::is_fullscreen_app_running() {
+                    return;
+                }
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.emit("toggle-main", ());
                 }
@@ -219,6 +222,9 @@ pub fn register_clipboard_shortcut(app: &AppHandle, shortcut: &str) -> AppResult
         .on_shortcut(shortcut, move |app, _shortcut, event| {
             use tauri_plugin_global_shortcut::ShortcutState;
             if event.state == ShortcutState::Pressed {
+                if crate::corner_hotspot::is_fullscreen_app_running() {
+                    return;
+                }
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.emit("toggle-clipboard", ());
                     let (follow, anchor) = app
