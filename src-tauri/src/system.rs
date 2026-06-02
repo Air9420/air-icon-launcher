@@ -234,10 +234,9 @@ pub fn reveal_in_explorer(path: String) -> AppResult<()> {
             )));
         }
 
-        Command::new("explorer.exe")
-            .arg(format!("/select,{}", target.to_string_lossy()))
-            .spawn()
-            .map_err(|e| AppError::internal(format!("Failed to reveal in explorer: {}", e)))?;
+        // Use SHOpenFolderAndSelectItems instead of explorer.exe /select
+        // explorer.exe /select is unreliable with paths containing spaces
+        reveal_with_shell_api(&target)?;
         return Ok(());
     }
 
@@ -260,6 +259,57 @@ pub fn reveal_in_explorer(path: String) -> AppResult<()> {
             return Ok(());
         }
         return open_path(trimmed.to_string());
+    }
+}
+
+/// Use Windows Shell API (SHOpenFolderAndSelectItems) to reveal and select a file in Explorer.
+/// More reliable than `explorer.exe /select` which fails with paths containing spaces.
+#[cfg(target_os = "windows")]
+fn reveal_with_shell_api(target: &Path) -> AppResult<()> {
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_APARTMENTTHREADED};
+    use windows::Win32::UI::Shell::{
+        SHOpenFolderAndSelectItems, SHParseDisplayName,
+    };
+    use windows::Win32::UI::Shell::Common::ITEMIDLIST;
+
+    let path_str = target.to_string_lossy().to_string();
+    let path_wide = widestring(&path_str);
+
+    unsafe {
+        let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let com_initialized = hr.is_ok();
+
+        let result = (|| -> AppResult<()> {
+            let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
+            let mut sfgao = 0u32;
+
+            let parse_result = SHParseDisplayName(PCWSTR(path_wide.as_ptr()), None, &mut pidl, 0, Some(&mut sfgao));
+            if parse_result.is_err() || pidl.is_null() {
+                return Err(AppError::not_found(format!(
+                    "Failed to parse display name: {:?}",
+                    target
+                )));
+            }
+
+            let hr = SHOpenFolderAndSelectItems(pidl, None, 0);
+            CoTaskMemFree(Some(pidl as *const _));
+
+            if hr.is_err() {
+                return Err(AppError::internal(format!(
+                    "SHOpenFolderAndSelectItems failed for {:?}: {:?}",
+                    target, hr
+                )));
+            }
+
+            Ok(())
+        })();
+
+        if com_initialized {
+            CoUninitialize();
+        }
+
+        result
     }
 }
 
