@@ -1,7 +1,6 @@
 use crate::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
-use tauri::AppHandle;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IccProfile {
@@ -94,4 +93,111 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
         device_id: String::new(),
         is_primary: true,
     }])
+}
+
+#[tauri::command]
+pub fn get_monitors() -> AppResult<Vec<MonitorInfo>> {
+    get_connected_monitors()
+}
+
+#[tauri::command]
+pub fn get_icc_profiles(state: tauri::State<'_, IccState>) -> AppResult<Vec<IccProfile>> {
+    let profiles = state.profiles.lock()
+        .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
+    Ok(profiles.clone())
+}
+
+#[tauri::command]
+pub fn add_icc_profile(
+    state: tauri::State<'_, IccState>,
+    profile: IccProfile,
+) -> AppResult<()> {
+    let mut profiles = state.profiles.lock()
+        .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
+    
+    if profiles.iter().any(|p| p.id == profile.id) {
+        return Err(AppError::invalid_input("Profile with this ID already exists"));
+    }
+    
+    profiles.push(profile);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn remove_icc_profile(
+    state: tauri::State<'_, IccState>,
+    profile_id: String,
+) -> AppResult<()> {
+    let mut profiles = state.profiles.lock()
+        .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
+    
+    profiles.retain(|p| p.id != profile_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn toggle_icc_profile(
+    state: tauri::State<'_, IccState>,
+    profile_id: String,
+    enabled: bool,
+) -> AppResult<()> {
+    let mut profiles = state.profiles.lock()
+        .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
+    
+    if let Some(profile) = profiles.iter_mut().find(|p| p.id == profile_id) {
+        profile.enabled = enabled;
+        Ok(())
+    } else {
+        Err(AppError::not_found("ICC profile not found"))
+    }
+}
+
+#[tauri::command]
+pub fn select_icc_file() -> AppResult<Option<String>> {
+    let dialog = rfd::FileDialog::new()
+        .add_filter("ICC Profile", &["icc", "icm"])
+        .set_title("Select ICC Profile");
+    
+    Ok(dialog.pick_file().map(|p| p.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
+pub fn get_system_icc_profiles() -> AppResult<Vec<String>> {
+    #[cfg(windows)]
+    {
+        use std::path::PathBuf;
+        use windows::Win32::UI::Shell::{SHGetFolderPathW, CSIDL_SYSTEM};
+        
+        let mut profiles = Vec::new();
+        
+        // Get system color directory
+        let mut path_buf = [0u16; 260];
+        unsafe {
+            if SHGetFolderPathW(None, CSIDL_SYSTEM as i32, None, 0, &mut path_buf).is_ok() {
+                let system_path = String::from_utf16_lossy(
+                    &path_buf[..path_buf.iter().position(|&c| c == 0).unwrap_or(260)]
+                );
+                let color_dir = PathBuf::from(system_path).join("spool").join("drivers").join("color");
+                
+                if let Ok(entries) = std::fs::read_dir(&color_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if let Some(ext) = path.extension() {
+                            if ext == "icc" || ext == "icm" {
+                                profiles.push(path.to_string_lossy().to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        profiles.sort();
+        Ok(profiles)
+    }
+    
+    #[cfg(not(windows))]
+    {
+        Ok(Vec::new())
+    }
 }
