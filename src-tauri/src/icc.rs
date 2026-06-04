@@ -396,28 +396,39 @@ fn get_device_id_from_name(device_name: &str) -> AppResult<String> {
     use windows::Win32::Graphics::Gdi::{DISPLAY_DEVICEW, EnumDisplayDevicesW};
     use std::mem;
     
-    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
-    
+    // 枚举显示器设备，找到匹配的设备
     let mut display_device: DISPLAY_DEVICEW = unsafe { mem::zeroed() };
     display_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
     
-    let result = unsafe {
-        EnumDisplayDevicesW(
-            windows::core::PCWSTR(device_name_wide.as_ptr()),
-            0,
-            &mut display_device,
-            0,
-        )
-    };
+    let mut device_index = 0u32;
     
-    if result.as_bool() {
-        let device_id = String::from_utf16_lossy(
-            &display_device.DeviceID[..display_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
+    loop {
+        let result = unsafe {
+            EnumDisplayDevicesW(None, device_index, &mut display_device, 0)
+        };
+        
+        if !result.as_bool() {
+            break;
+        }
+        
+        let name = String::from_utf16_lossy(
+            &display_device.DeviceName[..display_device.DeviceName.iter().position(|&c| c == 0).unwrap_or(32)]
         );
-        Ok(device_id)
-    } else {
-        Err(AppError::internal("Failed to get device ID"))
+        
+        if name.trim() == device_name {
+            let device_id = String::from_utf16_lossy(
+                &display_device.DeviceID[..display_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
+            );
+            return Ok(device_id);
+        }
+        
+        device_index += 1;
+        if device_index > 32 {
+            break;
+        }
     }
+    
+    Err(AppError::internal("Device not found"))
 }
 
 #[cfg(windows)]
