@@ -455,8 +455,10 @@ pub fn apply_icc_to_monitor(_device_name: &str, _icc_path: &str) -> AppResult<()
 
 #[cfg(windows)]
 pub fn restore_default_icc_for_monitor(device_name: &str) -> AppResult<()> {
-    use windows::Win32::UI::ColorSystem::{
-        WcsDisassociateColorProfileFromDevice, WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+    use windows::Win32::System::Registry::{
+        RegOpenKeyExW, RegSetValueExW, RegCloseKey,
+        HKEY_CURRENT_USER, KEY_WRITE, REG_DWORD,
+        HKEY,
     };
     use windows::Win32::Graphics::Gdi::{
         ChangeDisplaySettingsExW, CDS_UPDATEREGISTRY,
@@ -465,25 +467,49 @@ pub fn restore_default_icc_for_monitor(device_name: &str) -> AppResult<()> {
         SendMessageTimeoutW, HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_NORMAL,
     };
     
+    // 获取设备 ID
+    let device_id = get_device_id_from_name(device_name)?;
+    
+    // 构建注册表路径
+    let reg_path = format!(
+        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ICM\\ProfileAssociations\\Display\\{}",
+        device_id
+    );
+    
+    // 为每个显示器创建注册表项（0000, 0001, 0002...）
+    for i in 0..8 {
+        let subkey = format!("{}\\{:04}", reg_path, i);
+        let subkey_wide: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
+        
+        unsafe {
+            let mut hkey: HKEY = std::mem::zeroed();
+            let result = RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                windows::core::PCWSTR(subkey_wide.as_ptr()),
+                0,
+                KEY_WRITE,
+                &mut hkey,
+            );
+            
+            if result.is_ok() {
+                // 设置 UsePerUserProfiles = 0（禁用用户 ICC 设置）
+                let use_per_user: u32 = 0;
+                let value_name: Vec<u16> = "UsePerUserProfiles".encode_utf16().chain(std::iter::once(0)).collect();
+                let _ = RegSetValueExW(
+                    hkey,
+                    windows::core::PCWSTR(value_name.as_ptr()),
+                    0,
+                    REG_DWORD,
+                    Some(&use_per_user.to_ne_bytes()),
+                );
+                
+                let _ = RegCloseKey(hkey);
+            }
+        }
+    }
+    
+    // 应用显示设置更改
     let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
-    
-    // Get system default ICC profiles
-    let profiles = get_system_icc_profiles()?;
-    let default_profile = profiles.first()
-        .ok_or_else(|| AppError::internal("No system ICC profiles found"))?;
-    
-    let icc_path_wide: Vec<u16> = default_profile.encode_utf16().chain(std::iter::once(0)).collect();
-    
-    // Disassociate current ICC profile
-    let _ = unsafe {
-        WcsDisassociateColorProfileFromDevice(
-            WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
-            windows::core::PCWSTR(icc_path_wide.as_ptr()),
-            windows::core::PCWSTR(device_name_wide.as_ptr()),
-        )
-    };
-    
-    // Apply display settings change
     unsafe {
         let _ = ChangeDisplaySettingsExW(
             windows::core::PCWSTR(device_name_wide.as_ptr()),
@@ -494,7 +520,7 @@ pub fn restore_default_icc_for_monitor(device_name: &str) -> AppResult<()> {
         );
     }
     
-    // Broadcast setting change
+    // 广播设置更改消息
     unsafe {
         let mut result = 0usize;
         let _ = SendMessageTimeoutW(
