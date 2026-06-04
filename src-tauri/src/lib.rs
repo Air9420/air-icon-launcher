@@ -91,6 +91,17 @@ pub fn run() {
                         app_settings::register_display_shortcut(&handle, display_shortcut.as_str());
                 }
 
+                let icc_shortcut = handle
+                    .state::<app_settings::AppSettingsState>()
+                    .inner
+                    .lock()
+                    .map(|g| g.icc_shortcut.clone())
+                    .unwrap_or("alt+i".to_string());
+
+                if !icc_shortcut.is_empty() {
+                    let _ = app_settings::register_icc_shortcut(&handle, icc_shortcut.as_str());
+                }
+
                 if let Some(config) = keyboard_hook::parse_hotkey(toggle.as_str()) {
                     keyboard_hook::register_hotkey(config);
                     keyboard_hook::enable_hook(app_config.strong_shortcut_mode);
@@ -122,6 +133,7 @@ pub fn run() {
             app_settings::set_display_shortcut,
             app_settings::suspend_display_shortcut,
             app_settings::resume_display_shortcut,
+            app_settings::set_icc_shortcut,
             app_settings::show_window_with_follow_mouse,
             keyboard_hook::set_strong_shortcut_mode,
             keyboard_hook::get_strong_shortcut_mode,

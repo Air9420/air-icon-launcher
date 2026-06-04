@@ -257,6 +257,9 @@ fn apply_app_config_patch(config: &mut AppConfig, patch: AppConfigPatch) {
     if let Some(value) = patch.display_shortcut {
         config.display_shortcut = value;
     }
+    if let Some(value) = patch.icc_shortcut {
+        config.icc_shortcut = value;
+    }
     if let Some(value) = patch.follow_mouse_on_show {
         config.follow_mouse_on_show = value;
     }

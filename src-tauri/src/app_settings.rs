@@ -16,6 +16,7 @@ pub struct AppSettings {
     pub toggle_shortcut: String,
     pub clipboard_shortcut: String,
     pub display_shortcut: String,
+    pub icc_shortcut: String,
     pub follow_mouse_on_show: bool,
     pub follow_mouse_y_anchor: FollowMouseYAnchor,
 }
@@ -31,6 +32,7 @@ impl Default for AppSettingsState {
                 toggle_shortcut: "alt+space".to_string(),
                 clipboard_shortcut: "alt+v".to_string(),
                 display_shortcut: String::new(),
+                icc_shortcut: "alt+i".to_string(),
                 follow_mouse_on_show: false,
                 follow_mouse_y_anchor: FollowMouseYAnchor::Center,
             }),
@@ -50,6 +52,7 @@ impl AppSettingsState {
                 toggle_shortcut: config.toggle_shortcut.clone(),
                 clipboard_shortcut: config.clipboard_shortcut.clone(),
                 display_shortcut: config.display_shortcut.clone(),
+                icc_shortcut: config.icc_shortcut.clone(),
                 follow_mouse_on_show: config.follow_mouse_on_show,
                 follow_mouse_y_anchor: anchor,
             }),
@@ -475,4 +478,72 @@ pub fn resume_display_shortcut(app: AppHandle, shortcut: String) -> AppResult<()
     }
 
     register_display_shortcut(&app, shortcut)
+}
+
+pub fn register_icc_shortcut(app: &AppHandle, shortcut: &str) -> AppResult<()> {
+    use std::str::FromStr;
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+    let shortcut = Shortcut::from_str(shortcut)
+        .map_err(|e| AppError::invalid_input(format!("Invalid ICC shortcut: {}", e)))?;
+
+    app.global_shortcut()
+        .on_shortcut(shortcut, move |app, _shortcut, event| {
+            use tauri_plugin_global_shortcut::ShortcutState;
+            if event.state == ShortcutState::Pressed {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.emit("navigate-to-icc-settings", ());
+                    let (follow, anchor) = app
+                        .state::<AppSettingsState>()
+                        .inner
+                        .lock()
+                        .map(|g| (g.follow_mouse_on_show, g.follow_mouse_y_anchor))
+                        .unwrap_or((false, FollowMouseYAnchor::Center));
+                    show_main_window(app, follow, anchor);
+                }
+            }
+        })
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_icc_shortcut(
+    app: AppHandle,
+    state: tauri::State<'_, AppSettingsState>,
+    shortcut: String,
+) -> AppResult<()> {
+    let shortcut = shortcut.trim().to_string();
+    if shortcut.is_empty() {
+        return Err(AppError::invalid_input("Shortcut cannot be empty"));
+    }
+
+    let old = state
+        .inner
+        .lock()
+        .map(|g| g.icc_shortcut.clone())
+        .map_err(|_| AppError::internal("Failed to lock app settings state"))?;
+
+    if old == shortcut {
+        return Ok(());
+    }
+
+    if !shortcut.is_empty() {
+        register_icc_shortcut(&app, shortcut.as_str())?;
+    }
+
+    if !old.is_empty() {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+        let _ = app.global_shortcut().unregister(old.as_str());
+    }
+
+    {
+        let mut g = state
+            .inner
+            .lock()
+            .map_err(|_| AppError::internal("Failed to lock app settings state"))?;
+        g.icc_shortcut = shortcut;
+    }
+
+    Ok(())
 }

@@ -28,6 +28,14 @@
             <div class="hint">
                 在「仅电脑屏幕」和「扩展」模式之间快速切换（仅在多屏幕环境下可用）
             </div>
+            <div class="shortcut-row">
+                <span class="shortcut-label">ICC 配置</span>
+                <input ref="iccInputRef" v-model="iccShortcutDraft" class="input shortcut-input"
+                    :class="{ recording: recording && recordingTarget === 'icc' }" type="text"
+                    placeholder="点击后按下快捷键" readonly @focus="startRecording('icc')" @blur="onInputBlur('icc')"
+                    @click="startRecording('icc')" />
+            </div>
+            <div class="hint">快速打开 ICC 色彩配置管理</div>
             <div class="hint">
                 {{
                     recording
@@ -71,27 +79,31 @@ const {
     toggleShortcut,
     clipboardShortcut,
     displayShortcut,
+    iccShortcut,
     strongShortcutMode,
 } = storeToRefs(settingsStore);
 
 const shortcutDraft = ref<string>("");
 const clipboardShortcutDraft = ref<string>("");
 const displayShortcutDraft = ref<string>("");
+const iccShortcutDraft = ref<string>("");
 const recording = ref<boolean>(false);
-const recordingTarget = ref<"main" | "clipboard" | "display">("main");
+const recordingTarget = ref<"main" | "clipboard" | "display" | "icc">("main");
 const suspendedMainShortcut = ref<string>("");
 const shortcutError = ref<string>("");
 const mainInputRef = ref<HTMLInputElement | null>(null);
 const clipboardInputRef = ref<HTMLInputElement | null>(null);
 const displayInputRef = ref<HTMLInputElement | null>(null);
+const iccInputRef = ref<HTMLInputElement | null>(null);
 
 watchEffect(() => {
     shortcutDraft.value = toggleShortcut.value;
     clipboardShortcutDraft.value = clipboardShortcut.value;
     displayShortcutDraft.value = displayShortcut.value;
+    iccShortcutDraft.value = iccShortcut.value;
 });
 
-function startRecording(target: "main" | "clipboard" | "display") {
+function startRecording(target: "main" | "clipboard" | "display" | "icc") {
     if (recording.value) return;
     recording.value = true;
     recordingTarget.value = target;
@@ -113,6 +125,7 @@ async function cancelRecording() {
     shortcutDraft.value = toggleShortcut.value;
     clipboardShortcutDraft.value = clipboardShortcut.value;
     displayShortcutDraft.value = displayShortcut.value;
+    iccShortcutDraft.value = iccShortcut.value;
     shortcutError.value = "";
     if (recordingTarget.value === "main" && suspendedMainShortcut.value) {
         try {
@@ -123,7 +136,7 @@ async function cancelRecording() {
     }
 }
 
-async function onInputBlur(target: "main" | "clipboard" | "display") {
+async function onInputBlur(target: "main" | "clipboard" | "display" | "icc") {
     if (recording.value && recordingTarget.value === target) {
         await cancelRecording();
     }
@@ -165,7 +178,7 @@ async function onRecordKeyDown(ev: KeyboardEvent) {
     shortcutError.value = "";
 
     if (recordingTarget.value === "main") {
-        if (next === clipboardShortcut.value || next === displayShortcut.value) {
+        if (next === clipboardShortcut.value || next === displayShortcut.value || next === iccShortcut.value) {
             shortcutError.value = "主窗口快捷键不能与其他快捷键相同";
             shortcutDraft.value = toggleShortcut.value;
             if (suspendedMainShortcut.value) {
@@ -201,7 +214,7 @@ async function onRecordKeyDown(ev: KeyboardEvent) {
             }
         }
     } else if (recordingTarget.value === "clipboard") {
-        if (next === toggleShortcut.value || next === displayShortcut.value) {
+        if (next === toggleShortcut.value || next === displayShortcut.value || next === iccShortcut.value) {
             shortcutError.value = "剪贴板快捷键不能与其他快捷键相同";
             clipboardShortcutDraft.value = clipboardShortcut.value;
             return;
@@ -214,7 +227,7 @@ async function onRecordKeyDown(ev: KeyboardEvent) {
             clipboardShortcutDraft.value = clipboardShortcut.value;
         }
     } else if (recordingTarget.value === "display") {
-        if (next === toggleShortcut.value || next === clipboardShortcut.value) {
+        if (next === toggleShortcut.value || next === clipboardShortcut.value || next === iccShortcut.value) {
             shortcutError.value = "投影切换快捷键不能与其他快捷键相同";
             displayShortcutDraft.value = displayShortcut.value;
             return;
@@ -225,6 +238,19 @@ async function onRecordKeyDown(ev: KeyboardEvent) {
         } catch (e: unknown) {
             shortcutError.value = typeof e === "string" ? e : e instanceof Error ? e.message || "设置失败" : "设置失败";
             displayShortcutDraft.value = displayShortcut.value;
+        }
+    } else if (recordingTarget.value === "icc") {
+        if (next === toggleShortcut.value || next === clipboardShortcut.value || next === displayShortcut.value) {
+            shortcutError.value = "ICC 快捷键不能与其他快捷键相同";
+            iccShortcutDraft.value = iccShortcut.value;
+            return;
+        }
+        iccShortcutDraft.value = next;
+        try {
+            await settingsStore.setIccShortcut(next);
+        } catch (e: unknown) {
+            shortcutError.value = typeof e === "string" ? e : e instanceof Error ? e.message || "设置失败" : "设置失败";
+            iccShortcutDraft.value = iccShortcut.value;
         }
     }
 }

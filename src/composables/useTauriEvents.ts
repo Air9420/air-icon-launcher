@@ -157,6 +157,11 @@ export function useTauriEvents() {
         });
         unlisteners.push(unlistenNoExternalMonitor);
 
+        const unlistenNavigateIccSettings = await listen("navigate-to-icc-settings", async () => {
+            router.push("/settings/display");
+        });
+        unlisteners.push(unlistenNavigateIccSettings);
+
         const unlistenSystemProcessLaunched = await listen<SystemProcessLaunchedEvent>(
             "system-process-launched",
             ({ payload }) => {

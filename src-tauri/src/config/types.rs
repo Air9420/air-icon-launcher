@@ -55,6 +55,8 @@ pub struct AppConfig {
     pub clipboard_shortcut: String,
     #[serde(alias = "displayShortcut")]
     pub display_shortcut: String,
+    #[serde(alias = "iccShortcut")]
+    pub icc_shortcut: String,
     #[serde(alias = "followMouseOnShow")]
     pub follow_mouse_on_show: bool,
     #[serde(alias = "followMouseYAnchor")]
@@ -140,6 +142,7 @@ impl Default for AppConfig {
             toggle_shortcut: "alt+space".to_string(),
             clipboard_shortcut: "alt+v".to_string(),
             display_shortcut: String::new(),
+            icc_shortcut: "alt+i".to_string(),
             follow_mouse_on_show: false,
             follow_mouse_y_anchor: "center".to_string(),
             ctrl_drag_enabled: true,
@@ -184,6 +187,7 @@ pub struct AppConfigPatch {
     pub toggle_shortcut: Option<String>,
     pub clipboard_shortcut: Option<String>,
     pub display_shortcut: Option<String>,
+    pub icc_shortcut: Option<String>,
     pub follow_mouse_on_show: Option<bool>,
     pub follow_mouse_y_anchor: Option<String>,
     pub ctrl_drag_enabled: Option<bool>,

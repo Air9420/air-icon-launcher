@@ -17,6 +17,7 @@ export type AppConfigSnapshot = {
     toggle_shortcut: string;
     clipboard_shortcut: string;
     display_shortcut: string;
+    icc_shortcut: string;
     follow_mouse_on_show: boolean;
     follow_mouse_y_anchor: FollowMouseAnchor;
     ctrl_drag_enabled: boolean;
