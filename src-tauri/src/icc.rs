@@ -100,16 +100,15 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
                 &display_device.DeviceID[..display_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
             );
             
-            // Extract friendly name from device ID or use device string
+            // 获取设备字符串（通常是显卡名称）
             let device_string = String::from_utf16_lossy(
                 &display_device.DeviceString[..display_device.DeviceString.iter().position(|&c| c == 0).unwrap_or(128)]
             );
             
-            // Use device string as friendly name, or extract from device ID
-            let friendly_name = if !device_string.is_empty() && device_string != name {
+            // 使用设备字符串作为友好名称
+            let friendly_name = if !device_string.is_empty() {
                 device_string
             } else {
-                // Extract from device ID (e.g., "PCI\VEN_10DE&DEV_2782..." -> "NVIDIA GeForce ...")
                 extract_display_name_from_id(&device_id)
             };
 
@@ -139,6 +138,16 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
     Ok(monitors)
 }
 
+#[cfg(not(windows))]
+pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
+    Ok(vec![MonitorInfo {
+        name: "Display 1".to_string(),
+        friendly_name: "Display 1".to_string(),
+        device_id: String::new(),
+        is_primary: true,
+    }])
+}
+
 fn extract_display_name_from_id(device_id: &str) -> String {
     // Common vendor IDs
     let vendor_names = [
@@ -155,16 +164,6 @@ fn extract_display_name_from_id(device_id: &str) -> String {
     }
     
     "Unknown Display".to_string()
-}
-
-#[cfg(not(windows))]
-pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
-    Ok(vec![MonitorInfo {
-        name: "Display 1".to_string(),
-        friendly_name: "Display 1".to_string(),
-        device_id: String::new(),
-        is_primary: true,
-    }])
 }
 
 #[tauri::command]
@@ -294,6 +293,10 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
     };
     use windows::Win32::Graphics::Gdi::{
         CreateDCW, DeleteDC,
+        ChangeDisplaySettingsExW, CDS_UPDATEREGISTRY,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_NORMAL,
     };
     
     let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
@@ -312,7 +315,7 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
         return Err(AppError::internal("Failed to associate ICC profile with device"));
     }
     
-    // 2. Create device context and apply ICC profile
+    // 2. Set ICC profile to device context
     unsafe {
         let dc = CreateDCW(
             windows::core::PCWSTR(device_name_wide.as_ptr()),
@@ -322,11 +325,34 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
         );
         
         if !dc.is_invalid() {
-            // Set ICC profile
             let _ = SetICMProfileW(dc, windows::core::PCWSTR(icc_path_wide.as_ptr()));
-            // Delete device context
             let _ = DeleteDC(dc);
         }
+    }
+    
+    // 3. Apply display settings change
+    unsafe {
+        let _ = ChangeDisplaySettingsExW(
+            windows::core::PCWSTR(device_name_wide.as_ptr()),
+            None,
+            None,
+            CDS_UPDATEREGISTRY,
+            None,
+        );
+    }
+    
+    // 4. Broadcast setting change
+    unsafe {
+        let mut result = 0usize;
+        let _ = SendMessageTimeoutW(
+            HWND_BROADCAST,
+            WM_SETTINGCHANGE,
+            None,
+            None,
+            SMTO_NORMAL,
+            1000,
+            Some(&mut result as *mut usize),
+        );
     }
     
     Ok(())
@@ -341,6 +367,12 @@ pub fn apply_icc_to_monitor(_device_name: &str, _icc_path: &str) -> AppResult<()
 pub fn restore_default_icc_for_monitor(device_name: &str) -> AppResult<()> {
     use windows::Win32::UI::ColorSystem::{
         WcsDisassociateColorProfileFromDevice, WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+    };
+    use windows::Win32::Graphics::Gdi::{
+        ChangeDisplaySettingsExW, CDS_UPDATEREGISTRY,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_NORMAL,
     };
     
     let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
@@ -360,6 +392,31 @@ pub fn restore_default_icc_for_monitor(device_name: &str) -> AppResult<()> {
             windows::core::PCWSTR(device_name_wide.as_ptr()),
         )
     };
+    
+    // Apply display settings change
+    unsafe {
+        let _ = ChangeDisplaySettingsExW(
+            windows::core::PCWSTR(device_name_wide.as_ptr()),
+            None,
+            None,
+            CDS_UPDATEREGISTRY,
+            None,
+        );
+    }
+    
+    // Broadcast setting change
+    unsafe {
+        let mut result = 0usize;
+        let _ = SendMessageTimeoutW(
+            HWND_BROADCAST,
+            WM_SETTINGCHANGE,
+            None,
+            None,
+            SMTO_NORMAL,
+            1000,
+            Some(&mut result as *mut usize),
+        );
+    }
     
     Ok(())
 }
