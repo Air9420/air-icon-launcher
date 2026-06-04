@@ -282,74 +282,30 @@ pub fn get_system_icc_profiles() -> AppResult<Vec<String>> {
 
 #[cfg(windows)]
 pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> {
-    use windows::Win32::Graphics::Gdi::{
-        CreateDCW, ReleaseDC,
-        ChangeDisplaySettingsExW, CDS_UPDATEREGISTRY, DEVMODEW,
-        EnumDisplaySettingsExW, EDS_RAWMODE,
-    };
     use windows::Win32::UI::ColorSystem::{
-        SetICMProfileW, SetICMMode, ICM_ON, ICM_OFF,
-    };
-    use windows::Win32::UI::WindowsAndMessaging::{
-        SendMessageTimeoutW, HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_NORMAL,
+        WcsSetDefaultColorProfile, WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
     };
     
     let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
     let icc_path_wide: Vec<u16> = icc_path.encode_utf16().chain(std::iter::once(0)).collect();
     
-    // 1. 获取当前显示设置
-    let mut dev_mode: DEVMODEW = unsafe { std::mem::zeroed() };
-    dev_mode.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
-    
-    unsafe {
-        let _ = EnumDisplaySettingsExW(
+    // 使用 WcsSetDefaultColorProfile 设置 ICC 配置
+    // COLORPROFILETYPE: CPT_ICC = 1
+    // COLORPROFILESUBTYPE: CPST_PERCEPTUAL = 0
+    // dwProfileID: 0 (default)
+    let result = unsafe {
+        WcsSetDefaultColorProfile(
+            WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
             windows::core::PCWSTR(device_name_wide.as_ptr()),
-            windows::Win32::Graphics::Gdi::ENUM_DISPLAY_SETTINGS_MODE(0xFFFFFFFF), // ENUM_CURRENT_SETTINGS
-            &mut dev_mode,
-            EDS_RAWMODE,
-        );
-    }
+            windows::Win32::UI::ColorSystem::COLORPROFILETYPE(1),
+            windows::Win32::UI::ColorSystem::COLORPROFILESUBTYPE(0),
+            0,
+            windows::core::PCWSTR(icc_path_wide.as_ptr()),
+        )
+    };
     
-    // 2. 创建设备上下文并启用 ICM
-    unsafe {
-        let dc = CreateDCW(
-            windows::core::PCWSTR(device_name_wide.as_ptr()),
-            windows::core::PCWSTR(device_name_wide.as_ptr()),
-            None,
-            None,
-        );
-        
-        if !dc.is_invalid() {
-            let _ = SetICMMode(dc, ICM_OFF);
-            let _ = SetICMMode(dc, ICM_ON);
-            let _ = SetICMProfileW(dc, windows::core::PCWSTR(icc_path_wide.as_ptr()));
-            let _ = ReleaseDC(None, dc);
-        }
-    }
-    
-    // 3. 应用显示设置更改
-    unsafe {
-        let _ = ChangeDisplaySettingsExW(
-            windows::core::PCWSTR(device_name_wide.as_ptr()),
-            Some(&dev_mode as *const DEVMODEW),
-            None,
-            CDS_UPDATEREGISTRY,
-            None,
-        );
-    }
-    
-    // 4. 广播 ICM 设置更改
-    unsafe {
-        let mut result: usize = 0;
-        let _ = SendMessageTimeoutW(
-            HWND_BROADCAST,
-            WM_SETTINGCHANGE,
-            windows::Win32::Foundation::WPARAM(0),
-            windows::Win32::Foundation::LPARAM(0),
-            SMTO_NORMAL,
-            1000,
-            Some(&mut result as *mut usize),
-        );
+    if !result.as_bool() {
+        return Err(AppError::internal("Failed to set default color profile"));
     }
     
     Ok(())
