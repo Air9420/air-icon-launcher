@@ -48,10 +48,8 @@ export const useIccStore = defineStore("icc", () => {
   async function toggleProfile(profileId: string, enabled: boolean) {
     try {
       await invokeOrThrow("toggle_icc_profile", { profileId, enabled });
-      const profile = profiles.value.find((p) => p.id === profileId);
-      if (profile) {
-        profile.enabled = enabled;
-      }
+      // 重新获取所有配置状态（因为后端会禁用同一显示器的其他配置）
+      await fetchProfiles();
     } catch (e) {
       console.error("Failed to toggle ICC profile:", e);
       throw e;
