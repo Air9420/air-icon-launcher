@@ -201,3 +201,91 @@ pub fn get_system_icc_profiles() -> AppResult<Vec<String>> {
         Ok(Vec::new())
     }
 }
+
+#[cfg(windows)]
+pub fn apply_icc_to_monitor(device_id: &str, icc_path: &str) -> AppResult<()> {
+    use windows::Win32::UI::ColorSystem::{
+        WcsAssociateColorProfileWithDevice, WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+    };
+    
+    let device_id_wide: Vec<u16> = device_id.encode_utf16().chain(std::iter::once(0)).collect();
+    let icc_path_wide: Vec<u16> = icc_path.encode_utf16().chain(std::iter::once(0)).collect();
+    
+    let result = unsafe {
+        WcsAssociateColorProfileWithDevice(
+            WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+            windows::core::PCWSTR(icc_path_wide.as_ptr()),
+            windows::core::PCWSTR(device_id_wide.as_ptr()),
+        )
+    };
+    
+    if result.as_bool() {
+        Ok(())
+    } else {
+        Err(AppError::internal("Failed to associate ICC profile with device"))
+    }
+}
+
+#[cfg(not(windows))]
+pub fn apply_icc_to_monitor(_device_id: &str, _icc_path: &str) -> AppResult<()> {
+    Err(AppError::internal("ICC profile management is only supported on Windows"))
+}
+
+#[cfg(windows)]
+pub fn restore_default_icc_for_monitor(device_id: &str) -> AppResult<()> {
+    use windows::Win32::UI::ColorSystem::{
+        WcsDisassociateColorProfileFromDevice, WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+    };
+    
+    // Get the current ICC profile for this device
+    let profiles = get_system_icc_profiles()?;
+    let default_profile = profiles.first()
+        .ok_or_else(|| AppError::internal("No system ICC profiles found"))?;
+    
+    let device_id_wide: Vec<u16> = device_id.encode_utf16().chain(std::iter::once(0)).collect();
+    let icc_path_wide: Vec<u16> = default_profile.encode_utf16().chain(std::iter::once(0)).collect();
+    
+    // Disassociate current profile
+    let _ = unsafe {
+        WcsDisassociateColorProfileFromDevice(
+            WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+            windows::core::PCWSTR(icc_path_wide.as_ptr()),
+            windows::core::PCWSTR(device_id_wide.as_ptr()),
+        )
+    };
+    
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub fn restore_default_icc_for_monitor(_device_id: &str) -> AppResult<()> {
+    Err(AppError::internal("ICC profile management is only supported on Windows"))
+}
+
+#[tauri::command]
+pub fn apply_icc_profile(
+    state: tauri::State<'_, IccState>,
+    profile_id: String,
+) -> AppResult<()> {
+    let profiles = state.profiles.lock()
+        .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
+    
+    let profile = profiles.iter().find(|p| p.id == profile_id)
+        .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
+    
+    apply_icc_to_monitor(&profile.monitor_device_id, &profile.icc_path)
+}
+
+#[tauri::command]
+pub fn restore_default_icc(
+    state: tauri::State<'_, IccState>,
+    profile_id: String,
+) -> AppResult<()> {
+    let profiles = state.profiles.lock()
+        .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
+    
+    let profile = profiles.iter().find(|p| p.id == profile_id)
+        .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
+    
+    restore_default_icc_for_monitor(&profile.monitor_device_id)
+}
