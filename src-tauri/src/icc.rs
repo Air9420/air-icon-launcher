@@ -287,8 +287,10 @@ pub fn get_system_icc_profiles() -> AppResult<Vec<String>> {
 
 #[cfg(windows)]
 pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> {
-    use windows::Win32::UI::ColorSystem::{
-        WcsAssociateColorProfileWithDevice, WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+    use windows::Win32::System::Registry::{
+        RegOpenKeyExW, RegSetValueExW, RegCloseKey, RegCreateKeyExW,
+        HKEY_CURRENT_USER, KEY_WRITE, KEY_READ, REG_DWORD, REG_SZ,
+        HKEY, REG_OPTION_NON_VOLATILE,
     };
     use windows::Win32::Graphics::Gdi::{
         ChangeDisplaySettingsExW, CDS_UPDATEREGISTRY,
@@ -296,24 +298,72 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
     use windows::Win32::UI::WindowsAndMessaging::{
         SendMessageTimeoutW, HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_NORMAL,
     };
+    use std::path::Path;
     
-    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
-    let icc_path_wide: Vec<u16> = icc_path.encode_utf16().chain(std::iter::once(0)).collect();
+    // 获取 ICC 文件名
+    let icc_filename = Path::new(icc_path)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or("profile.icc");
     
-    // 1. 关联 ICC 配置文件到设备
-    let result = unsafe {
-        WcsAssociateColorProfileWithDevice(
-            WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
-            windows::core::PCWSTR(icc_path_wide.as_ptr()),
-            windows::core::PCWSTR(device_name_wide.as_ptr()),
-        )
-    };
+    // 获取设备 ID（从 device_name 中提取）
+    let device_id = get_device_id_from_name(device_name)?;
     
-    if !result.as_bool() {
-        return Err(AppError::internal("Failed to associate ICC profile with device"));
+    // 构建注册表路径
+    let reg_path = format!(
+        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ICM\\ProfileAssociations\\Display\\{}",
+        device_id
+    );
+    
+    // 为每个显示器创建注册表项（0000, 0001, 0002...）
+    for i in 0..8 {
+        let subkey = format!("{}\\{:04}", reg_path, i);
+        let subkey_wide: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
+        
+        unsafe {
+            let mut hkey: HKEY = std::mem::zeroed();
+            let result = RegCreateKeyExW(
+                HKEY_CURRENT_USER,
+                windows::core::PCWSTR(subkey_wide.as_ptr()),
+                0,
+                None,
+                REG_OPTION_NON_VOLATILE,
+                KEY_WRITE | KEY_READ,
+                None,
+                &mut hkey,
+                None,
+            );
+            
+            if result.is_ok() {
+                // 设置 UsePerUserProfiles = 1（启用用户 ICC 设置）
+                let use_per_user: u32 = 1;
+                let value_name: Vec<u16> = "UsePerUserProfiles".encode_utf16().chain(std::iter::once(0)).collect();
+                let _ = RegSetValueExW(
+                    hkey,
+                    windows::core::PCWSTR(value_name.as_ptr()),
+                    0,
+                    REG_DWORD,
+                    Some(&use_per_user.to_ne_bytes()),
+                );
+                
+                // 设置 ICMProfile = ICC 文件名
+                let icc_name_wide: Vec<u16> = icc_filename.encode_utf16().chain(std::iter::once(0)).collect();
+                let value_name: Vec<u16> = "ICMProfile".encode_utf16().chain(std::iter::once(0)).collect();
+                let _ = RegSetValueExW(
+                    hkey,
+                    windows::core::PCWSTR(value_name.as_ptr()),
+                    0,
+                    REG_SZ,
+                    Some(icc_filename.as_bytes()),
+                );
+                
+                let _ = RegCloseKey(hkey);
+            }
+        }
     }
     
-    // 2. 应用显示设置更改
+    // 应用显示设置更改
+    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
         let _ = ChangeDisplaySettingsExW(
             windows::core::PCWSTR(device_name_wide.as_ptr()),
@@ -324,7 +374,7 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
         );
     }
     
-    // 3. 广播设置更改消息
+    // 广播设置更改消息
     unsafe {
         let mut result = 0usize;
         let _ = SendMessageTimeoutW(
@@ -339,6 +389,35 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
     }
     
     Ok(())
+}
+
+#[cfg(windows)]
+fn get_device_id_from_name(device_name: &str) -> AppResult<String> {
+    use windows::Win32::Graphics::Gdi::{DISPLAY_DEVICEW, EnumDisplayDevicesW};
+    use std::mem;
+    
+    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
+    
+    let mut display_device: DISPLAY_DEVICEW = unsafe { mem::zeroed() };
+    display_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
+    
+    let result = unsafe {
+        EnumDisplayDevicesW(
+            windows::core::PCWSTR(device_name_wide.as_ptr()),
+            0,
+            &mut display_device,
+            0,
+        )
+    };
+    
+    if result.as_bool() {
+        let device_id = String::from_utf16_lossy(
+            &display_device.DeviceID[..display_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
+        );
+        Ok(device_id)
+    } else {
+        Err(AppError::internal("Failed to get device ID"))
+    }
 }
 
 #[cfg(windows)]
