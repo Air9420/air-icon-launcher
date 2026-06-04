@@ -44,7 +44,11 @@ pub fn run() {
             let app_config = config_manager.load_config();
 
             app.manage(app_settings::AppSettingsState::from_config(&app_config));
-            app.manage(icc::IccState::default());
+            
+            let icc_state = icc::IccState::default();
+            icc_state.set_app_handle(handle.clone());
+            *icc_state.profiles.lock().unwrap() = app_config.icc_profiles.clone();
+            app.manage(icc_state);
 
             let clipboard_state = clipboard::ClipboardState::from_config(&app_config, &handle);
             let clipboard_state = std::sync::Arc::new(clipboard_state);

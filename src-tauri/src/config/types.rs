@@ -1,4 +1,5 @@
 use serde::{Deserialize, Deserializer, Serialize};
+use crate::icc::IccProfile;
 
 pub const CONFIG_VERSION: &str = "1.0";
 
@@ -114,6 +115,8 @@ pub struct AppConfig {
     pub auto_hide_countdown_seconds: usize,
     #[serde(alias = "autoHideEnabled")]
     pub auto_hide_enabled: bool,
+    #[serde(alias = "iccProfiles")]
+    pub icc_profiles: Vec<IccProfile>,
 }
 
 fn deserialize_window_effect_type<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -170,6 +173,7 @@ impl Default for AppConfig {
             ai_organizer_api_key: String::new(),
             auto_hide_countdown_seconds: 30,
             auto_hide_enabled: true,
+            icc_profiles: Vec::new(),
         }
     }
 }
@@ -209,6 +213,8 @@ pub struct AppConfigPatch {
     pub auto_hide_countdown_seconds: Option<usize>,
     #[serde(alias = "autoHideEnabled")]
     pub auto_hide_enabled: Option<bool>,
+    #[serde(alias = "iccProfiles")]
+    pub icc_profiles: Option<Vec<IccProfile>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

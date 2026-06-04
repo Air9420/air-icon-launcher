@@ -1,8 +1,10 @@
 use crate::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
+use tauri::Manager;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IccProfile {
     pub id: String,
     pub monitor_name: String,
@@ -12,6 +14,7 @@ pub struct IccProfile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MonitorInfo {
     pub name: String,
     pub device_id: String,
@@ -20,13 +23,41 @@ pub struct MonitorInfo {
 
 pub struct IccState {
     pub profiles: Mutex<Vec<IccProfile>>,
+    pub app_handle: Mutex<Option<tauri::AppHandle>>,
 }
 
 impl Default for IccState {
     fn default() -> Self {
         Self {
             profiles: Mutex::new(Vec::new()),
+            app_handle: Mutex::new(None),
         }
+    }
+}
+
+impl IccState {
+    pub fn set_app_handle(&self, handle: tauri::AppHandle) {
+        if let Ok(mut h) = self.app_handle.lock() {
+            *h = Some(handle);
+        }
+    }
+
+    fn save_profiles_to_config(&self) -> AppResult<()> {
+        let profiles = self.profiles.lock()
+            .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
+
+        let app_handle = self.app_handle.lock()
+            .map_err(|_| AppError::internal("Failed to lock app handle"))?;
+
+        if let Some(handle) = app_handle.as_ref() {
+            let config_manager = handle.state::<crate::config::ConfigManager>();
+            let mut current_config = config_manager.load_config();
+            current_config.icc_profiles = profiles.clone();
+            config_manager.save_config(&current_config)
+                .map_err(|e| AppError::internal(format!("Failed to save config: {}", e)))?;
+        }
+
+        Ok(())
     }
 }
 
@@ -112,14 +143,18 @@ pub fn add_icc_profile(
     state: tauri::State<'_, IccState>,
     profile: IccProfile,
 ) -> AppResult<()> {
-    let mut profiles = state.profiles.lock()
-        .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
-    
-    if profiles.iter().any(|p| p.id == profile.id) {
-        return Err(AppError::invalid_input("Profile with this ID already exists"));
+    {
+        let mut profiles = state.profiles.lock()
+            .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
+        
+        if profiles.iter().any(|p| p.id == profile.id) {
+            return Err(AppError::invalid_input("Profile with this ID already exists"));
+        }
+        
+        profiles.push(profile);
     }
     
-    profiles.push(profile);
+    state.save_profiles_to_config()?;
     Ok(())
 }
 
@@ -128,10 +163,14 @@ pub fn remove_icc_profile(
     state: tauri::State<'_, IccState>,
     profile_id: String,
 ) -> AppResult<()> {
-    let mut profiles = state.profiles.lock()
-        .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
+    {
+        let mut profiles = state.profiles.lock()
+            .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
+        
+        profiles.retain(|p| p.id != profile_id);
+    }
     
-    profiles.retain(|p| p.id != profile_id);
+    state.save_profiles_to_config()?;
     Ok(())
 }
 
@@ -141,15 +180,19 @@ pub fn toggle_icc_profile(
     profile_id: String,
     enabled: bool,
 ) -> AppResult<()> {
-    let mut profiles = state.profiles.lock()
-        .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
-    
-    if let Some(profile) = profiles.iter_mut().find(|p| p.id == profile_id) {
-        profile.enabled = enabled;
-        Ok(())
-    } else {
-        Err(AppError::not_found("ICC profile not found"))
+    {
+        let mut profiles = state.profiles.lock()
+            .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
+        
+        if let Some(profile) = profiles.iter_mut().find(|p| p.id == profile_id) {
+            profile.enabled = enabled;
+        } else {
+            return Err(AppError::not_found("ICC profile not found"));
+        }
     }
+    
+    state.save_profiles_to_config()?;
+    Ok(())
 }
 
 #[tauri::command]

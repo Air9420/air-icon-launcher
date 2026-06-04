@@ -317,6 +317,9 @@ fn apply_app_config_patch(config: &mut AppConfig, patch: AppConfigPatch) {
     if let Some(value) = patch.ai_organizer_api_key {
         config.ai_organizer_api_key = value;
     }
+    if let Some(value) = patch.icc_profiles {
+        config.icc_profiles = value;
+    }
 }
 
 fn normalize_optional_string_field(value: &mut Option<String>) {
