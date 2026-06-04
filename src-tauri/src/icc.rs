@@ -287,12 +287,13 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
         WcsAssociateColorProfileWithDevice,
     };
     use windows::Win32::Graphics::Gdi::{
-        ChangeDisplaySettingsExW, CDS_UPDATEREGISTRY, DEVMODEW,
-        EnumDisplaySettingsExW, EDS_RAWMODE,
+        CreateDCW, DeleteDC,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{
-        SendMessageTimeoutW, HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_NORMAL,
-    };
+    
+    // 声明 SetDeviceGammaRamp 函数
+    extern "system" {
+        fn SetDeviceGammaRamp(hdc: windows::Win32::Graphics::Gdi::HDC, lpRamp: *const u8) -> i32;
+    }
     
     let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
     let icc_path_wide: Vec<u16> = icc_path.encode_utf16().chain(std::iter::once(0)).collect();
@@ -306,7 +307,7 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
         );
     }
     
-    // 2. 设置默认 ICC 配置文件（设备特定）
+    // 2. 设置默认 ICC 配置文件
     unsafe {
         let _ = WcsSetDefaultColorProfile(
             WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
@@ -318,52 +319,65 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
         );
     }
     
-    // 3. 设置默认 ICC 配置文件（全局）
-    unsafe {
-        let _ = WcsSetDefaultColorProfile(
-            WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
-            windows::core::PCWSTR(std::ptr::null()),
-            windows::Win32::UI::ColorSystem::COLORPROFILETYPE(1),
-            windows::Win32::UI::ColorSystem::COLORPROFILESUBTYPE(0),
-            0,
-            windows::core::PCWSTR(icc_path_wide.as_ptr()),
-        );
-    }
-    
-    // 3. 应用显示设置更改
-    let mut dev_mode: DEVMODEW = unsafe { std::mem::zeroed() };
-    dev_mode.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
-    unsafe {
-        let _ = EnumDisplaySettingsExW(
-            windows::core::PCWSTR(device_name_wide.as_ptr()),
-            windows::Win32::Graphics::Gdi::ENUM_DISPLAY_SETTINGS_MODE(0xFFFFFFFF),
-            &mut dev_mode,
-            EDS_RAWMODE,
-        );
-        let _ = ChangeDisplaySettingsExW(
-            windows::core::PCWSTR(device_name_wide.as_ptr()),
-            Some(&dev_mode as *const DEVMODEW),
-            None,
-            CDS_UPDATEREGISTRY,
-            None,
-        );
-    }
-    
-    // 6. 广播设置更改
-    unsafe {
-        let mut result: usize = 0;
-        let _ = SendMessageTimeoutW(
-            HWND_BROADCAST,
-            WM_SETTINGCHANGE,
-            windows::Win32::Foundation::WPARAM(0),
-            windows::Win32::Foundation::LPARAM(0),
-            SMTO_NORMAL,
-            1000,
-            Some(&mut result as *mut usize),
-        );
+    // 3. 读取 ICC 文件的 vcgt 标签并写入显卡 LUT
+    match read_vcgt_from_icc(icc_path) {
+        Ok(gamma_ramp) => {
+            unsafe {
+                let hdc = CreateDCW(
+                    windows::core::PCWSTR(device_name_wide.as_ptr()),
+                    windows::core::PCWSTR(device_name_wide.as_ptr()),
+                    None,
+                    None,
+                );
+                
+                if !hdc.is_invalid() {
+                    let _ = SetDeviceGammaRamp(hdc, gamma_ramp.as_ptr() as *const u8);
+                    let _ = DeleteDC(hdc);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to read VCGT from ICC: {:?}", e);
+        }
     }
     
     Ok(())
+}
+
+#[cfg(windows)]
+fn read_vcgt_from_icc(icc_path: &str) -> AppResult<[[u16; 256]; 3]> {
+    use lcms2::{Profile, Tag};
+    
+    let profile = Profile::new_file(icc_path)
+        .map_err(|e| AppError::internal(format!("Failed to open ICC profile: {:?}", e)))?;
+    
+    let tag = profile.read_tag(lcms2::TagSignature::VcgtTag);
+    
+    match tag {
+        Tag::VcgtCurves(curves) => {
+            let mut gamma_ramp: [[u16; 256]; 3] = [[0; 256]; 3];
+            
+            for (channel, curve) in curves.iter().enumerate() {
+                if channel >= 3 { break; }
+                for i in 0..256 {
+                    let value = curve.eval((i as u16) << 8);
+                    gamma_ramp[channel][i] = value;
+                }
+            }
+            
+            Ok(gamma_ramp)
+        }
+        _ => {
+            // 如果没有 vcgt 标签，返回线性 Gamma
+            let mut gamma_ramp: [[u16; 256]; 3] = [[0; 256]; 3];
+            for channel in 0..3 {
+                for i in 0..256 {
+                    gamma_ramp[channel][i] = (i as u16) << 8;
+                }
+            }
+            Ok(gamma_ramp)
+        }
+    }
 }
 
 #[cfg(not(windows))]

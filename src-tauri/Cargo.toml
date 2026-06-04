@@ -76,6 +76,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 rayon = "1.10"
 quick-xml = "0.38"
 rfd = "0.15"
+lcms2 = "6.1.1"
 
 [profile.dev]
 incremental = true # 以较小的步骤编译您的二进制文件。
