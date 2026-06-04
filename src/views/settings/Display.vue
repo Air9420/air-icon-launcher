@@ -40,22 +40,17 @@
             v-for="profile in monitorProfiles"
             :key="profile.id"
             class="icc-item"
+            :class="{ active: profile.enabled }"
+            @click="onSelect(profile.id)"
           >
+            <div class="icc-radio">
+              <div class="radio-dot" :class="{ checked: profile.enabled }"></div>
+            </div>
             <div class="icc-info">
               <span class="icc-name">{{ getFileName(profile.iccPath) }}</span>
               <span class="icc-path" :title="profile.iccPath">{{ profile.iccPath }}</span>
             </div>
-            <div class="icc-actions">
-              <label class="toggle-switch">
-                <input
-                  type="checkbox"
-                  :checked="profile.enabled"
-                  @change="onToggle(profile.id, $event)"
-                />
-                <span class="toggle-slider"></span>
-              </label>
-              <button class="action-btn danger" @click="onRemove(profile.id)">删除</button>
-            </div>
+            <button class="action-btn danger" @click.stop="onRemove(profile.id)">删除</button>
           </div>
         </div>
 
@@ -111,21 +106,29 @@ function getFileName(path: string): string {
   return parts[parts.length - 1] || "";
 }
 
-async function onToggle(profileId: string, event: Event) {
-  const target = event.target as HTMLInputElement;
-  const enabled = target.checked;
-  try {
-    await iccStore.toggleProfile(profileId, enabled);
-    if (enabled) {
-      await iccStore.applyProfile(profileId);
-      showToast("ICC 配置已应用", { type: "success" });
-    } else {
+async function onSelect(profileId: string) {
+  const profile = profiles.value.find((p) => p.id === profileId);
+  if (!profile) return;
+
+  // 如果已经启用，则禁用（取消选中）
+  if (profile.enabled) {
+    try {
+      await iccStore.toggleProfile(profileId, false);
       await iccStore.restoreDefault(profileId);
-      showToast("已恢复默认 ICC 配置", { type: "success" });
+      showToast("已恢复默认颜色", { type: "success" });
+    } catch (e) {
+      showToast("禁用 ICC 配置失败", { type: "error" });
     }
+    return;
+  }
+
+  // 启用选中的配置（后端会自动禁用同一显示器的其他配置）
+  try {
+    await iccStore.toggleProfile(profileId, true);
+    await iccStore.applyProfile(profileId);
+    showToast("ICC 配置已应用", { type: "success" });
   } catch (e) {
-    target.checked = !enabled;
-    showToast("切换 ICC 配置失败", { type: "error" });
+    showToast("应用 ICC 配置失败", { type: "error" });
   }
 }
 
@@ -308,10 +311,45 @@ async function onRemove(profileId: string) {
 .icc-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
   padding: 10px 12px;
   background: var(--card-bg);
   border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 2px solid transparent;
+}
+
+.icc-item:hover {
+  background: var(--hover-bg-strong);
+}
+
+.icc-item.active {
+  border-color: var(--primary-color);
+  background: var(--primary-bg);
+}
+
+.icc-radio {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.radio-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--border-color-strong);
+  transition: all 0.2s;
+}
+
+.radio-dot.checked {
+  border-color: var(--primary-color);
+  background: var(--primary-color);
+  box-shadow: inset 0 0 0 3px var(--card-bg);
 }
 
 .icc-info {
@@ -334,57 +372,6 @@ async function onRemove(profileId: string) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.icc-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.toggle-switch {
-  position: relative;
-  display: inline-block;
-  width: 40px;
-  height: 22px;
-}
-
-.toggle-switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.toggle-slider {
-  position: absolute;
-  cursor: pointer;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: var(--border-color-strong);
-  transition: 0.2s;
-  border-radius: 22px;
-}
-
-.toggle-slider:before {
-  position: absolute;
-  content: "";
-  height: 16px;
-  width: 16px;
-  left: 3px;
-  bottom: 3px;
-  background-color: white;
-  transition: 0.2s;
-  border-radius: 50%;
-}
-
-.toggle-switch input:checked + .toggle-slider {
-  background-color: var(--primary-color);
-}
-
-.toggle-switch input:checked + .toggle-slider:before {
-  transform: translateX(18px);
 }
 
 .action-btn {
