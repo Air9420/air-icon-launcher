@@ -67,6 +67,10 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
     use windows::Win32::Graphics::Gdi::{DISPLAY_DEVICEW, EnumDisplayDevicesW};
     use std::mem;
 
+    const DISPLAY_DEVICE_ATTACHED_TO_DESKTOP: u32 = 0x1;
+    const DISPLAY_DEVICE_PRIMARY_DEVICE: u32 = 0x4;
+    const DISPLAY_DEVICE_MIRRORING_DRIVER: u32 = 0x8;
+
     let mut monitors = Vec::new();
     let mut display_device: DISPLAY_DEVICEW = unsafe { mem::zeroed() };
     display_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
@@ -83,10 +87,12 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
         }
 
         let state_flags = display_device.StateFlags;
-        let is_disconnected = (state_flags & 0x20000000) != 0;
-        let is_primary = (state_flags & 0x4) != 0;
+        let is_attached = (state_flags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) != 0;
+        let is_primary = (state_flags & DISPLAY_DEVICE_PRIMARY_DEVICE) != 0;
+        let is_mirror = (state_flags & DISPLAY_DEVICE_MIRRORING_DRIVER) != 0;
 
-        if !is_disconnected {
+        // 只显示已连接到桌面且不是镜像驱动的显示器
+        if is_attached && !is_mirror {
             let name = String::from_utf16_lossy(
                 &display_device.DeviceName[..display_device.DeviceName.iter().position(|&c| c == 0).unwrap_or(32)]
             );
@@ -116,7 +122,7 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
         }
 
         device_index += 1;
-        if device_index > 16 {
+        if device_index > 32 {
             break;
         }
     }
