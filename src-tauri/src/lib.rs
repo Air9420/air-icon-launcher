@@ -9,6 +9,7 @@ mod db;
 mod display;
 mod drag;
 mod error;
+mod icc;
 mod keyboard_hook;
 mod pinyin;
 mod plugins;
