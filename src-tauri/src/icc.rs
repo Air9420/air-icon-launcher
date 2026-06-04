@@ -418,45 +418,22 @@ fn get_monitor_registry_paths(device_name: &str) -> AppResult<Vec<String>> {
         );
         
         if name.trim() == device_name {
-            // 获取监视器设备信息
-            let mut monitor_device: DISPLAY_DEVICEW = unsafe { mem::zeroed() };
-            monitor_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
-            
-            let monitor_result = unsafe {
-                EnumDisplayDevicesW(
-                    windows::core::PCWSTR(name.as_ptr() as *const u16),
-                    0,
-                    &mut monitor_device,
-                    0,
-                )
-            };
-            
-            if monitor_result.as_bool() {
-                let monitor_id = String::from_utf16_lossy(
-                    &monitor_device.DeviceID[..monitor_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
-                );
-                
-                // 构建注册表路径：MONITOR\{监视器ID}\{适配器ID}
-                let adapter_id = String::from_utf16_lossy(
-                    &display_device.DeviceID[..display_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
-                );
-                
-                let reg_path = format!(
-                    "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ICM\\ProfileAssociations\\Display\\{}\\{}",
-                    monitor_id, adapter_id
-                );
-                paths.push(reg_path);
-            }
-            
-            // 也添加 PCI 路径作为备用
+            // 获取适配器GUID（从 DeviceID 中提取）
             let device_id = String::from_utf16_lossy(
                 &display_device.DeviceID[..display_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
             );
-            let reg_path = format!(
-                "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ICM\\ProfileAssociations\\Display\\{}",
-                device_id
-            );
-            paths.push(reg_path);
+            
+            // 提取适配器GUID部分（如 {4d36e96e-e325-11ce-bfc1-08002be10318}）
+            if let Some(start) = device_id.find('{') {
+                if let Some(end) = device_id.find('}') {
+                    let adapter_guid = &device_id[start..=end];
+                    let reg_path = format!(
+                        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ICM\\ProfileAssociations\\Display\\{}",
+                        adapter_guid
+                    );
+                    paths.push(reg_path);
+                }
+            }
         }
         
         device_index += 1;
