@@ -44,6 +44,7 @@ pub fn run() {
             let app_config = config_manager.load_config();
 
             app.manage(app_settings::AppSettingsState::from_config(&app_config));
+            app.manage(icc::IccState::default());
 
             let clipboard_state = clipboard::ClipboardState::from_config(&app_config, &handle);
             let clipboard_state = std::sync::Arc::new(clipboard_state);
@@ -199,6 +200,15 @@ pub fn run() {
             display::get_display_count,
             display::set_display_mode,
             display::toggle_display_mode,
+            icc::get_monitors,
+            icc::get_icc_profiles,
+            icc::add_icc_profile,
+            icc::remove_icc_profile,
+            icc::toggle_icc_profile,
+            icc::apply_icc_profile,
+            icc::restore_default_icc,
+            icc::select_icc_file,
+            icc::get_system_icc_profiles,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
