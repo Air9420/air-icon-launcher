@@ -289,20 +289,15 @@ pub fn get_system_icc_profiles() -> AppResult<Vec<String>> {
 pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> {
     use windows::Win32::UI::ColorSystem::{
         WcsAssociateColorProfileWithDevice, WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
-        SetICMProfileW,
     };
     use windows::Win32::Graphics::Gdi::{
-        CreateDCW, DeleteDC,
         ChangeDisplaySettingsExW, CDS_UPDATEREGISTRY,
-    };
-    use windows::Win32::UI::WindowsAndMessaging::{
-        SendMessageTimeoutW, HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_NORMAL,
     };
     
     let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
     let icc_path_wide: Vec<u16> = icc_path.encode_utf16().chain(std::iter::once(0)).collect();
     
-    // 1. Associate ICC profile with device using WCS
+    // 1. Associate ICC profile with device
     let result = unsafe {
         WcsAssociateColorProfileWithDevice(
             WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
@@ -315,22 +310,7 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
         return Err(AppError::internal("Failed to associate ICC profile with device"));
     }
     
-    // 2. Set ICC profile to device context
-    unsafe {
-        let dc = CreateDCW(
-            windows::core::PCWSTR(device_name_wide.as_ptr()),
-            windows::core::PCWSTR(device_name_wide.as_ptr()),
-            None,
-            None,
-        );
-        
-        if !dc.is_invalid() {
-            let _ = SetICMProfileW(dc, windows::core::PCWSTR(icc_path_wide.as_ptr()));
-            let _ = DeleteDC(dc);
-        }
-    }
-    
-    // 3. Apply display settings change
+    // 2. Apply display settings change
     unsafe {
         let _ = ChangeDisplaySettingsExW(
             windows::core::PCWSTR(device_name_wide.as_ptr()),
@@ -338,20 +318,6 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
             None,
             CDS_UPDATEREGISTRY,
             None,
-        );
-    }
-    
-    // 4. Broadcast setting change
-    unsafe {
-        let mut result = 0usize;
-        let _ = SendMessageTimeoutW(
-            HWND_BROADCAST,
-            WM_SETTINGCHANGE,
-            None,
-            None,
-            SMTO_NORMAL,
-            1000,
-            Some(&mut result as *mut usize),
         );
     }
     
