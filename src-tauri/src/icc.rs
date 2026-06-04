@@ -287,30 +287,65 @@ pub fn get_system_icc_profiles() -> AppResult<Vec<String>> {
 
 #[cfg(windows)]
 pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> {
-    use windows::Win32::UI::ColorSystem::{
-        WcsAssociateColorProfileWithDevice, WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+    use windows::Win32::System::Registry::{
+        RegOpenKeyExW, RegSetValueExW, RegCloseKey, HKEY_CURRENT_USER,
+        KEY_WRITE, REG_SZ, HKEY,
     };
     use windows::Win32::Graphics::Gdi::{
         ChangeDisplaySettingsExW, CDS_UPDATEREGISTRY,
     };
-    
-    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
-    let icc_path_wide: Vec<u16> = icc_path.encode_utf16().chain(std::iter::once(0)).collect();
-    
-    // 1. Associate ICC profile with device
-    let result = unsafe {
-        WcsAssociateColorProfileWithDevice(
-            WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
-            windows::core::PCWSTR(icc_path_wide.as_ptr()),
-            windows::core::PCWSTR(device_name_wide.as_ptr()),
-        )
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_NORMAL,
     };
+    use std::path::Path;
     
-    if !result.as_bool() {
-        return Err(AppError::internal("Failed to associate ICC profile with device"));
+    // 1. 复制ICC配置文件到系统颜色目录
+    let icc_filename = Path::new(icc_path)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or("profile.icc");
+    
+    let color_dir = get_system_color_dir()?;
+    let dest_path = color_dir.join(icc_filename);
+    
+    // 复制文件（如果目标不存在）
+    if !dest_path.exists() {
+        std::fs::copy(icc_path, &dest_path)
+            .map_err(|e| AppError::internal(format!("Failed to copy ICC profile: {}", e)))?;
     }
     
-    // 2. Apply display settings change
+    // 2. 在注册表中设置ICC配置
+    let reg_path = format!(
+        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ICM\\ProfileAssociations\\DisplaySets\\{}",
+        device_name
+    );
+    let reg_path_wide: Vec<u16> = reg_path.encode_utf16().chain(std::iter::once(0)).collect();
+    let icc_path_wide: Vec<u16> = icc_filename.encode_utf16().chain(std::iter::once(0)).collect();
+    
+    unsafe {
+        let mut hkey: HKEY = std::mem::zeroed();
+        let result = RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            windows::core::PCWSTR(reg_path_wide.as_ptr()),
+            0,
+            KEY_WRITE,
+            &mut hkey,
+        );
+        
+        if result.is_ok() {
+            let _ = RegSetValueExW(
+                hkey,
+                windows::core::PCWSTR(icc_path_wide.as_ptr()),
+                0,
+                REG_SZ,
+                Some(icc_filename.as_bytes()),
+            );
+            let _ = RegCloseKey(hkey);
+        }
+    }
+    
+    // 3. 应用显示设置更改
+    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
         let _ = ChangeDisplaySettingsExW(
             windows::core::PCWSTR(device_name_wide.as_ptr()),
@@ -321,7 +356,38 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
         );
     }
     
+    // 4. 广播设置更改消息
+    unsafe {
+        let mut result = 0usize;
+        let _ = SendMessageTimeoutW(
+            HWND_BROADCAST,
+            WM_SETTINGCHANGE,
+            None,
+            None,
+            SMTO_NORMAL,
+            1000,
+            Some(&mut result as *mut usize),
+        );
+    }
+    
     Ok(())
+}
+
+#[cfg(windows)]
+fn get_system_color_dir() -> AppResult<std::path::PathBuf> {
+    use windows::Win32::UI::Shell::{SHGetFolderPathW, CSIDL_SYSTEM};
+    
+    let mut path_buf = [0u16; 260];
+    unsafe {
+        if SHGetFolderPathW(None, CSIDL_SYSTEM as i32, None, 0, &mut path_buf).is_ok() {
+            let system_path = String::from_utf16_lossy(
+                &path_buf[..path_buf.iter().position(|&c| c == 0).unwrap_or(260)]
+            );
+            Ok(std::path::PathBuf::from(system_path).join("spool").join("drivers").join("color"))
+        } else {
+            Err(AppError::internal("Failed to get system color directory"))
+        }
+    }
 }
 
 #[cfg(not(windows))]
