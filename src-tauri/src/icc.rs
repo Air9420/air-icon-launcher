@@ -306,58 +306,54 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
         .and_then(|f| f.to_str())
         .unwrap_or("profile.icc");
     
-    // 获取设备 ID（从 device_name 中提取）
-    let device_id = get_device_id_from_name(device_name)?;
+    // 获取显示器的注册表路径
+    let reg_paths = get_monitor_registry_paths(device_name)?;
     
-    // 构建注册表路径
-    let reg_path = format!(
-        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ICM\\ProfileAssociations\\Display\\{}",
-        device_id
-    );
-    
-    // 为每个显示器创建注册表项（0000, 0001, 0002...）
-    for i in 0..8 {
-        let subkey = format!("{}\\{:04}", reg_path, i);
-        let subkey_wide: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
-        
-        unsafe {
-            let mut hkey: HKEY = std::mem::zeroed();
-            let result = RegCreateKeyExW(
-                HKEY_CURRENT_USER,
-                windows::core::PCWSTR(subkey_wide.as_ptr()),
-                0,
-                None,
-                REG_OPTION_NON_VOLATILE,
-                KEY_WRITE | KEY_READ,
-                None,
-                &mut hkey,
-                None,
-            );
+    // 为每个显示器设置 ICC 配置
+    for reg_path in reg_paths {
+        // 为每个显示器序号创建注册表项（0000, 0001, 0002...）
+        for i in 0..8 {
+            let subkey = format!("{}\\{:04}", reg_path, i);
+            let subkey_wide: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
             
-            if result.is_ok() {
-                // 设置 UsePerUserProfiles = 1（启用用户 ICC 设置）
-                let use_per_user: u32 = 1;
-                let value_name: Vec<u16> = "UsePerUserProfiles".encode_utf16().chain(std::iter::once(0)).collect();
-                let _ = RegSetValueExW(
-                    hkey,
-                    windows::core::PCWSTR(value_name.as_ptr()),
+            unsafe {
+                let mut hkey: HKEY = std::mem::zeroed();
+                let result = RegCreateKeyExW(
+                    HKEY_CURRENT_USER,
+                    windows::core::PCWSTR(subkey_wide.as_ptr()),
                     0,
-                    REG_DWORD,
-                    Some(&use_per_user.to_ne_bytes()),
+                    None,
+                    REG_OPTION_NON_VOLATILE,
+                    KEY_WRITE | KEY_READ,
+                    None,
+                    &mut hkey,
+                    None,
                 );
                 
-                // 设置 ICMProfile = ICC 文件名
-                let icc_name_wide: Vec<u16> = icc_filename.encode_utf16().chain(std::iter::once(0)).collect();
-                let value_name: Vec<u16> = "ICMProfile".encode_utf16().chain(std::iter::once(0)).collect();
-                let _ = RegSetValueExW(
-                    hkey,
-                    windows::core::PCWSTR(value_name.as_ptr()),
-                    0,
-                    REG_SZ,
-                    Some(icc_filename.as_bytes()),
-                );
-                
-                let _ = RegCloseKey(hkey);
+                if result.is_ok() {
+                    // 设置 UsePerUserProfiles = 1（启用用户 ICC 设置）
+                    let use_per_user: u32 = 1;
+                    let value_name: Vec<u16> = "UsePerUserProfiles".encode_utf16().chain(std::iter::once(0)).collect();
+                    let _ = RegSetValueExW(
+                        hkey,
+                        windows::core::PCWSTR(value_name.as_ptr()),
+                        0,
+                        REG_DWORD,
+                        Some(&use_per_user.to_ne_bytes()),
+                    );
+                    
+                    // 设置 ICMProfile = ICC 文件名
+                    let value_name: Vec<u16> = "ICMProfile".encode_utf16().chain(std::iter::once(0)).collect();
+                    let _ = RegSetValueExW(
+                        hkey,
+                        windows::core::PCWSTR(value_name.as_ptr()),
+                        0,
+                        REG_SZ,
+                        Some(icc_filename.as_bytes()),
+                    );
+                    
+                    let _ = RegCloseKey(hkey);
+                }
             }
         }
     }
@@ -389,6 +385,87 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
     }
     
     Ok(())
+}
+
+#[cfg(windows)]
+fn get_monitor_registry_paths(device_name: &str) -> AppResult<Vec<String>> {
+    use windows::Win32::Graphics::Gdi::{DISPLAY_DEVICEW, EnumDisplayDevicesW};
+    use std::mem;
+    
+    let mut paths = Vec::new();
+    
+    // 枚举显示器设备，找到匹配的设备
+    let mut display_device: DISPLAY_DEVICEW = unsafe { mem::zeroed() };
+    display_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
+    
+    let mut device_index = 0u32;
+    
+    loop {
+        let result = unsafe {
+            EnumDisplayDevicesW(None, device_index, &mut display_device, 0)
+        };
+        
+        if !result.as_bool() {
+            break;
+        }
+        
+        let name = String::from_utf16_lossy(
+            &display_device.DeviceName[..display_device.DeviceName.iter().position(|&c| c == 0).unwrap_or(32)]
+        );
+        
+        if name.trim() == device_name {
+            // 获取监视器设备信息
+            let mut monitor_device: DISPLAY_DEVICEW = unsafe { mem::zeroed() };
+            monitor_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
+            
+            let monitor_result = unsafe {
+                EnumDisplayDevicesW(
+                    windows::core::PCWSTR(name.as_ptr() as *const u16),
+                    0,
+                    &mut monitor_device,
+                    0,
+                )
+            };
+            
+            if monitor_result.as_bool() {
+                let monitor_id = String::from_utf16_lossy(
+                    &monitor_device.DeviceID[..monitor_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
+                );
+                
+                // 构建注册表路径：MONITOR\{监视器ID}\{适配器ID}
+                let adapter_id = String::from_utf16_lossy(
+                    &display_device.DeviceID[..display_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
+                );
+                
+                let reg_path = format!(
+                    "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ICM\\ProfileAssociations\\Display\\{}\\{}",
+                    monitor_id, adapter_id
+                );
+                paths.push(reg_path);
+            }
+            
+            // 也添加 PCI 路径作为备用
+            let device_id = String::from_utf16_lossy(
+                &display_device.DeviceID[..display_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
+            );
+            let reg_path = format!(
+                "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ICM\\ProfileAssociations\\Display\\{}",
+                device_id
+            );
+            paths.push(reg_path);
+        }
+        
+        device_index += 1;
+        if device_index > 32 {
+            break;
+        }
+    }
+    
+    if paths.is_empty() {
+        return Err(AppError::internal("Device not found"));
+    }
+    
+    Ok(paths)
 }
 
 #[cfg(windows)]
