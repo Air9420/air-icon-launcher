@@ -393,58 +393,17 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
 
 #[cfg(windows)]
 fn get_monitor_registry_paths(device_name: &str) -> AppResult<Vec<String>> {
-    use windows::Win32::Graphics::Gdi::{DISPLAY_DEVICEW, EnumDisplayDevicesW};
-    use std::mem;
+    // 显示器设备类GUID
+    const DISPLAY_ADAPTER_GUID: &str = "{4d36e96e-e325-11ce-bfc1-08002be10318}";
     
     let mut paths = Vec::new();
     
-    // 枚举显示器设备，找到匹配的设备
-    let mut display_device: DISPLAY_DEVICEW = unsafe { mem::zeroed() };
-    display_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
-    
-    let mut device_index = 0u32;
-    
-    loop {
-        let result = unsafe {
-            EnumDisplayDevicesW(None, device_index, &mut display_device, 0)
-        };
-        
-        if !result.as_bool() {
-            break;
-        }
-        
-        let name = String::from_utf16_lossy(
-            &display_device.DeviceName[..display_device.DeviceName.iter().position(|&c| c == 0).unwrap_or(32)]
-        );
-        
-        if name.trim() == device_name {
-            // 获取适配器GUID（从 DeviceID 中提取）
-            let device_id = String::from_utf16_lossy(
-                &display_device.DeviceID[..display_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
-            );
-            
-            // 提取适配器GUID部分（如 {4d36e96e-e325-11ce-bfc1-08002be10318}）
-            if let Some(start) = device_id.find('{') {
-                if let Some(end) = device_id.find('}') {
-                    let adapter_guid = &device_id[start..=end];
-                    let reg_path = format!(
-                        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ICM\\ProfileAssociations\\Display\\{}",
-                        adapter_guid
-                    );
-                    paths.push(reg_path);
-                }
-            }
-        }
-        
-        device_index += 1;
-        if device_index > 32 {
-            break;
-        }
-    }
-    
-    if paths.is_empty() {
-        return Err(AppError::internal("Device not found"));
-    }
+    // 使用固定的显示器设备类GUID
+    let reg_path = format!(
+        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ICM\\ProfileAssociations\\Display\\{}",
+        DISPLAY_ADAPTER_GUID
+    );
+    paths.push(reg_path);
     
     Ok(paths)
 }
