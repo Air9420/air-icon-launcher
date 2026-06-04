@@ -91,7 +91,6 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
         let is_primary = (state_flags & DISPLAY_DEVICE_PRIMARY_DEVICE) != 0;
         let is_mirror = (state_flags & DISPLAY_DEVICE_MIRRORING_DRIVER) != 0;
 
-        // 只显示已连接到桌面且不是镜像驱动的显示器
         if is_attached && !is_mirror {
             let name = String::from_utf16_lossy(
                 &display_device.DeviceName[..display_device.DeviceName.iter().position(|&c| c == 0).unwrap_or(32)]
@@ -100,12 +99,10 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
                 &display_device.DeviceID[..display_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
             );
             
-            // 获取设备字符串（通常是显卡名称）
             let device_string = String::from_utf16_lossy(
                 &display_device.DeviceString[..display_device.DeviceString.iter().position(|&c| c == 0).unwrap_or(128)]
             );
             
-            // 使用设备字符串作为友好名称
             let friendly_name = if !device_string.is_empty() {
                 device_string
             } else {
@@ -149,7 +146,6 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
 }
 
 fn extract_display_name_from_id(device_id: &str) -> String {
-    // Common vendor IDs
     let vendor_names = [
         ("VEN_10DE", "NVIDIA"),
         ("VEN_1002", "AMD"),
@@ -253,7 +249,6 @@ pub fn get_system_icc_profiles() -> AppResult<Vec<String>> {
         
         let mut profiles = Vec::new();
         
-        // Get system color directory
         let mut path_buf = [0u16; 260];
         unsafe {
             if SHGetFolderPathW(None, CSIDL_SYSTEM as i32, None, 0, &mut path_buf).is_ok() {
@@ -287,101 +282,70 @@ pub fn get_system_icc_profiles() -> AppResult<Vec<String>> {
 
 #[cfg(windows)]
 pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> {
-    use windows::Win32::System::Registry::{
-        RegOpenKeyExW, RegSetValueExW, RegCloseKey, RegCreateKeyExW,
-        HKEY_CURRENT_USER, KEY_WRITE, KEY_READ, REG_DWORD, REG_SZ, REG_MULTI_SZ,
-        HKEY, REG_OPTION_NON_VOLATILE,
-    };
     use windows::Win32::Graphics::Gdi::{
-        ChangeDisplaySettingsExW, CDS_UPDATEREGISTRY,
+        CreateDCW, ReleaseDC,
+        ChangeDisplaySettingsExW, CDS_UPDATEREGISTRY, DEVMODEW,
+        EnumDisplaySettingsExW, EDS_RAWMODE,
+    };
+    use windows::Win32::UI::ColorSystem::{
+        SetICMProfileW, SetICMMode, ICM_ON, ICM_OFF,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         SendMessageTimeoutW, HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_NORMAL,
     };
-    use std::path::Path;
     
-    // 获取 ICC 文件名
-    let icc_filename = Path::new(icc_path)
-        .file_name()
-        .and_then(|f| f.to_str())
-        .unwrap_or("profile.icc");
+    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
+    let icc_path_wide: Vec<u16> = icc_path.encode_utf16().chain(std::iter::once(0)).collect();
     
-    // 获取显示器的注册表路径
-    let reg_paths = get_monitor_registry_paths(device_name)?;
+    // 1. 获取当前显示设置
+    let mut dev_mode: DEVMODEW = unsafe { std::mem::zeroed() };
+    dev_mode.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
     
-    // 为每个显示器设置 ICC 配置
-    for reg_path in reg_paths {
-        // 为每个显示器序号创建注册表项（0000, 0001, 0002...）
-        for i in 0..8 {
-            let subkey = format!("{}\\{:04}", reg_path, i);
-            let subkey_wide: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
-            
-            unsafe {
-                let mut hkey: HKEY = std::mem::zeroed();
-                let result = RegCreateKeyExW(
-                    HKEY_CURRENT_USER,
-                    windows::core::PCWSTR(subkey_wide.as_ptr()),
-                    0,
-                    None,
-                    REG_OPTION_NON_VOLATILE,
-                    KEY_WRITE | KEY_READ,
-                    None,
-                    &mut hkey,
-                    None,
-                );
-                
-                if result.is_ok() {
-                    // 设置 UsePerUserProfiles = 1（启用用户 ICC 设置）
-                    let use_per_user: u32 = 1;
-                    let value_name: Vec<u16> = "UsePerUserProfiles".encode_utf16().chain(std::iter::once(0)).collect();
-                    let _ = RegSetValueExW(
-                        hkey,
-                        windows::core::PCWSTR(value_name.as_ptr()),
-                        0,
-                        REG_DWORD,
-                        Some(&use_per_user.to_ne_bytes()),
-                    );
-                    
-                    // 设置 ICMProfile = ICC 文件名（REG_MULTI_SZ 格式）
-                    let value_name: Vec<u16> = "ICMProfile".encode_utf16().chain(std::iter::once(0)).collect();
-                    let icc_name_wide: Vec<u16> = icc_filename.encode_utf16().chain(std::iter::once(0)).collect();
-                    // REG_MULTI_SZ 需要以两个 null 结尾
-                    let mut multi_sz_data = icc_name_wide.clone();
-                    multi_sz_data.push(0); // 额外的 null 结尾
-                    let _ = RegSetValueExW(
-                        hkey,
-                        windows::core::PCWSTR(value_name.as_ptr()),
-                        0,
-                        REG_MULTI_SZ,
-                        Some(unsafe { std::slice::from_raw_parts(multi_sz_data.as_ptr() as *const u8, multi_sz_data.len() * 2) }),
-                    );
-                    
-                    let _ = RegCloseKey(hkey);
-                }
-            }
+    unsafe {
+        let _ = EnumDisplaySettingsExW(
+            windows::core::PCWSTR(device_name_wide.as_ptr()),
+            windows::Win32::Graphics::Gdi::ENUM_DISPLAY_SETTINGS_MODE(0xFFFFFFFF), // ENUM_CURRENT_SETTINGS
+            &mut dev_mode,
+            EDS_RAWMODE,
+        );
+    }
+    
+    // 2. 创建设备上下文并启用 ICM
+    unsafe {
+        let dc = CreateDCW(
+            windows::core::PCWSTR(device_name_wide.as_ptr()),
+            windows::core::PCWSTR(device_name_wide.as_ptr()),
+            None,
+            None,
+        );
+        
+        if !dc.is_invalid() {
+            let _ = SetICMMode(dc, ICM_OFF);
+            let _ = SetICMMode(dc, ICM_ON);
+            let _ = SetICMProfileW(dc, windows::core::PCWSTR(icc_path_wide.as_ptr()));
+            let _ = ReleaseDC(None, dc);
         }
     }
     
-    // 应用显示设置更改
-    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
+    // 3. 应用显示设置更改
     unsafe {
         let _ = ChangeDisplaySettingsExW(
             windows::core::PCWSTR(device_name_wide.as_ptr()),
-            None,
+            Some(&dev_mode as *const DEVMODEW),
             None,
             CDS_UPDATEREGISTRY,
             None,
         );
     }
     
-    // 广播设置更改消息
+    // 4. 广播 ICM 设置更改
     unsafe {
-        let mut result = 0usize;
+        let mut result: usize = 0;
         let _ = SendMessageTimeoutW(
             HWND_BROADCAST,
             WM_SETTINGCHANGE,
-            None,
-            None,
+            windows::Win32::Foundation::WPARAM(0),
+            windows::Win32::Foundation::LPARAM(0),
             SMTO_NORMAL,
             1000,
             Some(&mut result as *mut usize),
@@ -391,80 +355,6 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
     Ok(())
 }
 
-#[cfg(windows)]
-fn get_monitor_registry_paths(device_name: &str) -> AppResult<Vec<String>> {
-    // 显示器设备类GUID
-    const DISPLAY_ADAPTER_GUID: &str = "{4d36e96e-e325-11ce-bfc1-08002be10318}";
-    
-    let mut paths = Vec::new();
-    
-    // 使用固定的显示器设备类GUID
-    let reg_path = format!(
-        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ICM\\ProfileAssociations\\Display\\{}",
-        DISPLAY_ADAPTER_GUID
-    );
-    paths.push(reg_path);
-    
-    Ok(paths)
-}
-
-#[cfg(windows)]
-fn get_device_id_from_name(device_name: &str) -> AppResult<String> {
-    use windows::Win32::Graphics::Gdi::{DISPLAY_DEVICEW, EnumDisplayDevicesW};
-    use std::mem;
-    
-    // 枚举显示器设备，找到匹配的设备
-    let mut display_device: DISPLAY_DEVICEW = unsafe { mem::zeroed() };
-    display_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
-    
-    let mut device_index = 0u32;
-    
-    loop {
-        let result = unsafe {
-            EnumDisplayDevicesW(None, device_index, &mut display_device, 0)
-        };
-        
-        if !result.as_bool() {
-            break;
-        }
-        
-        let name = String::from_utf16_lossy(
-            &display_device.DeviceName[..display_device.DeviceName.iter().position(|&c| c == 0).unwrap_or(32)]
-        );
-        
-        if name.trim() == device_name {
-            let device_id = String::from_utf16_lossy(
-                &display_device.DeviceID[..display_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
-            );
-            return Ok(device_id);
-        }
-        
-        device_index += 1;
-        if device_index > 32 {
-            break;
-        }
-    }
-    
-    Err(AppError::internal("Device not found"))
-}
-
-#[cfg(windows)]
-fn get_system_color_dir() -> AppResult<std::path::PathBuf> {
-    use windows::Win32::UI::Shell::{SHGetFolderPathW, CSIDL_SYSTEM};
-    
-    let mut path_buf = [0u16; 260];
-    unsafe {
-        if SHGetFolderPathW(None, CSIDL_SYSTEM as i32, None, 0, &mut path_buf).is_ok() {
-            let system_path = String::from_utf16_lossy(
-                &path_buf[..path_buf.iter().position(|&c| c == 0).unwrap_or(260)]
-            );
-            Ok(std::path::PathBuf::from(system_path).join("spool").join("drivers").join("color"))
-        } else {
-            Err(AppError::internal("Failed to get system color directory"))
-        }
-    }
-}
-
 #[cfg(not(windows))]
 pub fn apply_icc_to_monitor(_device_name: &str, _icc_path: &str) -> AppResult<()> {
     Err(AppError::internal("ICC profile management is only supported on Windows"))
@@ -472,76 +362,67 @@ pub fn apply_icc_to_monitor(_device_name: &str, _icc_path: &str) -> AppResult<()
 
 #[cfg(windows)]
 pub fn restore_default_icc_for_monitor(device_name: &str) -> AppResult<()> {
-    use windows::Win32::System::Registry::{
-        RegOpenKeyExW, RegSetValueExW, RegCloseKey,
-        HKEY_CURRENT_USER, KEY_WRITE, REG_DWORD,
-        HKEY,
-    };
     use windows::Win32::Graphics::Gdi::{
-        ChangeDisplaySettingsExW, CDS_UPDATEREGISTRY,
+        CreateDCW, ReleaseDC,
+        ChangeDisplaySettingsExW, CDS_UPDATEREGISTRY, DEVMODEW,
+        EnumDisplaySettingsExW, EDS_RAWMODE,
+    };
+    use windows::Win32::UI::ColorSystem::{
+        SetICMMode, ICM_OFF,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         SendMessageTimeoutW, HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_NORMAL,
     };
     
-    // 获取显示器的注册表路径
-    let reg_paths = get_monitor_registry_paths(device_name)?;
+    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
     
-    // 为每个显示器设置 ICC 配置
-    for reg_path in reg_paths {
-        // 为每个显示器序号创建注册表项（0000, 0001, 0002...）
-        for i in 0..8 {
-            let subkey = format!("{}\\{:04}", reg_path, i);
-            let subkey_wide: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
-            
-            unsafe {
-                let mut hkey: HKEY = std::mem::zeroed();
-                let result = RegOpenKeyExW(
-                    HKEY_CURRENT_USER,
-                    windows::core::PCWSTR(subkey_wide.as_ptr()),
-                    0,
-                    KEY_WRITE,
-                    &mut hkey,
-                );
-                
-                if result.is_ok() {
-                    // 设置 UsePerUserProfiles = 0（禁用用户 ICC 设置）
-                    let use_per_user: u32 = 0;
-                    let value_name: Vec<u16> = "UsePerUserProfiles".encode_utf16().chain(std::iter::once(0)).collect();
-                    let _ = RegSetValueExW(
-                        hkey,
-                        windows::core::PCWSTR(value_name.as_ptr()),
-                        0,
-                        REG_DWORD,
-                        Some(&use_per_user.to_ne_bytes()),
-                    );
-                    
-                    let _ = RegCloseKey(hkey);
-                }
-            }
+    // 1. 获取当前显示设置
+    let mut dev_mode: DEVMODEW = unsafe { std::mem::zeroed() };
+    dev_mode.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
+    
+    unsafe {
+        let _ = EnumDisplaySettingsExW(
+            windows::core::PCWSTR(device_name_wide.as_ptr()),
+            windows::Win32::Graphics::Gdi::ENUM_DISPLAY_SETTINGS_MODE(0xFFFFFFFF),
+            &mut dev_mode,
+            EDS_RAWMODE,
+        );
+    }
+    
+    // 2. 关闭 ICM
+    unsafe {
+        let dc = CreateDCW(
+            windows::core::PCWSTR(device_name_wide.as_ptr()),
+            windows::core::PCWSTR(device_name_wide.as_ptr()),
+            None,
+            None,
+        );
+        
+        if !dc.is_invalid() {
+            let _ = SetICMMode(dc, ICM_OFF);
+            let _ = ReleaseDC(None, dc);
         }
     }
     
-    // 应用显示设置更改
-    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
+    // 3. 应用显示设置更改
     unsafe {
         let _ = ChangeDisplaySettingsExW(
             windows::core::PCWSTR(device_name_wide.as_ptr()),
-            None,
+            Some(&dev_mode as *const DEVMODEW),
             None,
             CDS_UPDATEREGISTRY,
             None,
         );
     }
     
-    // 广播设置更改消息
+    // 4. 广播设置更改
     unsafe {
-        let mut result = 0usize;
+        let mut result: usize = 0;
         let _ = SendMessageTimeoutW(
             HWND_BROADCAST,
             WM_SETTINGCHANGE,
-            None,
-            None,
+            windows::Win32::Foundation::WPARAM(0),
+            windows::Win32::Foundation::LPARAM(0),
             SMTO_NORMAL,
             1000,
             Some(&mut result as *mut usize),
