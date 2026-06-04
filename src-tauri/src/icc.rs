@@ -289,7 +289,7 @@ pub fn get_system_icc_profiles() -> AppResult<Vec<String>> {
 pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> {
     use windows::Win32::System::Registry::{
         RegOpenKeyExW, RegSetValueExW, RegCloseKey, RegCreateKeyExW,
-        HKEY_CURRENT_USER, KEY_WRITE, KEY_READ, REG_DWORD, REG_SZ,
+        HKEY_CURRENT_USER, KEY_WRITE, KEY_READ, REG_DWORD, REG_SZ, REG_MULTI_SZ,
         HKEY, REG_OPTION_NON_VOLATILE,
     };
     use windows::Win32::Graphics::Gdi::{
@@ -342,14 +342,18 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
                         Some(&use_per_user.to_ne_bytes()),
                     );
                     
-                    // 设置 ICMProfile = ICC 文件名
+                    // 设置 ICMProfile = ICC 文件名（REG_MULTI_SZ 格式）
                     let value_name: Vec<u16> = "ICMProfile".encode_utf16().chain(std::iter::once(0)).collect();
+                    let icc_name_wide: Vec<u16> = icc_filename.encode_utf16().chain(std::iter::once(0)).collect();
+                    // REG_MULTI_SZ 需要以两个 null 结尾
+                    let mut multi_sz_data = icc_name_wide.clone();
+                    multi_sz_data.push(0); // 额外的 null 结尾
                     let _ = RegSetValueExW(
                         hkey,
                         windows::core::PCWSTR(value_name.as_ptr()),
                         0,
-                        REG_SZ,
-                        Some(icc_filename.as_bytes()),
+                        REG_MULTI_SZ,
+                        Some(unsafe { std::slice::from_raw_parts(multi_sz_data.as_ptr() as *const u8, multi_sz_data.len() * 2) }),
                     );
                     
                     let _ = RegCloseKey(hkey);
