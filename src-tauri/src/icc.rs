@@ -216,18 +216,40 @@ pub fn toggle_icc_profile(
     profile_id: String,
     enabled: bool,
 ) -> AppResult<()> {
-    {
+    let monitor_name = {
         let mut profiles = state.profiles.lock()
             .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
         
+        // 找到当前配置的显示器名称
+        let monitor_name = profiles.iter()
+            .find(|p| p.id == profile_id)
+            .map(|p| p.monitor_name.clone())
+            .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
+        
+        if enabled {
+            // 启用时，禁用同一显示器的其他配置
+            for profile in profiles.iter_mut() {
+                if profile.monitor_name == monitor_name && profile.id != profile_id {
+                    profile.enabled = false;
+                }
+            }
+        }
+        
+        // 设置当前配置的状态
         if let Some(profile) = profiles.iter_mut().find(|p| p.id == profile_id) {
             profile.enabled = enabled;
-        } else {
-            return Err(AppError::not_found("ICC profile not found"));
         }
-    }
+        
+        monitor_name
+    };
     
     state.save_profiles_to_config()?;
+    
+    // 如果是禁用，恢复线性 Gamma Ramp
+    if !enabled {
+        let _ = restore_default_icc_for_monitor(&monitor_name);
+    }
+    
     Ok(())
 }
 
@@ -388,70 +410,37 @@ pub fn apply_icc_to_monitor(_device_name: &str, _icc_path: &str) -> AppResult<()
 #[cfg(windows)]
 pub fn restore_default_icc_for_monitor(device_name: &str) -> AppResult<()> {
     use windows::Win32::Graphics::Gdi::{
-        CreateDCW, ReleaseDC,
-        ChangeDisplaySettingsExW, CDS_UPDATEREGISTRY, DEVMODEW,
-        EnumDisplaySettingsExW, EDS_RAWMODE,
+        CreateDCW, DeleteDC,
     };
-    use windows::Win32::UI::ColorSystem::{
-        SetICMMode, ICM_OFF,
-    };
-    use windows::Win32::UI::WindowsAndMessaging::{
-        SendMessageTimeoutW, HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_NORMAL,
-    };
+    
+    // 声明 SetDeviceGammaRamp 函数
+    extern "system" {
+        fn SetDeviceGammaRamp(hdc: windows::Win32::Graphics::Gdi::HDC, lpRamp: *const u8) -> i32;
+    }
     
     let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
     
-    // 1. 获取当前显示设置
-    let mut dev_mode: DEVMODEW = unsafe { std::mem::zeroed() };
-    dev_mode.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
-    
-    unsafe {
-        let _ = EnumDisplaySettingsExW(
-            windows::core::PCWSTR(device_name_wide.as_ptr()),
-            windows::Win32::Graphics::Gdi::ENUM_DISPLAY_SETTINGS_MODE(0xFFFFFFFF),
-            &mut dev_mode,
-            EDS_RAWMODE,
-        );
+    // 创建线性 Gamma Ramp（恢复默认）
+    let mut gamma_ramp: [[u16; 256]; 3] = [[0; 256]; 3];
+    for channel in 0..3 {
+        for i in 0..256 {
+            gamma_ramp[channel][i] = (i as u16) << 8;
+        }
     }
     
-    // 2. 关闭 ICM
+    // 写入线性 Gamma Ramp
     unsafe {
-        let dc = CreateDCW(
+        let hdc = CreateDCW(
             windows::core::PCWSTR(device_name_wide.as_ptr()),
             windows::core::PCWSTR(device_name_wide.as_ptr()),
             None,
             None,
         );
         
-        if !dc.is_invalid() {
-            let _ = SetICMMode(dc, ICM_OFF);
-            let _ = ReleaseDC(None, dc);
+        if !hdc.is_invalid() {
+            let _ = SetDeviceGammaRamp(hdc, gamma_ramp.as_ptr() as *const u8);
+            let _ = DeleteDC(hdc);
         }
-    }
-    
-    // 3. 应用显示设置更改
-    unsafe {
-        let _ = ChangeDisplaySettingsExW(
-            windows::core::PCWSTR(device_name_wide.as_ptr()),
-            Some(&dev_mode as *const DEVMODEW),
-            None,
-            CDS_UPDATEREGISTRY,
-            None,
-        );
-    }
-    
-    // 4. 广播设置更改
-    unsafe {
-        let mut result: usize = 0;
-        let _ = SendMessageTimeoutW(
-            HWND_BROADCAST,
-            WM_SETTINGCHANGE,
-            windows::Win32::Foundation::WPARAM(0),
-            windows::Win32::Foundation::LPARAM(0),
-            SMTO_NORMAL,
-            1000,
-            Some(&mut result as *mut usize),
-        );
     }
     
     Ok(())
