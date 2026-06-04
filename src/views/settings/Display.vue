@@ -12,7 +12,8 @@
         >
           <div class="monitor-header">
             <div class="monitor-info">
-              <span class="monitor-name">{{ profile.monitorName }}</span>
+              <span class="monitor-name">{{ getMonitorFriendlyName(profile.monitorName) }}</span>
+              <span class="monitor-device">{{ profile.monitorName }}</span>
               <span class="icc-path" :title="profile.iccPath">
                 ICC: {{ getFileName(profile.iccPath) || "未配置" }}
               </span>
@@ -51,12 +52,17 @@ import { useIccStore } from "../../stores/iccStore";
 import { showToast } from "../../composables/useGlobalToast";
 
 const iccStore = useIccStore();
-const { profiles } = storeToRefs(iccStore);
+const { profiles, monitors } = storeToRefs(iccStore);
 
 onMounted(async () => {
   await iccStore.fetchMonitors();
   await iccStore.fetchProfiles();
 });
+
+function getMonitorFriendlyName(deviceName: string): string {
+  const monitor = monitors.value.find((m) => m.name === deviceName);
+  return monitor?.friendlyName || deviceName;
+}
 
 function getFileName(path: string): string {
   if (!path) return "";
@@ -86,17 +92,23 @@ async function onAdd() {
   const filePath = await iccStore.selectIccFile();
   if (!filePath) return;
 
-  const monitors = iccStore.monitors;
-  if (monitors.length === 0) {
+  const monitorList = iccStore.monitors;
+  if (monitorList.length === 0) {
     showToast("未检测到显示器", { type: "error" });
     return;
   }
 
-  const monitor = monitors[0];
+  // 如果有多个显示器，让用户选择
+  let selectedMonitor = monitorList[0];
+  if (monitorList.length > 1) {
+    // 简单实现：使用第一个非主显示器，或主显示器
+    selectedMonitor = monitorList.find((m) => !m.isPrimary) || monitorList[0];
+  }
+
   const profile = {
     id: crypto.randomUUID(),
-    monitorName: monitor.name,
-    monitorDeviceId: monitor.deviceId,
+    monitorName: selectedMonitor.name,
+    monitorDeviceId: selectedMonitor.deviceId,
     iccPath: filePath,
     enabled: false,
   };
@@ -187,6 +199,12 @@ async function onRemove(profileId: string) {
 .monitor-name {
   font-weight: 600;
   color: var(--text-color);
+}
+
+.monitor-device {
+  font-size: 11px;
+  color: var(--text-secondary);
+  opacity: 0.7;
 }
 
 .icc-path {

@@ -8,6 +8,7 @@ export interface IccProfile {
 
 export interface MonitorInfo {
   name: string;
+  friendlyName: string;
   deviceId: string;
   isPrimary: boolean;
 }

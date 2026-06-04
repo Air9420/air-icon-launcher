@@ -17,6 +17,7 @@ pub struct IccProfile {
 #[serde(rename_all = "camelCase")]
 pub struct MonitorInfo {
     pub name: String,
+    pub friendly_name: String,
     pub device_id: String,
     pub is_primary: bool,
 }
@@ -92,9 +93,23 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
             let device_id = String::from_utf16_lossy(
                 &display_device.DeviceID[..display_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
             );
+            
+            // Extract friendly name from device ID or use device string
+            let device_string = String::from_utf16_lossy(
+                &display_device.DeviceString[..display_device.DeviceString.iter().position(|&c| c == 0).unwrap_or(128)]
+            );
+            
+            // Use device string as friendly name, or extract from device ID
+            let friendly_name = if !device_string.is_empty() && device_string != name {
+                device_string
+            } else {
+                // Extract from device ID (e.g., "PCI\VEN_10DE&DEV_2782..." -> "NVIDIA GeForce ...")
+                extract_display_name_from_id(&device_id)
+            };
 
             monitors.push(MonitorInfo {
                 name: name.trim().to_string(),
+                friendly_name: friendly_name.trim().to_string(),
                 device_id,
                 is_primary,
             });
@@ -109,6 +124,7 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
     if monitors.is_empty() {
         monitors.push(MonitorInfo {
             name: "Display 1".to_string(),
+            friendly_name: "Display 1".to_string(),
             device_id: String::new(),
             is_primary: true,
         });
@@ -117,10 +133,29 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
     Ok(monitors)
 }
 
+fn extract_display_name_from_id(device_id: &str) -> String {
+    // Common vendor IDs
+    let vendor_names = [
+        ("VEN_10DE", "NVIDIA"),
+        ("VEN_1002", "AMD"),
+        ("VEN_8086", "Intel"),
+        ("VEN_1414", "Microsoft"),
+    ];
+    
+    for (ven_id, name) in &vendor_names {
+        if device_id.contains(ven_id) {
+            return format!("{} Display", name);
+        }
+    }
+    
+    "Unknown Display".to_string()
+}
+
 #[cfg(not(windows))]
 pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
     Ok(vec![MonitorInfo {
         name: "Display 1".to_string(),
+        friendly_name: "Display 1".to_string(),
         device_id: String::new(),
         is_primary: true,
     }])
@@ -246,54 +281,77 @@ pub fn get_system_icc_profiles() -> AppResult<Vec<String>> {
 }
 
 #[cfg(windows)]
-pub fn apply_icc_to_monitor(device_id: &str, icc_path: &str) -> AppResult<()> {
+pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> {
     use windows::Win32::UI::ColorSystem::{
         WcsAssociateColorProfileWithDevice, WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+        SetICMProfileW,
+    };
+    use windows::Win32::Graphics::Gdi::{
+        CreateDCW, DeleteDC,
     };
     
-    let device_id_wide: Vec<u16> = device_id.encode_utf16().chain(std::iter::once(0)).collect();
+    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
     let icc_path_wide: Vec<u16> = icc_path.encode_utf16().chain(std::iter::once(0)).collect();
     
+    // 1. Associate ICC profile with device using WCS
     let result = unsafe {
         WcsAssociateColorProfileWithDevice(
             WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
             windows::core::PCWSTR(icc_path_wide.as_ptr()),
-            windows::core::PCWSTR(device_id_wide.as_ptr()),
+            windows::core::PCWSTR(device_name_wide.as_ptr()),
         )
     };
     
-    if result.as_bool() {
-        Ok(())
-    } else {
-        Err(AppError::internal("Failed to associate ICC profile with device"))
+    if !result.as_bool() {
+        return Err(AppError::internal("Failed to associate ICC profile with device"));
     }
+    
+    // 2. Create device context and apply ICC profile
+    unsafe {
+        let dc = CreateDCW(
+            windows::core::PCWSTR(device_name_wide.as_ptr()),
+            windows::core::PCWSTR(device_name_wide.as_ptr()),
+            None,
+            None,
+        );
+        
+        if !dc.is_invalid() {
+            // Set ICC profile
+            let _ = SetICMProfileW(dc, windows::core::PCWSTR(icc_path_wide.as_ptr()));
+            // Delete device context
+            let _ = DeleteDC(dc);
+        }
+    }
+    
+    Ok(())
 }
 
 #[cfg(not(windows))]
-pub fn apply_icc_to_monitor(_device_id: &str, _icc_path: &str) -> AppResult<()> {
+pub fn apply_icc_to_monitor(_device_name: &str, _icc_path: &str) -> AppResult<()> {
     Err(AppError::internal("ICC profile management is only supported on Windows"))
 }
 
 #[cfg(windows)]
-pub fn restore_default_icc_for_monitor(device_id: &str) -> AppResult<()> {
+pub fn restore_default_icc_for_monitor(device_name: &str) -> AppResult<()> {
     use windows::Win32::UI::ColorSystem::{
         WcsDisassociateColorProfileFromDevice, WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
     };
     
-    // Get the current ICC profile for this device
+    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
+    
+    // Get system default ICC profiles
     let profiles = get_system_icc_profiles()?;
     let default_profile = profiles.first()
         .ok_or_else(|| AppError::internal("No system ICC profiles found"))?;
     
-    let device_id_wide: Vec<u16> = device_id.encode_utf16().chain(std::iter::once(0)).collect();
     let icc_path_wide: Vec<u16> = default_profile.encode_utf16().chain(std::iter::once(0)).collect();
     
-    // Disassociate current profile
+    // Disassociate current ICC profile
     let _ = unsafe {
         WcsDisassociateColorProfileFromDevice(
             WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
             windows::core::PCWSTR(icc_path_wide.as_ptr()),
-            windows::core::PCWSTR(device_id_wide.as_ptr()),
+            windows::core::PCWSTR(device_name_wide.as_ptr()),
         )
     };
     
@@ -301,7 +359,7 @@ pub fn restore_default_icc_for_monitor(device_id: &str) -> AppResult<()> {
 }
 
 #[cfg(not(windows))]
-pub fn restore_default_icc_for_monitor(_device_id: &str) -> AppResult<()> {
+pub fn restore_default_icc_for_monitor(_device_name: &str) -> AppResult<()> {
     Err(AppError::internal("ICC profile management is only supported on Windows"))
 }
 
@@ -316,7 +374,7 @@ pub fn apply_icc_profile(
     let profile = profiles.iter().find(|p| p.id == profile_id)
         .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
     
-    apply_icc_to_monitor(&profile.monitor_device_id, &profile.icc_path)
+    apply_icc_to_monitor(&profile.monitor_name, &profile.icc_path)
 }
 
 #[tauri::command]
@@ -330,5 +388,5 @@ pub fn restore_default_icc(
     let profile = profiles.iter().find(|p| p.id == profile_id)
         .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
     
-    restore_default_icc_for_monitor(&profile.monitor_device_id)
+    restore_default_icc_for_monitor(&profile.monitor_name)
 }
