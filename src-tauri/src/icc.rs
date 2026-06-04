@@ -287,9 +287,8 @@ pub fn get_system_icc_profiles() -> AppResult<Vec<String>> {
 
 #[cfg(windows)]
 pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> {
-    use windows::Win32::System::Registry::{
-        RegOpenKeyExW, RegSetValueExW, RegCloseKey, HKEY_CURRENT_USER,
-        KEY_WRITE, REG_SZ, HKEY,
+    use windows::Win32::UI::ColorSystem::{
+        WcsAssociateColorProfileWithDevice, WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
     };
     use windows::Win32::Graphics::Gdi::{
         ChangeDisplaySettingsExW, CDS_UPDATEREGISTRY,
@@ -297,55 +296,24 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
     use windows::Win32::UI::WindowsAndMessaging::{
         SendMessageTimeoutW, HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_NORMAL,
     };
-    use std::path::Path;
     
-    // 1. 复制ICC配置文件到系统颜色目录
-    let icc_filename = Path::new(icc_path)
-        .file_name()
-        .and_then(|f| f.to_str())
-        .unwrap_or("profile.icc");
-    
-    let color_dir = get_system_color_dir()?;
-    let dest_path = color_dir.join(icc_filename);
-    
-    // 复制文件（如果目标不存在）
-    if !dest_path.exists() {
-        std::fs::copy(icc_path, &dest_path)
-            .map_err(|e| AppError::internal(format!("Failed to copy ICC profile: {}", e)))?;
-    }
-    
-    // 2. 在注册表中设置ICC配置
-    let reg_path = format!(
-        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ICM\\ProfileAssociations\\Display\\{}",
-        device_name
-    );
-    let reg_path_wide: Vec<u16> = reg_path.encode_utf16().chain(std::iter::once(0)).collect();
-    let icc_path_wide: Vec<u16> = icc_filename.encode_utf16().chain(std::iter::once(0)).collect();
-    
-    unsafe {
-        let mut hkey: HKEY = std::mem::zeroed();
-        let result = RegOpenKeyExW(
-            HKEY_CURRENT_USER,
-            windows::core::PCWSTR(reg_path_wide.as_ptr()),
-            0,
-            KEY_WRITE,
-            &mut hkey,
-        );
-        
-        if result.is_ok() {
-            let _ = RegSetValueExW(
-                hkey,
-                windows::core::PCWSTR(icc_path_wide.as_ptr()),
-                0,
-                REG_SZ,
-                Some(icc_filename.as_bytes()),
-            );
-            let _ = RegCloseKey(hkey);
-        }
-    }
-    
-    // 3. 应用显示设置更改
     let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
+    let icc_path_wide: Vec<u16> = icc_path.encode_utf16().chain(std::iter::once(0)).collect();
+    
+    // 1. 关联 ICC 配置文件到设备
+    let result = unsafe {
+        WcsAssociateColorProfileWithDevice(
+            WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+            windows::core::PCWSTR(icc_path_wide.as_ptr()),
+            windows::core::PCWSTR(device_name_wide.as_ptr()),
+        )
+    };
+    
+    if !result.as_bool() {
+        return Err(AppError::internal("Failed to associate ICC profile with device"));
+    }
+    
+    // 2. 应用显示设置更改
     unsafe {
         let _ = ChangeDisplaySettingsExW(
             windows::core::PCWSTR(device_name_wide.as_ptr()),
@@ -356,7 +324,7 @@ pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> 
         );
     }
     
-    // 4. 广播设置更改消息
+    // 3. 广播设置更改消息
     unsafe {
         let mut result = 0usize;
         let _ = SendMessageTimeoutW(
