@@ -544,43 +544,40 @@ pub fn restore_default_icc_for_monitor(device_name: &str) -> AppResult<()> {
         SendMessageTimeoutW, HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_NORMAL,
     };
     
-    // 获取设备 ID
-    let device_id = get_device_id_from_name(device_name)?;
+    // 获取显示器的注册表路径
+    let reg_paths = get_monitor_registry_paths(device_name)?;
     
-    // 构建注册表路径
-    let reg_path = format!(
-        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ICM\\ProfileAssociations\\Display\\{}",
-        device_id
-    );
-    
-    // 为每个显示器创建注册表项（0000, 0001, 0002...）
-    for i in 0..8 {
-        let subkey = format!("{}\\{:04}", reg_path, i);
-        let subkey_wide: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
-        
-        unsafe {
-            let mut hkey: HKEY = std::mem::zeroed();
-            let result = RegOpenKeyExW(
-                HKEY_CURRENT_USER,
-                windows::core::PCWSTR(subkey_wide.as_ptr()),
-                0,
-                KEY_WRITE,
-                &mut hkey,
-            );
+    // 为每个显示器设置 ICC 配置
+    for reg_path in reg_paths {
+        // 为每个显示器序号创建注册表项（0000, 0001, 0002...）
+        for i in 0..8 {
+            let subkey = format!("{}\\{:04}", reg_path, i);
+            let subkey_wide: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
             
-            if result.is_ok() {
-                // 设置 UsePerUserProfiles = 0（禁用用户 ICC 设置）
-                let use_per_user: u32 = 0;
-                let value_name: Vec<u16> = "UsePerUserProfiles".encode_utf16().chain(std::iter::once(0)).collect();
-                let _ = RegSetValueExW(
-                    hkey,
-                    windows::core::PCWSTR(value_name.as_ptr()),
+            unsafe {
+                let mut hkey: HKEY = std::mem::zeroed();
+                let result = RegOpenKeyExW(
+                    HKEY_CURRENT_USER,
+                    windows::core::PCWSTR(subkey_wide.as_ptr()),
                     0,
-                    REG_DWORD,
-                    Some(&use_per_user.to_ne_bytes()),
+                    KEY_WRITE,
+                    &mut hkey,
                 );
                 
-                let _ = RegCloseKey(hkey);
+                if result.is_ok() {
+                    // 设置 UsePerUserProfiles = 0（禁用用户 ICC 设置）
+                    let use_per_user: u32 = 0;
+                    let value_name: Vec<u16> = "UsePerUserProfiles".encode_utf16().chain(std::iter::once(0)).collect();
+                    let _ = RegSetValueExW(
+                        hkey,
+                        windows::core::PCWSTR(value_name.as_ptr()),
+                        0,
+                        REG_DWORD,
+                        Some(&use_per_user.to_ne_bytes()),
+                    );
+                    
+                    let _ = RegCloseKey(hkey);
+                }
             }
         }
     }
