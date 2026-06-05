@@ -12,7 +12,7 @@
                         v-for="toast in group.items"
                         :key="toast.id"
                         class="global-toast"
-                        :class="[toast.type, toast.position, { leaving: toast.leaving }]"
+                        :class="[toast.type, toast.position]"
                         @click="removeToast(toast.id)"
                     >
                         {{ toast.message }}
@@ -124,6 +124,7 @@ const groupedToasts = computed(() => {
     word-break: break-word;
     cursor: pointer;
     will-change: transform, opacity;
+    transition: transform 0.3s ease;
 }
 
 .global-toast.info {
@@ -142,13 +143,15 @@ const groupedToasts = computed(() => {
 .toast-top-enter-active,
 .toast-top-left-enter-active,
 .toast-top-right-enter-active {
-    transition: all 0.3s ease;
+    transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
 .toast-top-leave-active,
 .toast-top-left-leave-active,
 .toast-top-right-leave-active {
-    transition: all 0.2s ease;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    position: absolute;
+    width: 100%;
 }
 
 .toast-top-enter-from,
@@ -178,13 +181,15 @@ const groupedToasts = computed(() => {
 .toast-bottom-enter-active,
 .toast-bottom-left-enter-active,
 .toast-bottom-right-enter-active {
-    transition: all 0.3s ease;
+    transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
 .toast-bottom-leave-active,
 .toast-bottom-left-leave-active,
 .toast-bottom-right-leave-active {
-    transition: all 0.2s ease;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    position: absolute;
+    width: 100%;
 }
 
 .toast-bottom-enter-from,
@@ -210,25 +215,5 @@ const groupedToasts = computed(() => {
     transform: translateX(-50%) scale(0.9);
 }
 
-.global-toast.leaving {
-    animation: toastLeave 0.2s ease forwards !important;
-}
 
-@keyframes toastLeave {
-    to {
-        opacity: 0;
-        transform: scale(0.9);
-    }
-}
-
-.global-toast.top.leaving {
-    animation-name: toastLeaveTop !important;
-}
-
-@keyframes toastLeaveTop {
-    to {
-        opacity: 0;
-        transform: translateX(-50%) scale(0.9);
-    }
-}
 </style>

@@ -14,14 +14,11 @@ export interface ToastItem {
     message: string;
     type: ToastType;
     position: ToastPosition;
-    leaving?: boolean;
 }
 
 const toastQueue = shallowRef<ToastItem[]>([]);
 let toastIdCounter = 0;
 const toastTimers = new Map<number, ReturnType<typeof setTimeout>>();
-
-const LEAVE_DURATION = 200;
 
 export function showToast(message: string, options?: ToastOptions) {
     const id = ++toastIdCounter;
@@ -35,19 +32,9 @@ export function showToast(message: string, options?: ToastOptions) {
     toastQueue.value = [...toastQueue.value, toast];
 
     const timer = setTimeout(() => {
-        startLeaveAnimation(id);
+        removeToast(id);
     }, options?.duration ?? 3000);
     toastTimers.set(id, timer);
-}
-
-function startLeaveAnimation(id: number) {
-    toastQueue.value = toastQueue.value.map((t) =>
-        t.id === id ? { ...t, leaving: true } : t
-    );
-
-    setTimeout(() => {
-        removeToast(id);
-    }, LEAVE_DURATION);
 }
 
 export function removeToast(id: number) {
