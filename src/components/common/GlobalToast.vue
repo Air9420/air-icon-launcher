@@ -136,7 +136,7 @@ function getToastsByPosition(position: ToastPosition): ToastItem[] {
 .toast-top-right-leave-active {
     transition: opacity 0.2s ease, transform 0.2s ease;
     position: absolute;
-    left: 0;
+    width: max-content;
 }
 
 .toast-top-enter-from,
@@ -174,7 +174,7 @@ function getToastsByPosition(position: ToastPosition): ToastItem[] {
 .toast-bottom-right-leave-active {
     transition: opacity 0.2s ease, transform 0.2s ease;
     position: absolute;
-    left: 0;
+    width: max-content;
 }
 
 .toast-bottom-enter-from,
