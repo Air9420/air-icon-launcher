@@ -151,7 +151,7 @@ const groupedToasts = computed(() => {
 .toast-top-right-leave-active {
     transition: opacity 0.2s ease, transform 0.2s ease;
     position: absolute;
-    width: 100%;
+    left: 0;
 }
 
 .toast-top-enter-from,
@@ -189,7 +189,7 @@ const groupedToasts = computed(() => {
 .toast-bottom-right-leave-active {
     transition: opacity 0.2s ease, transform 0.2s ease;
     position: absolute;
-    width: 100%;
+    left: 0;
 }
 
 .toast-bottom-enter-from,
