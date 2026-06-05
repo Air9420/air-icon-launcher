@@ -71,15 +71,11 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
     const DISPLAY_DEVICE_PRIMARY_DEVICE: u32 = 0x4;
     const DISPLAY_DEVICE_MIRRORING_DRIVER: u32 = 0x8;
 
-    // 1. 从注册表获取所有显示器名称
-    let registry_monitors = get_monitors_from_registry();
-
     let mut monitors = Vec::new();
     let mut display_device: DISPLAY_DEVICEW = unsafe { mem::zeroed() };
     display_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
 
     let mut device_index = 0u32;
-    let mut monitor_index = 0usize;
 
     loop {
         let result = unsafe {
@@ -103,10 +99,36 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
                 &display_device.DeviceID[..display_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
             );
 
-            // 从注册表获取显示器名称
-            let friendly_name = registry_monitors.get(monitor_index)
-                .cloned()
-                .unwrap_or_else(|| extract_display_name_from_id(&device_id));
+            // 获取监视器名称（第二次调用 EnumDisplayDevicesW）
+            let mut monitor_device: DISPLAY_DEVICEW = unsafe { mem::zeroed() };
+            monitor_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
+
+            let mut friendly_name = extract_display_name_from_id(&device_id);
+
+            unsafe {
+                let monitor_result = EnumDisplayDevicesW(
+                    windows::core::PCWSTR(name.as_ptr() as *const u16),
+                    0,
+                    &mut monitor_device,
+                    0, // 不使用 EDD_GET_DEVICE_INTERFACE_NAME
+                );
+
+                if monitor_result.as_bool() {
+                    let monitor_string = String::from_utf16_lossy(
+                        &monitor_device.DeviceString[..monitor_device.DeviceString.iter().position(|&c| c == 0).unwrap_or(128)]
+                    );
+
+                    // 如果获取到了有效的监视器名称（不是适配器名称）
+                    if !monitor_string.is_empty() && !monitor_string.contains("Display") {
+                        friendly_name = monitor_string;
+                    } else {
+                        // 尝试从 EDID 获取名称
+                        if let Some(edid_name) = get_monitor_name_from_edid(&name) {
+                            friendly_name = edid_name;
+                        }
+                    }
+                }
+            }
 
             monitors.push(MonitorInfo {
                 name: name.trim().to_string(),
@@ -114,8 +136,6 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
                 device_id,
                 is_primary,
             });
-
-            monitor_index += 1;
         }
 
         device_index += 1;
@@ -137,194 +157,110 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
 }
 
 #[cfg(windows)]
-fn get_monitors_from_registry() -> Vec<String> {
+fn get_monitor_name_from_edid(device_name: &str) -> Option<String> {
     use windows::Win32::System::Registry::{
-        RegOpenKeyExW, RegEnumKeyExW, RegQueryValueExW, RegCloseKey,
+        RegOpenKeyExW, RegQueryValueExW, RegCloseKey,
         HKEY_LOCAL_MACHINE, KEY_READ, HKEY, REG_BINARY, REG_VALUE_TYPE,
     };
+    use windows::Win32::Graphics::Gdi::{DISPLAY_DEVICEW, EnumDisplayDevicesW};
     use std::mem;
 
-    let mut names = Vec::new();
+    // 获取监视器的设备接口名称
+    let mut monitor_device: DISPLAY_DEVICEW = unsafe { mem::zeroed() };
+    monitor_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
 
-    // 打开 HKLM\SYSTEM\CurrentControlSet\Enum\DISPLAY
-    let display_key_path: Vec<u16> = "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY"
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
+    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
 
     unsafe {
-        let mut display_key: HKEY = mem::zeroed();
-        let result = RegOpenKeyExW(
-            HKEY_LOCAL_MACHINE,
-            windows::core::PCWSTR(display_key_path.as_ptr()),
+        let result = EnumDisplayDevicesW(
+            windows::core::PCWSTR(device_name_wide.as_ptr()),
             0,
-            KEY_READ,
-            &mut display_key,
+            &mut monitor_device,
+            0x1, // EDD_GET_DEVICE_INTERFACE_NAME
         );
 
-        if result.is_err() {
-            return names;
+        if !result.as_bool() {
+            return None;
         }
-
-        // 枚举所有显示器类型（如 GSM59F1, Default_Monitor 等）
-        let mut monitor_type_index = 0u32;
-        let mut monitor_type_name = [0u16; 256];
-        let mut monitor_type_name_len = 256u32;
-
-        while RegEnumKeyExW(
-            display_key,
-            monitor_type_index,
-            windows::core::PWSTR(monitor_type_name.as_mut_ptr()),
-            &mut monitor_type_name_len,
-            None,
-            windows::core::PWSTR::null(),
-            None,
-            None,
-        ).is_ok() {
-            let monitor_type = String::from_utf16_lossy(
-                &monitor_type_name[..monitor_type_name_len as usize]
-            );
-
-            // 打开显示器类型子键
-            let monitor_type_path = format!(
-                "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY\\{}",
-                monitor_type
-            );
-            let monitor_type_path_wide: Vec<u16> = monitor_type_path
-                .encode_utf16()
-                .chain(std::iter::once(0))
-                .collect();
-
-            let mut monitor_type_key: HKEY = mem::zeroed();
-            if RegOpenKeyExW(
-                HKEY_LOCAL_MACHINE,
-                windows::core::PCWSTR(monitor_type_path_wide.as_ptr()),
-                0,
-                KEY_READ,
-                &mut monitor_type_key,
-            ).is_ok() {
-                // 枚举实例 ID
-                let mut instance_index = 0u32;
-                let mut instance_name = [0u16; 256];
-                let mut instance_name_len = 256u32;
-
-                while RegEnumKeyExW(
-                    monitor_type_key,
-                    instance_index,
-                    windows::core::PWSTR(instance_name.as_mut_ptr()),
-                    &mut instance_name_len,
-                    None,
-                    windows::core::PWSTR::null(),
-                    None,
-                    None,
-                ).is_ok() {
-                    let instance = String::from_utf16_lossy(
-                        &instance_name[..instance_name_len as usize]
-                    );
-
-                    // 打开实例子键，读取 EDID
-                    let instance_path = format!(
-                        "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY\\{}\\{}",
-                        monitor_type, instance
-                    );
-                    let instance_path_wide: Vec<u16> = instance_path
-                        .encode_utf16()
-                        .chain(std::iter::once(0))
-                        .collect();
-
-                    let mut instance_key: HKEY = mem::zeroed();
-                    if RegOpenKeyExW(
-                        HKEY_LOCAL_MACHINE,
-                        windows::core::PCWSTR(instance_path_wide.as_ptr()),
-                        0,
-                        KEY_READ,
-                        &mut instance_key,
-                    ).is_ok() {
-                        // 读取 EDID 数据
-                        let mut edid_buffer = [0u8; 256];
-                        let mut edid_size = edid_buffer.len() as u32;
-                        let mut data_type: REG_VALUE_TYPE = REG_VALUE_TYPE(0);
-                        
-                        let edid_key: Vec<u16> = "EDID".encode_utf16().chain(std::iter::once(0)).collect();
-                        
-                        let result = RegQueryValueExW(
-                            instance_key,
-                            windows::core::PCWSTR(edid_key.as_ptr()),
-                            None,
-                            Some(&mut data_type),
-                            Some(edid_buffer.as_mut_ptr()),
-                            Some(&mut edid_size),
-                        );
-                        
-                        if result.is_ok() && edid_size >= 128 {
-                            // 解析 EDID 获取显示器名称
-                            for i in 0..4 {
-                                let offset = 0x36 + (i * 18);
-                                if offset + 18 > edid_size as usize {
-                                    break;
-                                }
-                                
-                                // 检查是否是显示器名称描述符 (tag = 0xFC)
-                                if edid_buffer[offset] == 0x00 && edid_buffer[offset + 3] == 0xFC {
-                                    let name_bytes = &edid_buffer[offset + 5..offset + 18];
-                                    let name = String::from_utf8_lossy(name_bytes);
-                                    let name = name.trim_matches('\0').trim();
-                                    if !name.is_empty() {
-                                        names.push(name.to_string());
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // 如果没有从 EDID 获取到名称，使用 DeviceDesc
-                        if names.len() <= monitor_type_index as usize {
-                            let device_desc_key: Vec<u16> = "DeviceDesc".encode_utf16().chain(std::iter::once(0)).collect();
-                            let mut buffer = [0u16; 256];
-                            let mut buffer_size = (buffer.len() * 2) as u32;
-                            data_type = REG_VALUE_TYPE(0);
-                            
-                            let result = RegQueryValueExW(
-                                instance_key,
-                                windows::core::PCWSTR(device_desc_key.as_ptr()),
-                                None,
-                                Some(&mut data_type),
-                                Some(buffer.as_mut_ptr() as *mut u8),
-                                Some(&mut buffer_size),
-                            );
-                            
-                            if result.is_ok() && data_type == REG_VALUE_TYPE(1) {
-                                let name = String::from_utf16_lossy(&buffer[..buffer_size as usize / 2]);
-                                let name = name.trim_matches('\0').trim();
-                                if let Some(semicolon_pos) = name.rfind(';') {
-                                    let real_name = &name[semicolon_pos + 1..];
-                                    if !real_name.is_empty() && !real_name.contains("Generic") {
-                                        names.push(real_name.to_string());
-                                    }
-                                }
-                            }
-                        }
-
-                        let _ = RegCloseKey(instance_key);
-                    }
-
-                    instance_index += 1;
-                    instance_name = [0u16; 256];
-                    instance_name_len = 256;
-                }
-
-                let _ = RegCloseKey(monitor_type_key);
-            }
-
-            monitor_type_index += 1;
-            monitor_type_name = [0u16; 256];
-            monitor_type_name_len = 256;
-        }
-
-        let _ = RegCloseKey(display_key);
     }
 
-    names
+    let device_id = String::from_utf16_lossy(
+        &monitor_device.DeviceID[..monitor_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
+    );
+
+    // 解析设备接口名称: \\?\DISPLAY#TYPE#INSTANCE#{GUID}
+    let clean_path = device_id
+        .trim_start_matches("\\\\?\\")
+        .split('#')
+        .collect::<Vec<&str>>();
+
+    if clean_path.len() < 2 {
+        return None;
+    }
+
+    let mut parts: Vec<&str> = clean_path.to_vec();
+    if parts.last().map_or(false, |s| s.starts_with('{')) {
+        parts.pop();
+    }
+
+    if parts.len() < 2 {
+        return None;
+    }
+
+    let reg_path = format!("SYSTEM\\CurrentControlSet\\Enum\\{}", parts.join("\\"));
+
+    let reg_path_wide: Vec<u16> = reg_path.encode_utf16().chain(std::iter::once(0)).collect();
+    let edid_key: Vec<u16> = "EDID".encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        let mut hkey: HKEY = mem::zeroed();
+        let result = RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            windows::core::PCWSTR(reg_path_wide.as_ptr()),
+            0,
+            KEY_READ,
+            &mut hkey,
+        );
+
+        if result.is_ok() {
+            let mut edid_buffer = [0u8; 256];
+            let mut edid_size = edid_buffer.len() as u32;
+            let mut data_type: REG_VALUE_TYPE = REG_VALUE_TYPE(0);
+
+            let result = RegQueryValueExW(
+                hkey,
+                windows::core::PCWSTR(edid_key.as_ptr()),
+                None,
+                Some(&mut data_type),
+                Some(edid_buffer.as_mut_ptr()),
+                Some(&mut edid_size),
+            );
+
+            if result.is_ok() && edid_size >= 128 {
+                // 解析 EDID 获取显示器名称
+                for i in 0..4 {
+                    let offset = 0x36 + (i * 18);
+                    if offset + 18 > edid_size as usize {
+                        break;
+                    }
+
+                    if edid_buffer[offset] == 0x00 && edid_buffer[offset + 3] == 0xFC {
+                        let name_bytes = &edid_buffer[offset + 5..offset + 18];
+                        let name = String::from_utf8_lossy(name_bytes);
+                        let name = name.trim_matches('\0').trim();
+                        if !name.is_empty() {
+                            let _ = RegCloseKey(hkey);
+                            return Some(name.to_string());
+                        }
+                    }
+                }
+            }
+
+            let _ = RegCloseKey(hkey);
+        }
+    }
+
+    None
 }
 
 fn extract_display_name_from_id(device_id: &str) -> String {
