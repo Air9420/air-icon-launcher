@@ -105,12 +105,14 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
             monitor_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
 
             let friendly_name = unsafe {
-                if EnumDisplayDevicesW(
+                let monitor_result = EnumDisplayDevicesW(
                     windows::core::PCWSTR(name.as_ptr() as *const u16),
                     0,
                     &mut monitor_device,
                     EDD_GET_DEVICE_INTERFACE_NAME,
-                ).as_bool() {
+                );
+                
+                if monitor_result.as_bool() {
                     let monitor_device_id = String::from_utf16_lossy(
                         &monitor_device.DeviceID[..monitor_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
                     );
@@ -164,29 +166,29 @@ fn get_monitor_friendly_name_from_device_id(device_id: &str) -> Option<String> {
     // device_id 格式: \\?\DISPLAY#DEL4180#5&12345678&0&UID00001#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}
     // 需要转换为: SYSTEM\CurrentControlSet\Enum\DISPLAY\DEL4180\5&12345678&0&UID00001
     
-    // 提取 DISPLAY 后面的部分
-    let display_prefix = "\\\\?\\DISPLAY#";
-    if !device_id.starts_with(display_prefix) {
+    // 去掉开头的 \\?\ 和末尾的 #{GUID}
+    let clean_path = device_id
+        .trim_start_matches("\\\\?\\")
+        .split('#')
+        .collect::<Vec<&str>>();
+    
+    if clean_path.len() < 2 {
         return None;
     }
     
-    let rest = &device_id[display_prefix.len()..];
-    // rest = "DEL4180#5&12345678&0&UID00001#{e6f07b5f-...}"
+    // 将 # 替换为 \，但最后一部分是 GUID，需要去掉
+    let mut parts: Vec<&str> = clean_path.to_vec();
+    // 去掉最后的 GUID 部分
+    if parts.last().map_or(false, |s| s.starts_with('{')) {
+        parts.pop();
+    }
     
-    // 分割 # 符号
-    let parts: Vec<&str> = rest.split('#').collect();
     if parts.len() < 2 {
         return None;
     }
     
-    let monitor_type = parts[0]; // "DEL4180"
-    let instance_part = parts[1]; // "5&12345678&0&UID00001"
-    
-    // 构建注册表路径
-    let reg_path = format!(
-        "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY\\{}\\{}",
-        monitor_type, instance_part
-    );
+    // 构建注册表路径: DISPLAY\TYPE\INSTANCE
+    let reg_path = format!("SYSTEM\\CurrentControlSet\\Enum\\{}", parts.join("\\"));
     
     let reg_path_wide: Vec<u16> = reg_path.encode_utf16().chain(std::iter::once(0)).collect();
     let friendly_name_key: Vec<u16> = "FriendlyName".encode_utf16().chain(std::iter::once(0)).collect();
@@ -243,6 +245,14 @@ fn get_monitor_friendly_name_from_device_id(device_id: &str) -> Option<String> {
             if result.is_ok() && data_type == REG_SZ {
                 let name = String::from_utf16_lossy(&buffer[..buffer_size as usize / 2]);
                 let name = name.trim_matches('\0').trim();
+                // DeviceDesc 可能包含 @inf,%xxx%;Real Name 格式
+                if let Some(semicolon_pos) = name.rfind(';') {
+                    let real_name = &name[semicolon_pos + 1..];
+                    if !real_name.is_empty() && !real_name.contains("Generic") {
+                        let _ = RegCloseKey(hkey);
+                        return Some(real_name.to_string());
+                    }
+                }
                 if !name.is_empty() && !name.contains("Generic") {
                     let _ = RegCloseKey(hkey);
                     return Some(name.to_string());
