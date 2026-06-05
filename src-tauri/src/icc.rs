@@ -138,100 +138,162 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
 
 #[cfg(windows)]
 fn get_all_monitor_names() -> Vec<String> {
-    use windows::Win32::Devices::DeviceAndDriverInstallation::{
-        SetupDiGetClassDevsW, SetupDiEnumDeviceInfo,
-        DIGCF_PRESENT, SPDRP_FRIENDLYNAME, SPDRP_DEVICEDESC,
-        SP_DEVINFO_DATA,
+    use windows::Win32::System::Registry::{
+        RegOpenKeyExW, RegEnumKeyExW, RegQueryValueExW, RegCloseKey,
+        HKEY_LOCAL_MACHINE, KEY_READ, HKEY,
     };
-    use windows::core::GUID;
     use std::mem;
-
-    // GUID_DEVINTERFACE_MONITOR
-    const GUID_DEVINTERFACE_MONITOR: GUID = GUID::from_u128(0xe6f07b5f_ee97_4a90_b076_33f57bf4eaa7);
 
     let mut names = Vec::new();
 
+    // 打开 HKLM\SYSTEM\CurrentControlSet\Enum\DISPLAY
+    let display_key_path: Vec<u16> = "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
     unsafe {
-        let device_info_set = match SetupDiGetClassDevsW(
-            Some(&GUID_DEVINTERFACE_MONITOR),
+        let mut display_key: HKEY = mem::zeroed();
+        let result = RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            windows::core::PCWSTR(display_key_path.as_ptr()),
+            0,
+            KEY_READ,
+            &mut display_key,
+        );
+
+        if result.is_err() {
+            return names;
+        }
+
+        // 枚举所有显示器类型（如 DEL4180, SAM0F13 等）
+        let mut monitor_type_index = 0u32;
+        let mut monitor_type_name = [0u16; 256];
+        let mut monitor_type_name_len = 256u32;
+
+        while RegEnumKeyExW(
+            display_key,
+            monitor_type_index,
+            windows::core::PWSTR(monitor_type_name.as_mut_ptr()),
+            &mut monitor_type_name_len,
+            None,
+            windows::core::PWSTR::null(),
             None,
             None,
-            DIGCF_PRESENT,
-        ) {
-            Ok(set) => set,
-            Err(_) => return names,
-        };
+        ).is_ok() {
+            let monitor_type = String::from_utf16_lossy(
+                &monitor_type_name[..monitor_type_name_len as usize]
+            );
 
-        let mut device_index = 0;
-        let mut device_info: SP_DEVINFO_DATA = mem::zeroed();
-        device_info.cbSize = mem::size_of::<SP_DEVINFO_DATA>() as u32;
+            // 打开显示器类型子键
+            let monitor_type_path = format!(
+                "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY\\{}",
+                monitor_type
+            );
+            let monitor_type_path_wide: Vec<u16> = monitor_type_path
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
 
-        while SetupDiEnumDeviceInfo(device_info_set, device_index, &mut device_info).is_ok() {
-            // 先尝试 FriendlyName
-            if let Some(name) = get_device_property(device_info_set, &device_info, SPDRP_FRIENDLYNAME) {
-                names.push(name);
-            } else if let Some(name) = get_device_property(device_info_set, &device_info, SPDRP_DEVICEDESC) {
-                names.push(name);
-            } else {
-                names.push(format!("Monitor {}", device_index + 1));
+            let mut monitor_type_key: HKEY = mem::zeroed();
+            if RegOpenKeyExW(
+                HKEY_LOCAL_MACHINE,
+                windows::core::PCWSTR(monitor_type_path_wide.as_ptr()),
+                0,
+                KEY_READ,
+                &mut monitor_type_key,
+            ).is_ok() {
+                // 枚举实例 ID
+                let mut instance_index = 0u32;
+                let mut instance_name = [0u16; 256];
+                let mut instance_name_len = 256u32;
+
+                while RegEnumKeyExW(
+                    monitor_type_key,
+                    instance_index,
+                    windows::core::PWSTR(instance_name.as_mut_ptr()),
+                    &mut instance_name_len,
+                    None,
+                    windows::core::PWSTR::null(),
+                    None,
+                    None,
+                ).is_ok() {
+                    let instance = String::from_utf16_lossy(
+                        &instance_name[..instance_name_len as usize]
+                    );
+
+                    // 打开实例子键，读取 FriendlyName 或 DeviceDesc
+                    let instance_path = format!(
+                        "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY\\{}\\{}",
+                        monitor_type, instance
+                    );
+                    let instance_path_wide: Vec<u16> = instance_path
+                        .encode_utf16()
+                        .chain(std::iter::once(0))
+                        .collect();
+
+                    let mut instance_key: HKEY = mem::zeroed();
+                    if RegOpenKeyExW(
+                        HKEY_LOCAL_MACHINE,
+                        windows::core::PCWSTR(instance_path_wide.as_ptr()),
+                        0,
+                        KEY_READ,
+                        &mut instance_key,
+                    ).is_ok() {
+                        // 尝试读取 FriendlyName
+                        if let Some(name) = read_registry_string(instance_key, "FriendlyName") {
+                            names.push(name);
+                        } else if let Some(name) = read_registry_string(instance_key, "DeviceDesc") {
+                            names.push(name);
+                        } else {
+                            names.push(format!("Monitor {}", names.len() + 1));
+                        }
+
+                        let _ = RegCloseKey(instance_key);
+                    }
+
+                    instance_index += 1;
+                    instance_name = [0u16; 256];
+                    instance_name_len = 256;
+                }
+
+                let _ = RegCloseKey(monitor_type_key);
             }
 
-            device_index += 1;
-            device_info = mem::zeroed();
-            device_info.cbSize = mem::size_of::<SP_DEVINFO_DATA>() as u32;
+            monitor_type_index += 1;
+            monitor_type_name = [0u16; 256];
+            monitor_type_name_len = 256;
         }
+
+        let _ = RegCloseKey(display_key);
     }
 
     names
 }
 
 #[cfg(windows)]
-fn get_device_property(
-    device_info_set: windows::Win32::Devices::DeviceAndDriverInstallation::HDEVINFO,
-    device_info: &windows::Win32::Devices::DeviceAndDriverInstallation::SP_DEVINFO_DATA,
-    property: windows::Win32::Devices::DeviceAndDriverInstallation::SETUP_DI_REGISTRY_PROPERTY,
-) -> Option<String> {
-    use windows::Win32::Devices::DeviceAndDriverInstallation::SetupDiGetDeviceRegistryPropertyW;
+unsafe fn read_registry_string(key: windows::Win32::System::Registry::HKEY, value_name: &str) -> Option<String> {
+    use windows::Win32::System::Registry::{RegQueryValueExW, REG_SZ, REG_VALUE_TYPE};
 
-    let mut buffer_size = 0u32;
+    let value_name_wide: Vec<u16> = value_name.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut buffer = [0u16; 256];
+    let mut buffer_size = (buffer.len() * 2) as u32;
+    let mut data_type: REG_VALUE_TYPE = REG_VALUE_TYPE(0);
 
-    unsafe {
-        // 第一次调用获取缓冲区大小
-        let _ = SetupDiGetDeviceRegistryPropertyW(
-            device_info_set,
-            device_info,
-            property,
-            None,
-            None,
-            Some(&mut buffer_size),
-        );
+    let result = RegQueryValueExW(
+        key,
+        windows::core::PCWSTR(value_name_wide.as_ptr()),
+        None,
+        Some(&mut data_type),
+        Some(buffer.as_mut_ptr() as *mut u8),
+        Some(&mut buffer_size),
+    );
 
-        if buffer_size == 0 {
-            return None;
-        }
-
-        // 第二次调用获取数据
-        let mut buffer = vec![0u8; buffer_size as usize + 2];
-        let result = SetupDiGetDeviceRegistryPropertyW(
-            device_info_set,
-            device_info,
-            property,
-            None,
-            Some(&mut buffer),
-            None,
-        );
-
-        if result.is_ok() {
-            // 将字节缓冲区转换为 u16 切片，然后转为字符串
-            let u16_slice = std::slice::from_raw_parts(
-                buffer.as_ptr() as *const u16,
-                buffer.len() / 2,
-            );
-            let name = String::from_utf16_lossy(u16_slice);
-            let name = name.trim_matches('\0').trim();
-            if !name.is_empty() {
-                return Some(name.to_string());
-            }
+    if result.is_ok() && data_type == REG_SZ {
+        let name = String::from_utf16_lossy(&buffer[..buffer_size as usize / 2]);
+        let name = name.trim_matches('\0').trim();
+        if !name.is_empty() {
+            return Some(name.to_string());
         }
     }
 
