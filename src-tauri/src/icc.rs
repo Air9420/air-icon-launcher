@@ -79,7 +79,7 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
     display_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
 
     let mut device_index = 0u32;
-    let mut monitor_index = 0usize;
+    let mut edid_index = 0usize;
 
     loop {
         let result = unsafe {
@@ -103,10 +103,12 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
                 &display_device.DeviceID[..display_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
             );
 
-            // 从 EDID 名称列表中获取显示器名称
-            let friendly_name = edid_names.get(monitor_index)
-                .cloned()
-                .unwrap_or_else(|| extract_display_name_from_id(&device_id));
+            // 尝试从 EDID 名称列表中获取显示器名称
+            let friendly_name = if edid_index < edid_names.len() {
+                edid_names[edid_index].clone()
+            } else {
+                extract_display_name_from_id(&device_id)
+            };
 
             monitors.push(MonitorInfo {
                 name: name.trim().to_string(),
@@ -115,7 +117,7 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
                 is_primary,
             });
 
-            monitor_index += 1;
+            edid_index += 1;
         }
 
         device_index += 1;
@@ -124,10 +126,15 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
         }
     }
 
+    // 如果没有找到显示器，添加默认值
     if monitors.is_empty() {
+        // 尝试从 EDID 名称列表中获取
+        let friendly_name = edid_names.first().cloned()
+            .unwrap_or_else(|| "Display 1".to_string());
+        
         monitors.push(MonitorInfo {
             name: "Display 1".to_string(),
-            friendly_name: "Display 1".to_string(),
+            friendly_name,
             device_id: String::new(),
             is_primary: true,
         });
