@@ -71,11 +71,15 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
     const DISPLAY_DEVICE_PRIMARY_DEVICE: u32 = 0x4;
     const DISPLAY_DEVICE_MIRRORING_DRIVER: u32 = 0x8;
 
+    // 1. 从 EDID 获取所有显示器名称
+    let edid_names = get_all_monitor_names_from_edid();
+
     let mut monitors = Vec::new();
     let mut display_device: DISPLAY_DEVICEW = unsafe { mem::zeroed() };
     display_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
 
     let mut device_index = 0u32;
+    let mut monitor_index = 0usize;
 
     loop {
         let result = unsafe {
@@ -99,36 +103,10 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
                 &display_device.DeviceID[..display_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
             );
 
-            // 获取监视器名称（第二次调用 EnumDisplayDevicesW）
-            let mut monitor_device: DISPLAY_DEVICEW = unsafe { mem::zeroed() };
-            monitor_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
-
-            let mut friendly_name = extract_display_name_from_id(&device_id);
-
-            unsafe {
-                let monitor_result = EnumDisplayDevicesW(
-                    windows::core::PCWSTR(name.as_ptr() as *const u16),
-                    0,
-                    &mut monitor_device,
-                    0, // 不使用 EDD_GET_DEVICE_INTERFACE_NAME
-                );
-
-                if monitor_result.as_bool() {
-                    let monitor_string = String::from_utf16_lossy(
-                        &monitor_device.DeviceString[..monitor_device.DeviceString.iter().position(|&c| c == 0).unwrap_or(128)]
-                    );
-
-                    // 如果获取到了有效的监视器名称（不是适配器名称）
-                    if !monitor_string.is_empty() && !monitor_string.contains("Display") {
-                        friendly_name = monitor_string;
-                    } else {
-                        // 尝试从 EDID 获取名称
-                        if let Some(edid_name) = get_monitor_name_from_edid(&name) {
-                            friendly_name = edid_name;
-                        }
-                    }
-                }
-            }
+            // 从 EDID 名称列表中获取显示器名称
+            let friendly_name = edid_names.get(monitor_index)
+                .cloned()
+                .unwrap_or_else(|| extract_display_name_from_id(&device_id));
 
             monitors.push(MonitorInfo {
                 name: name.trim().to_string(),
@@ -136,6 +114,8 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
                 device_id,
                 is_primary,
             });
+
+            monitor_index += 1;
         }
 
         device_index += 1;
@@ -157,14 +137,15 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
 }
 
 #[cfg(windows)]
-fn get_monitor_name_from_edid(device_name: &str) -> Option<String> {
+fn get_all_monitor_names_from_edid() -> Vec<String> {
     use windows::Win32::System::Registry::{
         RegOpenKeyExW, RegEnumKeyExW, RegQueryValueExW, RegCloseKey,
         HKEY_LOCAL_MACHINE, KEY_READ, HKEY, REG_BINARY, REG_VALUE_TYPE,
     };
     use std::mem;
 
-    // 枚举所有显示器，查找 EDID 中的名称
+    let mut names = Vec::new();
+
     let display_key_path: Vec<u16> = "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY"
         .encode_utf16()
         .chain(std::iter::once(0))
@@ -181,7 +162,7 @@ fn get_monitor_name_from_edid(device_name: &str) -> Option<String> {
         );
 
         if result.is_err() {
-            return None;
+            return names;
         }
 
         let mut monitor_type_index = 0u32;
@@ -281,10 +262,8 @@ fn get_monitor_name_from_edid(device_name: &str) -> Option<String> {
                                     let name = String::from_utf8_lossy(name_bytes);
                                     let name = name.trim_matches('\0').trim();
                                     if !name.is_empty() {
-                                        let _ = RegCloseKey(instance_key);
-                                        let _ = RegCloseKey(monitor_type_key);
-                                        let _ = RegCloseKey(display_key);
-                                        return Some(name.to_string());
+                                        names.push(name.to_string());
+                                        break;
                                     }
                                 }
                             }
@@ -309,7 +288,7 @@ fn get_monitor_name_from_edid(device_name: &str) -> Option<String> {
         let _ = RegCloseKey(display_key);
     }
 
-    None
+    names
 }
 
 fn extract_display_name_from_id(device_id: &str) -> String {
