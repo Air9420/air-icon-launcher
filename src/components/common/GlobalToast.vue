@@ -134,9 +134,7 @@ function getToastsByPosition(position: ToastPosition): ToastItem[] {
 .toast-top-leave-active,
 .toast-top-left-leave-active,
 .toast-top-right-leave-active {
-    transition: opacity 0.2s ease, transform 0.2s ease;
-    position: absolute;
-    width: max-content;
+    transition: opacity 0.2s ease;
 }
 
 .toast-top-enter-from,
@@ -150,16 +148,6 @@ function getToastsByPosition(position: ToastPosition): ToastItem[] {
 .toast-top-left-leave-to,
 .toast-top-right-leave-to {
     opacity: 0;
-    transform: scale(0.9);
-}
-
-.group-top .toast-top-enter-from,
-.group-top .toast-top-leave-to {
-    transform: translateX(-50%) translateY(-20px);
-}
-
-.group-top .toast-top-leave-to {
-    transform: translateX(-50%) scale(0.9);
 }
 
 // Bottom animations
@@ -172,9 +160,7 @@ function getToastsByPosition(position: ToastPosition): ToastItem[] {
 .toast-bottom-leave-active,
 .toast-bottom-left-leave-active,
 .toast-bottom-right-leave-active {
-    transition: opacity 0.2s ease, transform 0.2s ease;
-    position: absolute;
-    width: max-content;
+    transition: opacity 0.2s ease;
 }
 
 .toast-bottom-enter-from,
@@ -188,16 +174,6 @@ function getToastsByPosition(position: ToastPosition): ToastItem[] {
 .toast-bottom-left-leave-to,
 .toast-bottom-right-leave-to {
     opacity: 0;
-    transform: scale(0.9);
-}
-
-.group-bottom .toast-bottom-enter-from,
-.group-bottom .toast-bottom-leave-to {
-    transform: translateX(-50%) translateY(20px);
-}
-
-.group-bottom .toast-bottom-leave-to {
-    transform: translateX(-50%) scale(0.9);
 }
 
 
