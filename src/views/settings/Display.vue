@@ -203,7 +203,7 @@ async function onRemove(profileId: string) {
 
 .monitor-chips {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 8px;
 }
 
@@ -218,6 +218,7 @@ async function onRemove(profileId: string) {
   cursor: pointer;
   transition: all 0.2s;
   color: var(--text-color);
+  width: 100%;
 }
 
 .monitor-chip:hover {

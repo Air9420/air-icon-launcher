@@ -99,19 +99,39 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
                 &display_device.DeviceID[..display_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
             );
             
-            let device_string = String::from_utf16_lossy(
-                &display_device.DeviceString[..display_device.DeviceString.iter().position(|&c| c == 0).unwrap_or(128)]
-            );
+            // 获取真正的显示器名称（第二次调用 EnumDisplayDevicesW，flags=0）
+            let mut monitor_device: DISPLAY_DEVICEW = unsafe { mem::zeroed() };
+            monitor_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
             
-            let friendly_name = if !device_string.is_empty() {
-                device_string
-            } else {
-                extract_display_name_from_id(&device_id)
+            let monitor_name = unsafe {
+                // 第二次调用：传入适配器名称，flags=0，获取监视器信息
+                let success = EnumDisplayDevicesW(
+                    windows::core::PCWSTR(name.as_ptr() as *const u16),
+                    0,
+                    &mut monitor_device,
+                    0, // 不使用 EDD_GET_DEVICE_INTERFACE_NAME
+                );
+                
+                if success.as_bool() {
+                    let monitor_string = String::from_utf16_lossy(
+                        &monitor_device.DeviceString[..monitor_device.DeviceString.iter().position(|&c| c == 0).unwrap_or(128)]
+                    );
+                    // 如果获取到了有效的监视器名称（不是适配器名称）
+                    if !monitor_string.is_empty() && !monitor_string.contains("Display") {
+                        monitor_string
+                    } else {
+                        // 尝试从注册表获取监视器名称
+                        get_monitor_name_from_registry(&monitor_device.DeviceID)
+                            .unwrap_or_else(|| extract_display_name_from_id(&device_id))
+                    }
+                } else {
+                    extract_display_name_from_id(&device_id)
+                }
             };
 
             monitors.push(MonitorInfo {
                 name: name.trim().to_string(),
-                friendly_name: friendly_name.trim().to_string(),
+                friendly_name: monitor_name.trim().to_string(),
                 device_id,
                 is_primary,
             });
@@ -160,6 +180,91 @@ fn extract_display_name_from_id(device_id: &str) -> String {
     }
     
     "Unknown Display".to_string()
+}
+
+#[cfg(windows)]
+fn get_monitor_name_from_registry(device_id: &[u16]) -> Option<String> {
+    use windows::Win32::System::Registry::{RegOpenKeyExW, RegQueryValueExW, RegCloseKey, HKEY_LOCAL_MACHINE, KEY_READ, HKEY};
+    
+    // device_id 格式: "MONITOR\XXX\{GUID}\..." 或 "\\.\\DISPLAY1"
+    // 需要转换为注册表路径: HKLM\SYSTEM\CurrentControlSet\Enum\DISPLAY\XXX\{GUID}
+    let device_id_str = String::from_utf16_lossy(
+        &device_id[..device_id.iter().position(|&c| c == 0).unwrap_or(device_id.len())]
+    );
+    
+    // 提取显示器部分 (MONITOR\XXX\{GUID} -> DISPLAY\XXX\{GUID})
+    let reg_path = if device_id_str.starts_with("MONITOR\\") {
+        format!("SYSTEM\\CurrentControlSet\\Enum\\{}", device_id_str)
+    } else if device_id_str.starts_with("DISPLAY\\") {
+        format!("SYSTEM\\CurrentControlSet\\Enum\\{}", device_id_str)
+    } else {
+        return None;
+    };
+    
+    let reg_path_wide: Vec<u16> = reg_path.encode_utf16().chain(std::iter::once(0)).collect();
+    let friendly_name_key: Vec<u16> = "FriendlyName".encode_utf16().chain(std::iter::once(0)).collect();
+    let device_desc_key: Vec<u16> = "DeviceDesc".encode_utf16().chain(std::iter::once(0)).collect();
+    
+    unsafe {
+        let mut hkey: HKEY = std::mem::zeroed();
+        let result = RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            windows::core::PCWSTR(reg_path_wide.as_ptr()),
+            0,
+            KEY_READ,
+            &mut hkey,
+        );
+        
+        if result.is_ok() {
+            // 尝试读取 FriendlyName
+            let mut buffer = [0u16; 256];
+            let mut buffer_size = (buffer.len() * 2) as u32;
+            
+            let result = RegQueryValueExW(
+                hkey,
+                windows::core::PCWSTR(friendly_name_key.as_ptr()),
+                None,
+                None,
+                Some(buffer.as_mut_ptr() as *mut u8),
+                Some(&mut buffer_size),
+            );
+            
+            if result.is_ok() {
+                let name = String::from_utf16_lossy(&buffer[..buffer_size as usize / 2]);
+                let name = name.trim_matches('\0').trim();
+                if !name.is_empty() {
+                    let _ = RegCloseKey(hkey);
+                    return Some(name.to_string());
+                }
+            }
+            
+            // 尝试读取 DeviceDesc
+            buffer = [0u16; 256];
+            buffer_size = (buffer.len() * 2) as u32;
+            
+            let result = RegQueryValueExW(
+                hkey,
+                windows::core::PCWSTR(device_desc_key.as_ptr()),
+                None,
+                None,
+                Some(buffer.as_mut_ptr() as *mut u8),
+                Some(&mut buffer_size),
+            );
+            
+            if result.is_ok() {
+                let name = String::from_utf16_lossy(&buffer[..buffer_size as usize / 2]);
+                let name = name.trim_matches('\0').trim();
+                if !name.is_empty() {
+                    let _ = RegCloseKey(hkey);
+                    return Some(name.to_string());
+                }
+            }
+            
+            let _ = RegCloseKey(hkey);
+        }
+    }
+    
+    None
 }
 
 #[tauri::command]
