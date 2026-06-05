@@ -2,14 +2,14 @@
     <Teleport to="body">
         <div class="toast-container">
             <div
-                v-for="group in groupedToasts"
-                :key="group.position"
+                v-for="pos in POSITION_GROUPS"
+                :key="pos"
                 class="toast-group"
-                :class="`group-${group.position}`"
+                :class="`group-${pos}`"
             >
-                <TransitionGroup :name="`toast-${group.position}`">
+                <TransitionGroup :name="`toast-${pos}`">
                     <div
-                        v-for="toast in group.items"
+                        v-for="toast in getToastsByPosition(pos)"
                         :key="toast.id"
                         class="global-toast"
                         :class="[toast.type, toast.position]"
@@ -24,7 +24,6 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
 import { useGlobalToast, type ToastItem, type ToastPosition } from "../../composables/useGlobalToast";
 
 const { toastQueue, removeToast } = useGlobalToast();
@@ -34,23 +33,9 @@ const POSITION_GROUPS: ToastPosition[] = [
     "bottom", "bottom-left", "bottom-right",
 ];
 
-const groupedToasts = computed(() => {
-    const groups = new Map<ToastPosition, ToastItem[]>();
-
-    toastQueue.value.forEach((toast) => {
-        if (!groups.has(toast.position)) {
-            groups.set(toast.position, []);
-        }
-        groups.get(toast.position)!.push(toast);
-    });
-
-    return POSITION_GROUPS
-        .filter((pos) => groups.has(pos) && groups.get(pos)!.length > 0)
-        .map((pos) => ({
-            position: pos,
-            items: groups.get(pos)!,
-        }));
-});
+function getToastsByPosition(position: ToastPosition): ToastItem[] {
+    return toastQueue.value.filter((t) => t.position === position);
+}
 </script>
 
 <style lang="scss" scoped>
