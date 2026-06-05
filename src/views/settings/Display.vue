@@ -2,7 +2,6 @@
   <div class="display-settings">
     <div class="section">
       <div class="section-title">显示器 ICC 配置管理</div>
-      <div class="hint">选择显示器后，管理其颜色配置文件</div>
 
       <!-- 显示器选择列表 -->
       <div class="monitor-selector">
@@ -17,7 +16,7 @@
           >
             <span class="chip-index">{{ index + 1 }}</span>
             <span class="chip-name">{{ monitor.friendlyName }}</span>
-            <span v-if="monitor.isPrimary" class="chip-badge">主</span>
+            <span v-if="monitor.isPrimary" class="chip-badge">主屏</span>
           </button>
         </div>
       </div>
@@ -27,7 +26,6 @@
         <div class="detail-header">
           <div class="detail-info">
             <span class="detail-name">{{ selectedMonitor.friendlyName }}</span>
-            <span class="detail-device">{{ selectedMonitor.name }}</span>
           </div>
         </div>
 
@@ -72,22 +70,30 @@ import { computed, onMounted, ref } from "vue";
 import { storeToRefs } from "pinia";
 import { useIccStore } from "../../stores/iccStore";
 import { showToast } from "../../composables/useGlobalToast";
+import { useConfirmDialog } from "../../composables/useConfirmDialog";
 import type { MonitorInfo, IccProfile } from "../../types/icc";
 
 const iccStore = useIccStore();
 const { profiles, monitors } = storeToRefs(iccStore);
+const { confirm } = useConfirmDialog();
 
 const selectedMonitor = ref<MonitorInfo | null>(null);
 
 onMounted(async () => {
-  await iccStore.fetchMonitors();
-  await iccStore.fetchProfiles();
+  // 并行加载数据
+  await Promise.all([
+    iccStore.fetchMonitors(),
+    iccStore.fetchProfiles(),
+  ]);
   
   // 默认选中主显示器
   if (monitors.value.length > 0) {
     const primary = monitors.value.find((m) => m.isPrimary) || monitors.value[0];
     selectedMonitor.value = primary;
   }
+
+  // 后台预热 WCS 服务（不阻塞页面）
+  iccStore.warmupWcs();
 });
 
 // 当前选中显示器的 ICC 配置
@@ -110,26 +116,64 @@ async function onSelect(profileId: string) {
   const profile = profiles.value.find((p) => p.id === profileId);
   if (!profile) return;
 
+  const startTime = performance.now();
+  console.log(`[ICC] 开始切换配置: ${getFileName(profile.iccPath)}`);
+
   // 如果已经启用，则禁用（取消选中）
   if (profile.enabled) {
-    try {
-      await iccStore.toggleProfile(profileId, false);
-      await iccStore.restoreDefault(profileId);
-      showToast("已恢复默认颜色", { type: "success" });
-    } catch (e) {
+    // 乐观更新 UI
+    profile.enabled = false;
+    showToast("已恢复默认颜色", { type: "success" });
+
+    // 并行执行，不阻塞
+    Promise.all([
+      iccStore.toggleProfile(profileId, false),
+      iccStore.restoreDefault(profileId),
+    ]).then(() => {
+      console.log(`[ICC] 禁用完成: ${(performance.now() - startTime).toFixed(0)}ms`);
+    }).catch((e) => {
+      // 回滚
+      profile.enabled = true;
+      console.error(`[ICC] 禁用失败: ${(performance.now() - startTime).toFixed(0)}ms`, e);
       showToast("禁用 ICC 配置失败", { type: "error" });
-    }
+    });
     return;
   }
 
-  // 启用选中的配置（后端会自动禁用同一显示器的其他配置）
-  try {
-    await iccStore.toggleProfile(profileId, true);
-    await iccStore.applyProfile(profileId);
-    showToast("ICC 配置已应用", { type: "success" });
-  } catch (e) {
+  // 乐观更新 UI：立即禁用其他配置，启用当前配置
+  const prevEnabled = profiles.value.map((p) => ({ id: p.id, enabled: p.enabled }));
+  profiles.value.forEach((p) => {
+    if (p.monitorName === profile.monitorName) {
+      p.enabled = p.id === profileId;
+    }
+  });
+  showToast("ICC 配置已应用", { type: "success" });
+
+  // 双阶段策略：
+  // 阶段1：立即应用 LUT（1ms），用户立即看到效果
+  // 阶段2：后台执行 Associate + SetDefault（系统级配置）
+  
+  // 阶段1：快速 LUT 更新
+  iccStore.toggleProfile(profileId, true).then(() => {
+    console.log(`[ICC] toggleProfile 完成: ${(performance.now() - startTime).toFixed(0)}ms`);
+    return iccStore.applyLutOnly(profileId);
+  }).then(() => {
+    console.log(`[ICC] LUT 应用完成（颜色已变化）: ${(performance.now() - startTime).toFixed(0)}ms`);
+    // 阶段2：后台执行完整的 Associate（完全不阻塞，不等待）
+    iccStore.applyProfile(profileId).then(() => {
+      console.log(`[ICC] 系统配置同步完成: ${(performance.now() - startTime).toFixed(0)}ms`);
+    }).catch((e) => {
+      console.error(`[ICC] 系统配置同步失败: ${(performance.now() - startTime).toFixed(0)}ms`, e);
+    });
+  }).catch((e) => {
+    // 回滚
+    prevEnabled.forEach(({ id, enabled }) => {
+      const p = profiles.value.find((pp) => pp.id === id);
+      if (p) p.enabled = enabled;
+    });
+    console.error(`[ICC] 启用失败: ${(performance.now() - startTime).toFixed(0)}ms`, e);
     showToast("应用 ICC 配置失败", { type: "error" });
-  }
+  });
 }
 
 async function onAdd() {
@@ -158,10 +202,38 @@ async function onAdd() {
 }
 
 async function onRemove(profileId: string) {
+  const profile = profiles.value.find((p) => p.id === profileId);
+  if (!profile) return;
+
+  const fileName = getFileName(profile.iccPath);
+  const confirmed = await confirm({
+    title: "删除 ICC 配置",
+    message: `确定要删除 "${fileName}" 吗？${profile.enabled ? "\n该配置当前已启用，删除后将恢复默认颜色。" : ""}`,
+    confirmText: "删除",
+    cancelText: "取消",
+  });
+
+  if (!confirmed) return;
+
+  // 如果删除的是启用的配置，先恢复默认
+  if (profile.enabled) {
+    try {
+      await iccStore.restoreDefault(profileId);
+    } catch (e) {
+      console.error("Failed to restore default before remove:", e);
+    }
+  }
+
+  // 乐观更新
+  const removedProfile = { ...profile };
+  profiles.value = profiles.value.filter((p) => p.id !== profileId);
+  showToast("ICC 配置已删除", { type: "success" });
+
   try {
     await iccStore.removeProfile(profileId);
-    showToast("ICC 配置已删除", { type: "success" });
   } catch (e) {
+    // 回滚
+    profiles.value.push(removedProfile);
     showToast("删除 ICC 配置失败", { type: "error" });
   }
 }
@@ -289,11 +361,6 @@ async function onRemove(profileId: string) {
   font-weight: 600;
   font-size: 16px;
   color: var(--text-color);
-}
-
-.detail-device {
-  font-size: 12px;
-  color: var(--text-secondary);
 }
 
 .icc-list {

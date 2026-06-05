@@ -222,9 +222,11 @@ pub fn run() {
             icc::remove_icc_profile,
             icc::toggle_icc_profile,
             icc::apply_icc_profile,
+            icc::apply_icc_lut_only,
             icc::restore_default_icc,
             icc::select_icc_file,
             icc::get_system_icc_profiles,
+            icc::warmup_wcs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

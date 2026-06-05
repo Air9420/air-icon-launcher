@@ -46,30 +46,61 @@ export const useIccStore = defineStore("icc", () => {
   }
 
   async function toggleProfile(profileId: string, enabled: boolean) {
+    const startTime = performance.now();
     try {
       await invokeOrThrow("toggle_icc_profile", { profileId, enabled });
-      // 重新获取所有配置状态（因为后端会禁用同一显示器的其他配置）
-      await fetchProfiles();
+      console.log(`[ICC Store] toggle_icc_profile IPC 完成: ${(performance.now() - startTime).toFixed(0)}ms`);
+      // 本地更新状态，避免额外的 IPC 调用
+      if (enabled) {
+        // 禁用同一显示器的其他配置
+        const profile = profiles.value.find((p) => p.id === profileId);
+        if (profile) {
+          profiles.value = profiles.value.map((p) => ({
+            ...p,
+            enabled: p.monitorName === profile.monitorName ? p.id === profileId : p.enabled,
+          }));
+        }
+      } else {
+        const idx = profiles.value.findIndex((p) => p.id === profileId);
+        if (idx !== -1) {
+          profiles.value[idx] = { ...profiles.value[idx], enabled: false };
+        }
+      }
     } catch (e) {
-      console.error("Failed to toggle ICC profile:", e);
+      console.error(`[ICC Store] toggle_icc_profile 失败: ${(performance.now() - startTime).toFixed(0)}ms`, e);
       throw e;
     }
   }
 
   async function applyProfile(profileId: string) {
+    const startTime = performance.now();
     try {
       await invokeOrThrow("apply_icc_profile", { profileId });
+      console.log(`[ICC Store] apply_icc_profile IPC 完成: ${(performance.now() - startTime).toFixed(0)}ms`);
     } catch (e) {
-      console.error("Failed to apply ICC profile:", e);
+      console.error(`[ICC Store] apply_icc_profile 失败: ${(performance.now() - startTime).toFixed(0)}ms`, e);
+      throw e;
+    }
+  }
+
+  async function applyLutOnly(profileId: string) {
+    const startTime = performance.now();
+    try {
+      await invokeOrThrow("apply_icc_lut_only", { profileId });
+      console.log(`[ICC Store] apply_icc_lut_only IPC 完成: ${(performance.now() - startTime).toFixed(0)}ms`);
+    } catch (e) {
+      console.error(`[ICC Store] apply_icc_lut_only 失败: ${(performance.now() - startTime).toFixed(0)}ms`, e);
       throw e;
     }
   }
 
   async function restoreDefault(profileId: string) {
+    const startTime = performance.now();
     try {
       await invokeOrThrow("restore_default_icc", { profileId });
+      console.log(`[ICC Store] restore_default_icc IPC 完成: ${(performance.now() - startTime).toFixed(0)}ms`);
     } catch (e) {
-      console.error("Failed to restore default ICC:", e);
+      console.error(`[ICC Store] restore_default_icc 失败: ${(performance.now() - startTime).toFixed(0)}ms`, e);
       throw e;
     }
   }
@@ -92,6 +123,16 @@ export const useIccStore = defineStore("icc", () => {
     }
   }
 
+  // 预热 WCS 服务（后台执行，不阻塞）
+  function warmupWcs() {
+    try {
+      invokeOrThrow("warmup_wcs");
+      console.log("[ICC Store] WCS 预热已启动（后台）");
+    } catch (e) {
+      console.warn("[ICC Store] WCS 预热失败:", e);
+    }
+  }
+
   return {
     profiles,
     monitors,
@@ -99,10 +140,12 @@ export const useIccStore = defineStore("icc", () => {
     error,
     fetchMonitors,
     fetchProfiles,
+    warmupWcs,
     addProfile,
     removeProfile,
     toggleProfile,
     applyProfile,
+    applyLutOnly,
     restoreDefault,
     selectIccFile,
     getSystemProfiles,

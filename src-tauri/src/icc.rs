@@ -71,15 +71,14 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
     const DISPLAY_DEVICE_PRIMARY_DEVICE: u32 = 0x4;
     const DISPLAY_DEVICE_MIRRORING_DRIVER: u32 = 0x8;
 
-    // 1. 从 EDID 获取所有显示器名称
-    let edid_names = get_all_monitor_names_from_edid();
+    // 1. 先从注册表获取所有显示器的 EDID 名称（通过型号匹配）
+    let registry_monitors = get_all_monitors_from_registry();
 
     let mut monitors = Vec::new();
     let mut display_device: DISPLAY_DEVICEW = unsafe { mem::zeroed() };
     display_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
 
     let mut device_index = 0u32;
-    let mut edid_index = 0usize;
 
     loop {
         let result = unsafe {
@@ -102,22 +101,55 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
             let device_id = String::from_utf16_lossy(
                 &display_device.DeviceID[..display_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
             );
+            
+            // 2. 获取监视器信息（第二次调用 EnumDisplayDevicesW）
+            let mut monitor_device: DISPLAY_DEVICEW = unsafe { mem::zeroed() };
+            monitor_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
+            
+            let mut friendly_name: Option<String> = None;
 
-            // 尝试从 EDID 名称列表中获取显示器名称
-            let friendly_name = if edid_index < edid_names.len() {
-                edid_names[edid_index].clone()
-            } else {
-                extract_display_name_from_id(&device_id)
-            };
+            unsafe {
+                let name_wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+                let success = EnumDisplayDevicesW(
+                    windows::core::PCWSTR(name_wide.as_ptr()),
+                    0,
+                    &mut monitor_device,
+                    0,
+                );
+
+                if success.as_bool() {
+                    // 3. 从 DeviceID 提取型号（如 "STD0001"、"GSM59F1"）
+                    let monitor_id_str = String::from_utf16_lossy(
+                        &monitor_device.DeviceID[..monitor_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
+                    );
+                    
+                    if let Some(model) = extract_model_from_device_id(&monitor_id_str) {
+                        // 4. 在注册表中查找匹配的显示器
+                        if let Some(reg_monitor) = registry_monitors.iter().find(|m| m.model == model) {
+                            friendly_name = Some(reg_monitor.name.clone());
+                        }
+                    }
+                }
+            }
+
+            // 5. 降级：如果注册表查不到，再用 DeviceString
+            let monitor_name = friendly_name.unwrap_or_else(|| {
+                let monitor_string = String::from_utf16_lossy(
+                    &monitor_device.DeviceString[..monitor_device.DeviceString.iter().position(|&c| c == 0).unwrap_or(128)]
+                );
+                if !monitor_string.is_empty() && !monitor_string.contains("Display") {
+                    monitor_string
+                } else {
+                    extract_display_name_from_id(&device_id)
+                }
+            });
 
             monitors.push(MonitorInfo {
                 name: name.trim().to_string(),
-                friendly_name: friendly_name.trim().to_string(),
+                friendly_name: monitor_name.trim().to_string(),
                 device_id,
                 is_primary,
             });
-
-            edid_index += 1;
         }
 
         device_index += 1;
@@ -126,15 +158,10 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
         }
     }
 
-    // 如果没有找到显示器，添加默认值
     if monitors.is_empty() {
-        // 尝试从 EDID 名称列表中获取
-        let friendly_name = edid_names.first().cloned()
-            .unwrap_or_else(|| "Display 1".to_string());
-        
         monitors.push(MonitorInfo {
             name: "Display 1".to_string(),
-            friendly_name,
+            friendly_name: "Display 1".to_string(),
             device_id: String::new(),
             is_primary: true,
         });
@@ -143,159 +170,228 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
     Ok(monitors)
 }
 
+#[cfg(not(windows))]
+pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
+    Ok(vec![MonitorInfo {
+        name: "Display 1".to_string(),
+        friendly_name: "Display 1".to_string(),
+        device_id: String::new(),
+        is_primary: true,
+    }])
+}
+
+/// 从 EDID 二进制数据解析显示器名称（tag 0xFC = Monitor Name Descriptor）
+fn parse_edid_monitor_name(edid: &[u8]) -> Option<String> {
+    if edid.len() < 128 {
+        return None;
+    }
+    // EDID 基础块偏移 54-125 包含 4 个 18 字节描述符
+    for i in 0..4 {
+        let offset = 54 + i * 18;
+        if offset + 18 > edid.len() {
+            break;
+        }
+        // 描述符前两字节为 00 00 表示是描述符（非 timing）
+        if edid[offset] == 0x00 && edid[offset + 1] == 0x00 {
+            let tag = edid[offset + 3];
+            if tag == 0xFC {
+                // Monitor Name Descriptor: 字节 5..17 为 ASCII 名称，0A 结尾，20 填充
+                let name_bytes = &edid[offset + 5..offset + 18];
+                let name: String = name_bytes
+                    .iter()
+                    .take_while(|&&b| b != 0x0A && b != 0x00)
+                    .map(|&b| b as char)
+                    .collect();
+                let name = name.trim();
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 从 DeviceID 提取显示器型号
+/// DeviceID 格式: "MONITOR\GSM59F1\{GUID}\instance"
+fn extract_model_from_device_id(device_id: &str) -> Option<String> {
+    let parts: Vec<&str> = device_id.split('\\').collect();
+    if parts.len() >= 2 && (parts[0] == "MONITOR" || parts[0] == "DISPLAY") {
+        Some(parts[1].to_string())
+    } else {
+        None
+    }
+}
+
+/// 从注册表获取所有显示器的 EDID 名称
 #[cfg(windows)]
-fn get_all_monitor_names_from_edid() -> Vec<String> {
+fn get_all_monitors_from_registry() -> Vec<RegistryMonitor> {
     use windows::Win32::System::Registry::{
-        RegOpenKeyExW, RegEnumKeyExW, RegQueryValueExW, RegCloseKey,
-        HKEY_LOCAL_MACHINE, KEY_READ, HKEY, REG_BINARY, REG_VALUE_TYPE,
+        RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE,
+        KEY_READ,
     };
-    use std::mem;
 
-    let mut names = Vec::new();
+    let mut monitors = Vec::new();
 
-    let display_key_path: Vec<u16> = "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY"
+    let display_path: Vec<u16> = "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY"
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
 
     unsafe {
-        let mut display_key: HKEY = mem::zeroed();
-        let result = RegOpenKeyExW(
+        let mut display_hkey: HKEY = std::mem::zeroed();
+        if RegOpenKeyExW(
             HKEY_LOCAL_MACHINE,
-            windows::core::PCWSTR(display_key_path.as_ptr()),
+            windows::core::PCWSTR(display_path.as_ptr()),
             0,
             KEY_READ,
-            &mut display_key,
-        );
-
-        if result.is_err() {
-            return names;
+            &mut display_hkey,
+        )
+        .is_err()
+        {
+            return monitors;
         }
 
-        let mut monitor_type_index = 0u32;
-        let mut monitor_type_name = [0u16; 256];
-        let mut monitor_type_name_len = 256u32;
+        let mut model_index = 0u32;
+        let mut model_buf = [0u16; 256];
 
-        while RegEnumKeyExW(
-            display_key,
-            monitor_type_index,
-            windows::core::PWSTR(monitor_type_name.as_mut_ptr()),
-            &mut monitor_type_name_len,
-            None,
-            windows::core::PWSTR::null(),
-            None,
-            None,
-        ).is_ok() {
-            let monitor_type = String::from_utf16_lossy(
-                &monitor_type_name[..monitor_type_name_len as usize]
+        loop {
+            let mut model_len = model_buf.len() as u32;
+            let result = RegEnumKeyExW(
+                display_hkey,
+                model_index,
+                windows::core::PWSTR(model_buf.as_mut_ptr()),
+                &mut model_len,
+                None,
+                windows::core::PWSTR::null(),
+                None,
+                None,
             );
+            model_index += 1;
 
-            let monitor_type_path = format!(
-                "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY\\{}",
-                monitor_type
-            );
-            let monitor_type_path_wide: Vec<u16> = monitor_type_path
-                .encode_utf16()
-                .chain(std::iter::once(0))
-                .collect();
+            if result.is_err() || model_index > 32 {
+                break;
+            }
 
-            let mut monitor_type_key: HKEY = mem::zeroed();
+            let model_name = String::from_utf16_lossy(&model_buf[..model_len as usize]);
+            if model_name == "Default_Monitor" {
+                continue;
+            }
+
+            let mut model_hkey: HKEY = std::mem::zeroed();
             if RegOpenKeyExW(
-                HKEY_LOCAL_MACHINE,
-                windows::core::PCWSTR(monitor_type_path_wide.as_ptr()),
+                display_hkey,
+                windows::core::PCWSTR(model_buf.as_ptr()),
                 0,
                 KEY_READ,
-                &mut monitor_type_key,
-            ).is_ok() {
-                let mut instance_index = 0u32;
-                let mut instance_name = [0u16; 256];
-                let mut instance_name_len = 256u32;
+                &mut model_hkey,
+            )
+            .is_err()
+            {
+                continue;
+            }
 
-                while RegEnumKeyExW(
-                    monitor_type_key,
+            let mut instance_index = 0u32;
+            let mut instance_buf = [0u16; 256];
+
+            loop {
+                let mut instance_len = instance_buf.len() as u32;
+                let res = RegEnumKeyExW(
+                    model_hkey,
                     instance_index,
-                    windows::core::PWSTR(instance_name.as_mut_ptr()),
-                    &mut instance_name_len,
+                    windows::core::PWSTR(instance_buf.as_mut_ptr()),
+                    &mut instance_len,
                     None,
                     windows::core::PWSTR::null(),
                     None,
                     None,
-                ).is_ok() {
-                    let instance = String::from_utf16_lossy(
-                        &instance_name[..instance_name_len as usize]
-                    );
+                );
+                instance_index += 1;
 
-                    let instance_path = format!(
-                        "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY\\{}\\{}",
-                        monitor_type, instance
-                    );
-                    let instance_path_wide: Vec<u16> = instance_path
-                        .encode_utf16()
-                        .chain(std::iter::once(0))
-                        .collect();
-
-                    let mut instance_key: HKEY = mem::zeroed();
-                    if RegOpenKeyExW(
-                        HKEY_LOCAL_MACHINE,
-                        windows::core::PCWSTR(instance_path_wide.as_ptr()),
-                        0,
-                        KEY_READ,
-                        &mut instance_key,
-                    ).is_ok() {
-                        let mut edid_buffer = [0u8; 256];
-                        let mut edid_size = edid_buffer.len() as u32;
-                        let mut data_type: REG_VALUE_TYPE = REG_VALUE_TYPE(0);
-                        
-                        let edid_key: Vec<u16> = "EDID".encode_utf16().chain(std::iter::once(0)).collect();
-                        
-                        let result = RegQueryValueExW(
-                            instance_key,
-                            windows::core::PCWSTR(edid_key.as_ptr()),
-                            None,
-                            Some(&mut data_type),
-                            Some(edid_buffer.as_mut_ptr()),
-                            Some(&mut edid_size),
-                        );
-                        
-                        if result.is_ok() && edid_size >= 128 {
-                            for i in 0..4 {
-                                let offset = 0x36 + (i * 18);
-                                if offset + 18 > edid_size as usize {
-                                    break;
-                                }
-
-                                if edid_buffer[offset] == 0x00 && edid_buffer[offset + 3] == 0xFC {
-                                    let name_bytes = &edid_buffer[offset + 5..offset + 18];
-                                    let name = String::from_utf8_lossy(name_bytes);
-                                    let name = name.trim_matches('\0').trim();
-                                    if !name.is_empty() {
-                                        names.push(name.to_string());
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-
-                        let _ = RegCloseKey(instance_key);
-                    }
-
-                    instance_index += 1;
-                    instance_name = [0u16; 256];
-                    instance_name_len = 256;
+                if res.is_err() || instance_index > 16 {
+                    break;
                 }
 
-                let _ = RegCloseKey(monitor_type_key);
+                let instance_name = String::from_utf16_lossy(&instance_buf[..instance_len as usize]);
+                let full_path = format!(
+                    "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY\\{}\\{}",
+                    model_name, instance_name
+                );
+
+                let full_path_wide: Vec<u16> =
+                    full_path.encode_utf16().chain(std::iter::once(0)).collect();
+
+                let mut inst_hkey: HKEY = std::mem::zeroed();
+                if RegOpenKeyExW(
+                    HKEY_LOCAL_MACHINE,
+                    windows::core::PCWSTR(full_path_wide.as_ptr()),
+                    0,
+                    KEY_READ,
+                    &mut inst_hkey,
+                )
+                .is_err()
+                {
+                    continue;
+                }
+
+                let dp_subkey: Vec<u16> = "Device Parameters"
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
+                let mut dp_hkey: HKEY = std::mem::zeroed();
+
+                if RegOpenKeyExW(
+                    inst_hkey,
+                    windows::core::PCWSTR(dp_subkey.as_ptr()),
+                    0,
+                    KEY_READ,
+                    &mut dp_hkey,
+                )
+                .is_ok()
+                {
+                    let edid_key_name: Vec<u16> =
+                        "EDID".encode_utf16().chain(std::iter::once(0)).collect();
+                    let mut edid_buf = [0u8; 256];
+                    let mut edid_size = edid_buf.len() as u32;
+
+                    if RegQueryValueExW(
+                        dp_hkey,
+                        windows::core::PCWSTR(edid_key_name.as_ptr()),
+                        None,
+                        None,
+                        Some(edid_buf.as_mut_ptr()),
+                        Some(&mut edid_size),
+                    )
+                    .is_ok()
+                    {
+                        if let Some(name) =
+                            parse_edid_monitor_name(&edid_buf[..edid_size as usize])
+                        {
+                            monitors.push(RegistryMonitor {
+                                model: model_name.clone(),
+                                name,
+                            });
+                        }
+                    }
+                    let _ = RegCloseKey(dp_hkey);
+                }
+
+                let _ = RegCloseKey(inst_hkey);
             }
 
-            monitor_type_index += 1;
-            monitor_type_name = [0u16; 256];
-            monitor_type_name_len = 256;
+            let _ = RegCloseKey(model_hkey);
         }
 
-        let _ = RegCloseKey(display_key);
+        let _ = RegCloseKey(display_hkey);
     }
 
-    names
+    monitors
+}
+
+#[cfg(windows)]
+struct RegistryMonitor {
+    model: String,
+    name: String,
 }
 
 fn extract_display_name_from_id(device_id: &str) -> String {
@@ -369,6 +465,9 @@ pub fn toggle_icc_profile(
     profile_id: String,
     enabled: bool,
 ) -> AppResult<()> {
+    let start = std::time::Instant::now();
+    eprintln!("[ICC] toggle_icc_profile 开始: id={}, enabled={}", profile_id, enabled);
+    
     let monitor_name = {
         let mut profiles = state.profiles.lock()
             .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
@@ -396,13 +495,20 @@ pub fn toggle_icc_profile(
         monitor_name
     };
     
+    let t1 = start.elapsed();
     state.save_profiles_to_config()?;
+    let t2 = start.elapsed();
+    eprintln!("[ICC] toggle_icc_profile 锁+保存完成: {}ms (锁:{}ms, 保存:{}ms)", 
+        t2.as_millis(), t1.as_millis(), (t2 - t1).as_millis());
     
     // 如果是禁用，恢复线性 Gamma Ramp
     if !enabled {
+        let t3 = std::time::Instant::now();
         let _ = restore_default_icc_for_monitor(&monitor_name);
+        eprintln!("[ICC] restore_default_icc_for_monitor 完成: {}ms", t3.elapsed().as_millis());
     }
     
+    eprintln!("[ICC] toggle_icc_profile 总耗时: {}ms", start.elapsed().as_millis());
     Ok(())
 }
 
@@ -453,70 +559,6 @@ pub fn get_system_icc_profiles() -> AppResult<Vec<String>> {
     {
         Ok(Vec::new())
     }
-}
-
-#[cfg(windows)]
-pub fn apply_icc_to_monitor(device_name: &str, icc_path: &str) -> AppResult<()> {
-    use windows::Win32::UI::ColorSystem::{
-        WcsSetDefaultColorProfile, WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
-        WcsAssociateColorProfileWithDevice,
-    };
-    use windows::Win32::Graphics::Gdi::{
-        CreateDCW, DeleteDC,
-    };
-    
-    // 声明 SetDeviceGammaRamp 函数
-    extern "system" {
-        fn SetDeviceGammaRamp(hdc: windows::Win32::Graphics::Gdi::HDC, lpRamp: *const u8) -> i32;
-    }
-    
-    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
-    let icc_path_wide: Vec<u16> = icc_path.encode_utf16().chain(std::iter::once(0)).collect();
-    
-    // 1. 关联 ICC 配置文件到设备
-    unsafe {
-        let _ = WcsAssociateColorProfileWithDevice(
-            WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
-            windows::core::PCWSTR(icc_path_wide.as_ptr()),
-            windows::core::PCWSTR(device_name_wide.as_ptr()),
-        );
-    }
-    
-    // 2. 设置默认 ICC 配置文件
-    unsafe {
-        let _ = WcsSetDefaultColorProfile(
-            WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
-            windows::core::PCWSTR(device_name_wide.as_ptr()),
-            windows::Win32::UI::ColorSystem::COLORPROFILETYPE(1),
-            windows::Win32::UI::ColorSystem::COLORPROFILESUBTYPE(0),
-            0,
-            windows::core::PCWSTR(icc_path_wide.as_ptr()),
-        );
-    }
-    
-    // 3. 读取 ICC 文件的 vcgt 标签并写入显卡 LUT
-    match read_vcgt_from_icc(icc_path) {
-        Ok(gamma_ramp) => {
-            unsafe {
-                let hdc = CreateDCW(
-                    windows::core::PCWSTR(device_name_wide.as_ptr()),
-                    windows::core::PCWSTR(device_name_wide.as_ptr()),
-                    None,
-                    None,
-                );
-                
-                if !hdc.is_invalid() {
-                    let _ = SetDeviceGammaRamp(hdc, gamma_ramp.as_ptr() as *const u8);
-                    let _ = DeleteDC(hdc);
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("Failed to read VCGT from ICC: {:?}", e);
-        }
-    }
-    
-    Ok(())
 }
 
 #[cfg(windows)]
@@ -609,13 +651,183 @@ pub fn apply_icc_profile(
     state: tauri::State<'_, IccState>,
     profile_id: String,
 ) -> AppResult<()> {
+    let start = std::time::Instant::now();
+    eprintln!("[ICC] apply_icc_profile 开始: id={}", profile_id);
+    
+    let (monitor_name, icc_path) = {
+        let profiles = state.profiles.lock()
+            .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
+        
+        let profile = profiles.iter().find(|p| p.id == profile_id)
+            .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
+        
+        (profile.monitor_name.clone(), profile.icc_path.clone())
+    };
+    
+    let t1 = start.elapsed();
+    eprintln!("[ICC] apply_icc_profile 锁完成: {}ms", t1.as_millis());
+    
+    // 1. 立即执行 LUT 更新（1ms，用户立即看到效果）
+    let result = apply_lut_only(&monitor_name, &icc_path);
+    
+    // 2. 后台执行 WCS 系统配置（不阻塞前端）
+    let monitor = monitor_name.clone();
+    let icc = icc_path.clone();
+    std::thread::spawn(move || {
+        apply_wcs_background(&monitor, &icc);
+    });
+    
+    eprintln!("[ICC] apply_icc_profile 总耗时: {}ms", start.elapsed().as_millis());
+    result
+}
+
+#[tauri::command]
+pub fn apply_icc_lut_only(
+    state: tauri::State<'_, IccState>,
+    profile_id: String,
+) -> AppResult<()> {
+    let start = std::time::Instant::now();
+    eprintln!("[ICC] apply_icc_lut_only 开始: id={}", profile_id);
+    
     let profiles = state.profiles.lock()
         .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
     
     let profile = profiles.iter().find(|p| p.id == profile_id)
         .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
     
-    apply_icc_to_monitor(&profile.monitor_name, &profile.icc_path)
+    // 只执行 LUT 更新，跳过 Associate
+    let result = apply_lut_only(&profile.monitor_name, &profile.icc_path);
+    
+    eprintln!("[ICC] apply_icc_lut_only 总耗时: {}ms", start.elapsed().as_millis());
+    result
+}
+
+#[cfg(windows)]
+fn apply_lut_only(device_name: &str, icc_path: &str) -> AppResult<()> {
+    use windows::Win32::Graphics::Gdi::{CreateDCW, DeleteDC};
+    
+    let start = std::time::Instant::now();
+    eprintln!("[ICC] apply_lut_only 开始: device={}", device_name);
+    
+    extern "system" {
+        fn SetDeviceGammaRamp(hdc: windows::Win32::Graphics::Gdi::HDC, lpRamp: *const u8) -> i32;
+    }
+    
+    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
+    
+    // 只读取 vcgt 并写入 LUT
+    match read_vcgt_from_icc(icc_path) {
+        Ok(gamma_ramp) => {
+            unsafe {
+                let hdc = CreateDCW(
+                    windows::core::PCWSTR(device_name_wide.as_ptr()),
+                    windows::core::PCWSTR(device_name_wide.as_ptr()),
+                    None,
+                    None,
+                );
+                
+                if !hdc.is_invalid() {
+                    let result = SetDeviceGammaRamp(hdc, gamma_ramp.as_ptr() as *const u8);
+                    let _ = DeleteDC(hdc);
+                    eprintln!("[ICC] apply_lut_only SetDeviceGammaRamp: {}ms, result={}", 
+                        start.elapsed().as_millis(), result);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("[ICC] apply_lut_only read_vcgt 失败: {:?}", e);
+            return Err(AppError::internal(format!("Failed to read VCGT: {:?}", e)));
+        }
+    }
+    
+    eprintln!("[ICC] apply_lut_only 总耗时: {}ms", start.elapsed().as_millis());
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn apply_lut_only(_device_name: &str, _icc_path: &str) -> AppResult<()> {
+    Err(AppError::internal("ICC profile management is only supported on Windows"))
+}
+
+/// 后台执行 WCS 系统配置（不阻塞前端）
+#[cfg(windows)]
+fn apply_wcs_background(device_name: &str, icc_path: &str) {
+    use windows::Win32::UI::ColorSystem::{
+        WcsSetDefaultColorProfile, WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+        WcsAssociateColorProfileWithDevice,
+    };
+    
+    let start = std::time::Instant::now();
+    eprintln!("[ICC] apply_wcs_background 开始: device={}", device_name);
+    
+    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
+    let icc_path_wide: Vec<u16> = icc_path.encode_utf16().chain(std::iter::once(0)).collect();
+    
+    // 1. 关联 ICC 到设备
+    let t1 = std::time::Instant::now();
+    unsafe {
+        let _ = WcsAssociateColorProfileWithDevice(
+            WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+            windows::core::PCWSTR(icc_path_wide.as_ptr()),
+            windows::core::PCWSTR(device_name_wide.as_ptr()),
+        );
+    }
+    eprintln!("[ICC] WcsAssociateColorProfileWithDevice: {}ms", t1.elapsed().as_millis());
+    
+    // 2. 设置默认配置
+    let t2 = std::time::Instant::now();
+    unsafe {
+        let _ = WcsSetDefaultColorProfile(
+            WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+            windows::core::PCWSTR(device_name_wide.as_ptr()),
+            windows::Win32::UI::ColorSystem::COLORPROFILETYPE(1),
+            windows::Win32::UI::ColorSystem::COLORPROFILESUBTYPE(0),
+            0,
+            windows::core::PCWSTR(icc_path_wide.as_ptr()),
+        );
+    }
+    eprintln!("[ICC] WcsSetDefaultColorProfile: {}ms", t2.elapsed().as_millis());
+    
+    eprintln!("[ICC] apply_wcs_background 总耗时: {}ms", start.elapsed().as_millis());
+}
+
+#[cfg(not(windows))]
+fn apply_wcs_background(_device_name: &str, _icc_path: &str) {
+    // 非 Windows 平台不做任何操作
+}
+
+/// 预热 WCS 服务（后台执行，避免第一次调用时的 1.7 秒延迟）
+#[tauri::command]
+pub fn warmup_wcs() {
+    eprintln!("[ICC] warmup_wcs 开始（后台执行）");
+    
+    std::thread::spawn(|| {
+        let start = std::time::Instant::now();
+        
+        #[cfg(windows)]
+        {
+            use windows::Win32::UI::ColorSystem::{
+                WcsAssociateColorProfileWithDevice, WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+            };
+            
+            // 使用系统自带的 sRGB 配置触发 WCS 初始化
+            let dummy_icc = "C:\\Windows\\System32\\spool\\drivers\\color\\sRGB Color Space Profile.icm";
+            let dummy_device = "\\\\.\\DISPLAY1";
+            
+            let icc_wide: Vec<u16> = dummy_icc.encode_utf16().chain(std::iter::once(0)).collect();
+            let device_wide: Vec<u16> = dummy_device.encode_utf16().chain(std::iter::once(0)).collect();
+            
+            unsafe {
+                let _ = WcsAssociateColorProfileWithDevice(
+                    WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+                    windows::core::PCWSTR(icc_wide.as_ptr()),
+                    windows::core::PCWSTR(device_wide.as_ptr()),
+                );
+            }
+        }
+        
+        eprintln!("[ICC] warmup_wcs 完成: {}ms", start.elapsed().as_millis());
+    });
 }
 
 #[tauri::command]
@@ -623,11 +835,20 @@ pub fn restore_default_icc(
     state: tauri::State<'_, IccState>,
     profile_id: String,
 ) -> AppResult<()> {
+    let start = std::time::Instant::now();
+    eprintln!("[ICC] restore_default_icc 开始: id={}", profile_id);
+    
     let profiles = state.profiles.lock()
         .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
     
     let profile = profiles.iter().find(|p| p.id == profile_id)
         .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
     
-    restore_default_icc_for_monitor(&profile.monitor_name)
+    let t1 = start.elapsed();
+    eprintln!("[ICC] restore_default_icc 锁完成: {}ms", t1.as_millis());
+    
+    let result = restore_default_icc_for_monitor(&profile.monitor_name);
+    
+    eprintln!("[ICC] restore_default_icc 总耗时: {}ms", start.elapsed().as_millis());
+    result
 }
