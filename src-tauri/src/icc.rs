@@ -159,105 +159,154 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
 #[cfg(windows)]
 fn get_monitor_name_from_edid(device_name: &str) -> Option<String> {
     use windows::Win32::System::Registry::{
-        RegOpenKeyExW, RegQueryValueExW, RegCloseKey,
+        RegOpenKeyExW, RegEnumKeyExW, RegQueryValueExW, RegCloseKey,
         HKEY_LOCAL_MACHINE, KEY_READ, HKEY, REG_BINARY, REG_VALUE_TYPE,
     };
-    use windows::Win32::Graphics::Gdi::{DISPLAY_DEVICEW, EnumDisplayDevicesW};
     use std::mem;
 
-    // 获取监视器的设备接口名称
-    let mut monitor_device: DISPLAY_DEVICEW = unsafe { mem::zeroed() };
-    monitor_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
-
-    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
-
-    unsafe {
-        let result = EnumDisplayDevicesW(
-            windows::core::PCWSTR(device_name_wide.as_ptr()),
-            0,
-            &mut monitor_device,
-            0x1, // EDD_GET_DEVICE_INTERFACE_NAME
-        );
-
-        if !result.as_bool() {
-            return None;
-        }
-    }
-
-    let device_id = String::from_utf16_lossy(
-        &monitor_device.DeviceID[..monitor_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
-    );
-
-    // 解析设备接口名称: \\?\DISPLAY#TYPE#INSTANCE#{GUID}
-    let clean_path = device_id
-        .trim_start_matches("\\\\?\\")
-        .split('#')
-        .collect::<Vec<&str>>();
-
-    if clean_path.len() < 2 {
-        return None;
-    }
-
-    let mut parts: Vec<&str> = clean_path.to_vec();
-    if parts.last().map_or(false, |s| s.starts_with('{')) {
-        parts.pop();
-    }
-
-    if parts.len() < 2 {
-        return None;
-    }
-
-    let reg_path = format!("SYSTEM\\CurrentControlSet\\Enum\\{}", parts.join("\\"));
-
-    let reg_path_wide: Vec<u16> = reg_path.encode_utf16().chain(std::iter::once(0)).collect();
-    let edid_key: Vec<u16> = "EDID".encode_utf16().chain(std::iter::once(0)).collect();
+    // 枚举所有显示器，查找 EDID 中的名称
+    let display_key_path: Vec<u16> = "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
 
     unsafe {
-        let mut hkey: HKEY = mem::zeroed();
+        let mut display_key: HKEY = mem::zeroed();
         let result = RegOpenKeyExW(
             HKEY_LOCAL_MACHINE,
-            windows::core::PCWSTR(reg_path_wide.as_ptr()),
+            windows::core::PCWSTR(display_key_path.as_ptr()),
             0,
             KEY_READ,
-            &mut hkey,
+            &mut display_key,
         );
 
-        if result.is_ok() {
-            let mut edid_buffer = [0u8; 256];
-            let mut edid_size = edid_buffer.len() as u32;
-            let mut data_type: REG_VALUE_TYPE = REG_VALUE_TYPE(0);
+        if result.is_err() {
+            return None;
+        }
 
-            let result = RegQueryValueExW(
-                hkey,
-                windows::core::PCWSTR(edid_key.as_ptr()),
-                None,
-                Some(&mut data_type),
-                Some(edid_buffer.as_mut_ptr()),
-                Some(&mut edid_size),
+        let mut monitor_type_index = 0u32;
+        let mut monitor_type_name = [0u16; 256];
+        let mut monitor_type_name_len = 256u32;
+
+        while RegEnumKeyExW(
+            display_key,
+            monitor_type_index,
+            windows::core::PWSTR(monitor_type_name.as_mut_ptr()),
+            &mut monitor_type_name_len,
+            None,
+            windows::core::PWSTR::null(),
+            None,
+            None,
+        ).is_ok() {
+            let monitor_type = String::from_utf16_lossy(
+                &monitor_type_name[..monitor_type_name_len as usize]
             );
 
-            if result.is_ok() && edid_size >= 128 {
-                // 解析 EDID 获取显示器名称
-                for i in 0..4 {
-                    let offset = 0x36 + (i * 18);
-                    if offset + 18 > edid_size as usize {
-                        break;
+            let monitor_type_path = format!(
+                "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY\\{}",
+                monitor_type
+            );
+            let monitor_type_path_wide: Vec<u16> = monitor_type_path
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
+
+            let mut monitor_type_key: HKEY = mem::zeroed();
+            if RegOpenKeyExW(
+                HKEY_LOCAL_MACHINE,
+                windows::core::PCWSTR(monitor_type_path_wide.as_ptr()),
+                0,
+                KEY_READ,
+                &mut monitor_type_key,
+            ).is_ok() {
+                let mut instance_index = 0u32;
+                let mut instance_name = [0u16; 256];
+                let mut instance_name_len = 256u32;
+
+                while RegEnumKeyExW(
+                    monitor_type_key,
+                    instance_index,
+                    windows::core::PWSTR(instance_name.as_mut_ptr()),
+                    &mut instance_name_len,
+                    None,
+                    windows::core::PWSTR::null(),
+                    None,
+                    None,
+                ).is_ok() {
+                    let instance = String::from_utf16_lossy(
+                        &instance_name[..instance_name_len as usize]
+                    );
+
+                    let instance_path = format!(
+                        "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY\\{}\\{}",
+                        monitor_type, instance
+                    );
+                    let instance_path_wide: Vec<u16> = instance_path
+                        .encode_utf16()
+                        .chain(std::iter::once(0))
+                        .collect();
+
+                    let mut instance_key: HKEY = mem::zeroed();
+                    if RegOpenKeyExW(
+                        HKEY_LOCAL_MACHINE,
+                        windows::core::PCWSTR(instance_path_wide.as_ptr()),
+                        0,
+                        KEY_READ,
+                        &mut instance_key,
+                    ).is_ok() {
+                        let mut edid_buffer = [0u8; 256];
+                        let mut edid_size = edid_buffer.len() as u32;
+                        let mut data_type: REG_VALUE_TYPE = REG_VALUE_TYPE(0);
+                        
+                        let edid_key: Vec<u16> = "EDID".encode_utf16().chain(std::iter::once(0)).collect();
+                        
+                        let result = RegQueryValueExW(
+                            instance_key,
+                            windows::core::PCWSTR(edid_key.as_ptr()),
+                            None,
+                            Some(&mut data_type),
+                            Some(edid_buffer.as_mut_ptr()),
+                            Some(&mut edid_size),
+                        );
+                        
+                        if result.is_ok() && edid_size >= 128 {
+                            for i in 0..4 {
+                                let offset = 0x36 + (i * 18);
+                                if offset + 18 > edid_size as usize {
+                                    break;
+                                }
+
+                                if edid_buffer[offset] == 0x00 && edid_buffer[offset + 3] == 0xFC {
+                                    let name_bytes = &edid_buffer[offset + 5..offset + 18];
+                                    let name = String::from_utf8_lossy(name_bytes);
+                                    let name = name.trim_matches('\0').trim();
+                                    if !name.is_empty() {
+                                        let _ = RegCloseKey(instance_key);
+                                        let _ = RegCloseKey(monitor_type_key);
+                                        let _ = RegCloseKey(display_key);
+                                        return Some(name.to_string());
+                                    }
+                                }
+                            }
+                        }
+
+                        let _ = RegCloseKey(instance_key);
                     }
 
-                    if edid_buffer[offset] == 0x00 && edid_buffer[offset + 3] == 0xFC {
-                        let name_bytes = &edid_buffer[offset + 5..offset + 18];
-                        let name = String::from_utf8_lossy(name_bytes);
-                        let name = name.trim_matches('\0').trim();
-                        if !name.is_empty() {
-                            let _ = RegCloseKey(hkey);
-                            return Some(name.to_string());
-                        }
-                    }
+                    instance_index += 1;
+                    instance_name = [0u16; 256];
+                    instance_name_len = 256;
                 }
+
+                let _ = RegCloseKey(monitor_type_key);
             }
 
-            let _ = RegCloseKey(hkey);
+            monitor_type_index += 1;
+            monitor_type_name = [0u16; 256];
+            monitor_type_name_len = 256;
         }
+
+        let _ = RegCloseKey(display_key);
     }
 
     None
