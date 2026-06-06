@@ -7,6 +7,7 @@ mod config;
 mod corner_hotspot;
 mod db;
 mod display;
+mod display_monitor;
 mod drag;
 mod error;
 mod icc;
@@ -67,6 +68,7 @@ pub fn run() {
                 &app_config,
             );
             process_monitor::start_process_monitor(handle.clone());
+            display_monitor::start_display_monitor(handle.clone());
             if autostart_service::is_autostart_launch() {
                 if let Some(window) = handle.get_webview_window("main") {
                     let _ = window.hide();

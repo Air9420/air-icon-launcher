@@ -5,7 +5,18 @@
 
       <!-- 显示器选择列表 -->
       <div class="monitor-selector">
-        <div class="selector-label">选择显示器：</div>
+        <div class="selector-header">
+          <div class="selector-label">选择显示器：</div>
+          <button class="refresh-btn" @click="refreshMonitors()" title="刷新显示器列表">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+              <path d="M3 3v5h5"></path>
+              <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
+              <path d="M16 16h5v5"></path>
+            </svg>
+            <span>刷新</span>
+          </button>
+        </div>
         <div class="monitor-chips">
           <button
             v-for="(monitor, index) in monitors"
@@ -66,8 +77,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { storeToRefs } from "pinia";
+import { listen } from "@tauri-apps/api/event";
 import { useIccStore } from "../../stores/iccStore";
 import { showToast } from "../../composables/useGlobalToast";
 import { useConfirmDialog } from "../../composables/useConfirmDialog";
@@ -79,13 +91,44 @@ const { confirm } = useConfirmDialog();
 
 const selectedMonitor = ref<MonitorInfo | null>(null);
 
+// 监听显示器变化事件（Windows系统事件）
+let unlistenDisplayChanged: (() => void) | null = null;
+
+// 刷新显示器列表
+// forceReselect: 当收到 display-changed 事件时强制重新选择主显示器
+// 因为 Windows 编号会在切换投影模式时重新分配
+async function refreshMonitors(forceReselect = false) {
+  await iccStore.fetchMonitors();
+
+  if (forceReselect) {
+    // 强制重新选择主显示器
+    const primary = monitors.value.find((m) => m.isPrimary) || monitors.value[0];
+    selectedMonitor.value = primary || null;
+    return;
+  }
+
+  // 如果当前选中的显示器不再存在，选择主显示器
+  if (selectedMonitor.value) {
+    const stillExists = monitors.value.some(
+      (m) => m.friendlyName === selectedMonitor.value!.friendlyName
+    );
+    if (!stillExists) {
+      const primary = monitors.value.find((m) => m.isPrimary) || monitors.value[0];
+      selectedMonitor.value = primary || null;
+    }
+  } else if (monitors.value.length > 0) {
+    const primary = monitors.value.find((m) => m.isPrimary) || monitors.value[0];
+    selectedMonitor.value = primary;
+  }
+}
+
 onMounted(async () => {
   // 并行加载数据
   await Promise.all([
     iccStore.fetchMonitors(),
     iccStore.fetchProfiles(),
   ]);
-  
+
   // 默认选中主显示器
   if (monitors.value.length > 0) {
     const primary = monitors.value.find((m) => m.isPrimary) || monitors.value[0];
@@ -94,12 +137,28 @@ onMounted(async () => {
 
   // 后台预热 WCS 服务（不阻塞页面）
   iccStore.warmupWcs();
+
+  // 监听Windows显示器变化事件
+  unlistenDisplayChanged = await listen("display-changed", async () => {
+    // 强制重新选择主显示器，因为 Windows 编号会被重新分配
+    await refreshMonitors(true);
+    showToast("检测到显示器变化，已自动刷新", { type: "info" });
+  });
+});
+
+onUnmounted(() => {
+  // 清理事件监听器
+  if (unlistenDisplayChanged) {
+    unlistenDisplayChanged();
+    unlistenDisplayChanged = null;
+  }
 });
 
 // 当前选中显示器的 ICC 配置
+// 使用 friendlyName 关联，因为 Windows 编号会在切换投影模式时重新分配
 const monitorProfiles = computed(() => {
   if (!selectedMonitor.value) return [];
-  return profiles.value.filter((p) => p.monitorName === selectedMonitor.value!.name);
+  return profiles.value.filter((p) => p.monitorName === selectedMonitor.value!.friendlyName);
 });
 
 function selectMonitor(monitor: MonitorInfo) {
@@ -123,7 +182,7 @@ async function onSelect(profileId: string) {
   if (profile.enabled) {
     // 乐观更新 UI
     profile.enabled = false;
-    showToast("已恢复默认颜色", { type: "success" });
+    showToast("已恢复默认颜色", { type: "info" });
 
     // 并行执行，不阻塞
     Promise.all([
@@ -187,7 +246,7 @@ async function onAdd() {
 
   const profile: IccProfile = {
     id: crypto.randomUUID(),
-    monitorName: selectedMonitor.value.name,
+    monitorName: selectedMonitor.value.friendlyName,
     monitorDeviceId: selectedMonitor.value.deviceId,
     iccPath: filePath,
     enabled: false,
@@ -267,10 +326,36 @@ async function onRemove(profileId: string) {
   gap: 8px;
 }
 
+.selector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .selector-label {
   font-weight: 600;
   color: var(--text-color);
   font-size: 14px;
+}
+
+.refresh-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--card-bg);
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 12px;
+  transition: all 0.2s;
+}
+
+.refresh-btn:hover {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  background: var(--primary-bg);
 }
 
 .monitor-chips {

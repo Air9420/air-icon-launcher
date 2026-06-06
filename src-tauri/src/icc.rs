@@ -102,31 +102,49 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
                 &display_device.DeviceID[..display_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
             );
             
-            // 2. 获取监视器信息（第二次调用 EnumDisplayDevicesW）
-            let mut monitor_device: DISPLAY_DEVICEW = unsafe { mem::zeroed() };
-            monitor_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
-            
+            // 2. 获取监视器信息（第二次调用 EnumDisplayDevicesW，遍历所有监视器）
             let mut friendly_name: Option<String> = None;
-
+            let mut fallback_string: Option<String> = None;
+            let name_wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+            
             unsafe {
-                let name_wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
-                let success = EnumDisplayDevicesW(
-                    windows::core::PCWSTR(name_wide.as_ptr()),
-                    0,
-                    &mut monitor_device,
-                    0,
-                );
+                // 遍历所有监视器（通常只有一个，但可能有多个）
+                for monitor_index in 0..4 {
+                    let mut monitor_device: DISPLAY_DEVICEW = mem::zeroed();
+                    monitor_device.cb = mem::size_of::<DISPLAY_DEVICEW>() as u32;
+                    
+                    let success = EnumDisplayDevicesW(
+                        windows::core::PCWSTR(name_wide.as_ptr()),
+                        monitor_index,
+                        &mut monitor_device,
+                        0,
+                    );
 
-                if success.as_bool() {
-                    // 3. 从 DeviceID 提取型号（如 "STD0001"、"GSM59F1"）
-                    let monitor_id_str = String::from_utf16_lossy(
+                    if !success.as_bool() {
+                        break;
+                    }
+
+                    let monitor_state = monitor_device.StateFlags;
+                    let monitor_attached = (monitor_state & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) != 0;
+                    
+                    let dev_string = String::from_utf16_lossy(
+                        &monitor_device.DeviceString[..monitor_device.DeviceString.iter().position(|&c| c == 0).unwrap_or(128)]
+                    );
+                    let dev_id = String::from_utf16_lossy(
                         &monitor_device.DeviceID[..monitor_device.DeviceID.iter().position(|&c| c == 0).unwrap_or(128)]
                     );
-                    
-                    if let Some(model) = extract_model_from_device_id(&monitor_id_str) {
-                        // 4. 在注册表中查找匹配的显示器
-                        if let Some(reg_monitor) = registry_monitors.iter().find(|m| m.model == model) {
-                            friendly_name = Some(reg_monitor.name.clone());
+
+                    if fallback_string.is_none() && !dev_string.is_empty() {
+                        fallback_string = Some(dev_string.clone());
+                    }
+
+                    if monitor_attached {
+                        // 3. 从 DeviceID 提取型号
+                        if let Some(model) = extract_model_from_device_id(&dev_id) {
+                            if let Some(reg_monitor) = registry_monitors.iter().find(|m| m.model == model) {
+                                friendly_name = Some(reg_monitor.name.clone());
+                                break;
+                            }
                         }
                     }
                 }
@@ -134,9 +152,7 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
 
             // 5. 降级：如果注册表查不到，再用 DeviceString
             let monitor_name = friendly_name.unwrap_or_else(|| {
-                let monitor_string = String::from_utf16_lossy(
-                    &monitor_device.DeviceString[..monitor_device.DeviceString.iter().position(|&c| c == 0).unwrap_or(128)]
-                );
+                let monitor_string = fallback_string.unwrap_or_default();
                 if !monitor_string.is_empty() && !monitor_string.contains("Display") {
                     monitor_string
                 } else {
@@ -465,9 +481,6 @@ pub fn toggle_icc_profile(
     profile_id: String,
     enabled: bool,
 ) -> AppResult<()> {
-    let start = std::time::Instant::now();
-    eprintln!("[ICC] toggle_icc_profile 开始: id={}, enabled={}", profile_id, enabled);
-    
     let monitor_name = {
         let mut profiles = state.profiles.lock()
             .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
@@ -495,20 +508,13 @@ pub fn toggle_icc_profile(
         monitor_name
     };
     
-    let t1 = start.elapsed();
     state.save_profiles_to_config()?;
-    let t2 = start.elapsed();
-    eprintln!("[ICC] toggle_icc_profile 锁+保存完成: {}ms (锁:{}ms, 保存:{}ms)", 
-        t2.as_millis(), t1.as_millis(), (t2 - t1).as_millis());
     
     // 如果是禁用，恢复线性 Gamma Ramp
     if !enabled {
-        let t3 = std::time::Instant::now();
         let _ = restore_default_icc_for_monitor(&monitor_name);
-        eprintln!("[ICC] restore_default_icc_for_monitor 完成: {}ms", t3.elapsed().as_millis());
     }
     
-    eprintln!("[ICC] toggle_icc_profile 总耗时: {}ms", start.elapsed().as_millis());
     Ok(())
 }
 
@@ -608,12 +614,16 @@ pub fn restore_default_icc_for_monitor(device_name: &str) -> AppResult<()> {
         CreateDCW, DeleteDC,
     };
     
+    // 根据 friendlyName 查找 Windows 设备名称
+    let win_device_name = find_device_name_by_friendly_name(device_name)
+        .unwrap_or_else(|| device_name.to_string());
+    
     // 声明 SetDeviceGammaRamp 函数
     extern "system" {
         fn SetDeviceGammaRamp(hdc: windows::Win32::Graphics::Gdi::HDC, lpRamp: *const u8) -> i32;
     }
     
-    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
+    let device_name_wide: Vec<u16> = win_device_name.encode_utf16().chain(std::iter::once(0)).collect();
     
     // 创建线性 Gamma Ramp（恢复默认）
     let mut gamma_ramp: [[u16; 256]; 3] = [[0; 256]; 3];
@@ -651,9 +661,6 @@ pub fn apply_icc_profile(
     state: tauri::State<'_, IccState>,
     profile_id: String,
 ) -> AppResult<()> {
-    let start = std::time::Instant::now();
-    eprintln!("[ICC] apply_icc_profile 开始: id={}", profile_id);
-    
     let (monitor_name, icc_path) = {
         let profiles = state.profiles.lock()
             .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
@@ -663,9 +670,6 @@ pub fn apply_icc_profile(
         
         (profile.monitor_name.clone(), profile.icc_path.clone())
     };
-    
-    let t1 = start.elapsed();
-    eprintln!("[ICC] apply_icc_profile 锁完成: {}ms", t1.as_millis());
     
     // 1. 立即执行 LUT 更新（1ms，用户立即看到效果）
     let result = apply_lut_only(&monitor_name, &icc_path);
@@ -677,7 +681,6 @@ pub fn apply_icc_profile(
         apply_wcs_background(&monitor, &icc);
     });
     
-    eprintln!("[ICC] apply_icc_profile 总耗时: {}ms", start.elapsed().as_millis());
     result
 }
 
@@ -686,9 +689,6 @@ pub fn apply_icc_lut_only(
     state: tauri::State<'_, IccState>,
     profile_id: String,
 ) -> AppResult<()> {
-    let start = std::time::Instant::now();
-    eprintln!("[ICC] apply_icc_lut_only 开始: id={}", profile_id);
-    
     let profiles = state.profiles.lock()
         .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
     
@@ -696,24 +696,30 @@ pub fn apply_icc_lut_only(
         .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
     
     // 只执行 LUT 更新，跳过 Associate
-    let result = apply_lut_only(&profile.monitor_name, &profile.icc_path);
-    
-    eprintln!("[ICC] apply_icc_lut_only 总耗时: {}ms", start.elapsed().as_millis());
-    result
+    apply_lut_only(&profile.monitor_name, &profile.icc_path)
+}
+
+/// 根据 friendlyName 查找对应的 Windows 设备名称
+fn find_device_name_by_friendly_name(friendly_name: &str) -> Option<String> {
+    let monitors = get_connected_monitors().ok()?;
+    monitors.iter()
+        .find(|m| m.friendly_name == friendly_name)
+        .map(|m| m.name.clone())
 }
 
 #[cfg(windows)]
 fn apply_lut_only(device_name: &str, icc_path: &str) -> AppResult<()> {
     use windows::Win32::Graphics::Gdi::{CreateDCW, DeleteDC};
     
-    let start = std::time::Instant::now();
-    eprintln!("[ICC] apply_lut_only 开始: device={}", device_name);
+    // 根据 friendlyName 查找 Windows 设备名称
+    let win_device_name = find_device_name_by_friendly_name(device_name)
+        .unwrap_or_else(|| device_name.to_string());
     
     extern "system" {
         fn SetDeviceGammaRamp(hdc: windows::Win32::Graphics::Gdi::HDC, lpRamp: *const u8) -> i32;
     }
     
-    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
+    let device_name_wide: Vec<u16> = win_device_name.encode_utf16().chain(std::iter::once(0)).collect();
     
     // 只读取 vcgt 并写入 LUT
     match read_vcgt_from_icc(icc_path) {
@@ -727,20 +733,16 @@ fn apply_lut_only(device_name: &str, icc_path: &str) -> AppResult<()> {
                 );
                 
                 if !hdc.is_invalid() {
-                    let result = SetDeviceGammaRamp(hdc, gamma_ramp.as_ptr() as *const u8);
+                    let _ = SetDeviceGammaRamp(hdc, gamma_ramp.as_ptr() as *const u8);
                     let _ = DeleteDC(hdc);
-                    eprintln!("[ICC] apply_lut_only SetDeviceGammaRamp: {}ms, result={}", 
-                        start.elapsed().as_millis(), result);
                 }
             }
         }
         Err(e) => {
-            eprintln!("[ICC] apply_lut_only read_vcgt 失败: {:?}", e);
             return Err(AppError::internal(format!("Failed to read VCGT: {:?}", e)));
         }
     }
     
-    eprintln!("[ICC] apply_lut_only 总耗时: {}ms", start.elapsed().as_millis());
     Ok(())
 }
 
@@ -757,14 +759,14 @@ fn apply_wcs_background(device_name: &str, icc_path: &str) {
         WcsAssociateColorProfileWithDevice,
     };
     
-    let start = std::time::Instant::now();
-    eprintln!("[ICC] apply_wcs_background 开始: device={}", device_name);
+    // 根据 friendlyName 查找 Windows 设备名称
+    let win_device_name = find_device_name_by_friendly_name(device_name)
+        .unwrap_or_else(|| device_name.to_string());
     
-    let device_name_wide: Vec<u16> = device_name.encode_utf16().chain(std::iter::once(0)).collect();
+    let device_name_wide: Vec<u16> = win_device_name.encode_utf16().chain(std::iter::once(0)).collect();
     let icc_path_wide: Vec<u16> = icc_path.encode_utf16().chain(std::iter::once(0)).collect();
     
     // 1. 关联 ICC 到设备
-    let t1 = std::time::Instant::now();
     unsafe {
         let _ = WcsAssociateColorProfileWithDevice(
             WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
@@ -772,10 +774,8 @@ fn apply_wcs_background(device_name: &str, icc_path: &str) {
             windows::core::PCWSTR(device_name_wide.as_ptr()),
         );
     }
-    eprintln!("[ICC] WcsAssociateColorProfileWithDevice: {}ms", t1.elapsed().as_millis());
     
     // 2. 设置默认配置
-    let t2 = std::time::Instant::now();
     unsafe {
         let _ = WcsSetDefaultColorProfile(
             WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
@@ -786,9 +786,6 @@ fn apply_wcs_background(device_name: &str, icc_path: &str) {
             windows::core::PCWSTR(icc_path_wide.as_ptr()),
         );
     }
-    eprintln!("[ICC] WcsSetDefaultColorProfile: {}ms", t2.elapsed().as_millis());
-    
-    eprintln!("[ICC] apply_wcs_background 总耗时: {}ms", start.elapsed().as_millis());
 }
 
 #[cfg(not(windows))]
@@ -796,14 +793,10 @@ fn apply_wcs_background(_device_name: &str, _icc_path: &str) {
     // 非 Windows 平台不做任何操作
 }
 
-/// 预热 WCS 服务（后台执行，避免第一次调用时的 1.7 秒延迟）
+/// 预热 WCS 服务（后台执行，避免第一次调用时的延迟）
 #[tauri::command]
 pub fn warmup_wcs() {
-    eprintln!("[ICC] warmup_wcs 开始（后台执行）");
-    
     std::thread::spawn(|| {
-        let start = std::time::Instant::now();
-        
         #[cfg(windows)]
         {
             use windows::Win32::UI::ColorSystem::{
@@ -825,8 +818,6 @@ pub fn warmup_wcs() {
                 );
             }
         }
-        
-        eprintln!("[ICC] warmup_wcs 完成: {}ms", start.elapsed().as_millis());
     });
 }
 
@@ -835,20 +826,11 @@ pub fn restore_default_icc(
     state: tauri::State<'_, IccState>,
     profile_id: String,
 ) -> AppResult<()> {
-    let start = std::time::Instant::now();
-    eprintln!("[ICC] restore_default_icc 开始: id={}", profile_id);
-    
     let profiles = state.profiles.lock()
         .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
     
     let profile = profiles.iter().find(|p| p.id == profile_id)
         .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
     
-    let t1 = start.elapsed();
-    eprintln!("[ICC] restore_default_icc 锁完成: {}ms", t1.as_millis());
-    
-    let result = restore_default_icc_for_monitor(&profile.monitor_name);
-    
-    eprintln!("[ICC] restore_default_icc 总耗时: {}ms", start.elapsed().as_millis());
-    result
+    restore_default_icc_for_monitor(&profile.monitor_name)
 }
