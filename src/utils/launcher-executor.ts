@@ -1,3 +1,4 @@
+import { invoke } from "./invoke-wrapper";
 import type { LauncherItem } from "../stores";
 
 export type LauncherItemRef = {
@@ -30,14 +31,36 @@ export class LauncherExecutionError extends Error {
 
 export type ExecutableLauncherItem = Pick<
     LauncherItem,
-    "id" | "name" | "path" | "url" | "itemType" | "launchDependencies" | "launchDelaySeconds"
+    "id" | "name" | "path" | "resolvedPath" | "url" | "itemType" | "launchDependencies" | "launchDelaySeconds"
 >;
 
 export interface ExecuteLauncherItemOptions {
     target: LauncherItemRef;
     getItem: (categoryId: string, itemId: string) => ExecutableLauncherItem | null;
     launchItem: (item: ExecutableLauncherItem, ref: LauncherItemRef) => Promise<void>;
+    getExecutablePath?: (item: ExecutableLauncherItem, ref: LauncherItemRef) => string | null;
     wait?: (ms: number) => Promise<void>;
+}
+
+async function isProcessRunning(executablePath: string): Promise<boolean> {
+    const result = await invoke<boolean>("is_process_running", { targetPath: executablePath });
+    if (!result.ok) return false;
+    return result.value;
+}
+
+async function checkShouldSkipLaunch(
+    item: ExecutableLauncherItem,
+    ref: LauncherItemRef,
+    getExecutablePath?: (item: ExecutableLauncherItem, ref: LauncherItemRef) => string | null
+): Promise<boolean> {
+    if (!getExecutablePath) return false;
+    const executablePath = getExecutablePath(item, ref);
+    if (!executablePath) return false;
+    try {
+        return await isProcessRunning(executablePath);
+    } catch {
+        return false;
+    }
 }
 
 export interface ExecuteLauncherItemResult {
@@ -127,6 +150,17 @@ export async function executeLauncherItemWithDependencies(
             const primaryDelayMs = getDelayMs(item.launchDelaySeconds);
             if (primaryDelayMs > 0) {
                 await wait(primaryDelayMs);
+            }
+        } else {
+            const shouldSkip = await checkShouldSkipLaunch(item, ref, options.getExecutablePath);
+            if (shouldSkip) {
+                launchedKeys.add(key);
+                launchedRefs.push(ref);
+                const dependencyDelayMs = getDelayMs(dependencyDelaySeconds);
+                if (dependencyDelayMs > 0) {
+                    await wait(dependencyDelayMs);
+                }
+                return;
             }
         }
 

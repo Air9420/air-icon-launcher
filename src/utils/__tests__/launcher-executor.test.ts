@@ -166,6 +166,129 @@ describe("launcher-executor", () => {
     } satisfies Partial<LauncherExecutionError>);
   });
 
+  describe("skip already-running dependencies", () => {
+    it("skips launching a dependency that is already running", async () => {
+      vi.resetModules();
+      vi.doMock("../invoke-wrapper", () => ({
+        invoke: vi.fn().mockResolvedValue({ ok: true, value: true }),
+      }));
+
+      const items = new Map<string, ExecutableLauncherItem>([
+        ["infra:vpn", createItem("vpn", "VPN")],
+        [
+          "chat:telegram",
+          createItem("telegram", "Telegram", {
+            launchDependencies: [
+              { categoryId: "infra", itemId: "vpn", delayAfterSeconds: 2 },
+            ],
+          }),
+        ],
+      ]);
+
+      const launched: string[] = [];
+      const waits: number[] = [];
+
+      const { executeLauncherItemWithDependencies: exec } = await import("../launcher-executor");
+
+      const result = await exec({
+        target: createRef("chat", "telegram"),
+        getItem: (categoryId, itemId) => items.get(`${categoryId}:${itemId}`) ?? null,
+        launchItem: async (item) => {
+          launched.push(item.name);
+        },
+        wait: async (ms) => {
+          waits.push(ms);
+        },
+        getExecutablePath: (item) => item.path,
+      });
+
+      expect(launched).toEqual(["Telegram"]);
+      expect(waits).toEqual([2000]);
+      expect(result.launchedRefs).toEqual([
+        createRef("infra", "vpn"),
+        createRef("chat", "telegram"),
+      ]);
+    });
+
+    it("launches a dependency normally when it is not running", async () => {
+      vi.resetModules();
+      vi.doMock("../invoke-wrapper", () => ({
+        invoke: vi.fn().mockResolvedValue({ ok: true, value: false }),
+      }));
+
+      const items = new Map<string, ExecutableLauncherItem>([
+        ["infra:vpn", createItem("vpn", "VPN")],
+        [
+          "chat:telegram",
+          createItem("telegram", "Telegram", {
+            launchDependencies: [
+              { categoryId: "infra", itemId: "vpn", delayAfterSeconds: 1 },
+            ],
+          }),
+        ],
+      ]);
+
+      const launched: string[] = [];
+      const waits: number[] = [];
+
+      const { executeLauncherItemWithDependencies: exec } = await import("../launcher-executor");
+
+      const result = await exec({
+        target: createRef("chat", "telegram"),
+        getItem: (categoryId, itemId) => items.get(`${categoryId}:${itemId}`) ?? null,
+        launchItem: async (item) => {
+          launched.push(item.name);
+        },
+        wait: async (ms) => {
+          waits.push(ms);
+        },
+        getExecutablePath: (item) => item.path,
+      });
+
+      expect(launched).toEqual(["VPN", "Telegram"]);
+      expect(waits).toEqual([1000]);
+      expect(result.launchedRefs).toEqual([
+        createRef("infra", "vpn"),
+        createRef("chat", "telegram"),
+      ]);
+    });
+
+    it("launches all dependencies normally when getExecutablePath is not provided", async () => {
+      const items = new Map<string, ExecutableLauncherItem>([
+        ["infra:vpn", createItem("vpn", "VPN")],
+        [
+          "chat:telegram",
+          createItem("telegram", "Telegram", {
+            launchDependencies: [
+              { categoryId: "infra", itemId: "vpn", delayAfterSeconds: 1 },
+            ],
+          }),
+        ],
+      ]);
+
+      const launched: string[] = [];
+      const waits: number[] = [];
+
+      const result = await executeLauncherItemWithDependencies({
+        target: createRef("chat", "telegram"),
+        getItem: (categoryId, itemId) => items.get(`${categoryId}:${itemId}`) ?? null,
+        launchItem: async (item) => {
+          launched.push(item.name);
+        },
+        wait: async (ms) => {
+          waits.push(ms);
+        },
+      });
+
+      expect(launched).toEqual(["VPN", "Telegram"]);
+      expect(waits).toEqual([1000]);
+      expect(result.launchedRefs).toEqual([
+        createRef("infra", "vpn"),
+        createRef("chat", "telegram"),
+      ]);
+    });
+  });
+
   it("stops execution when a dependency launch fails", async () => {
     const items = new Map<string, ExecutableLauncherItem>([
       [

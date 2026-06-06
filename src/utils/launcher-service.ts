@@ -56,11 +56,17 @@ export async function launchStoredItem(
     const recordUsage = options.recordUsage ?? true;
     const launchItem = options.launchItem ?? ((item) => launchWithSystemOpener(item));
 
+    const getExecutablePath = (item: ExecutableLauncherItem): string | null => {
+        if (item.itemType === "url") return null;
+        return item.resolvedPath || item.path || null;
+    };
+
     try {
         const result = await executeLauncherItemWithDependencies({
             target: ref,
             getItem: (categoryId, itemId) => store.getLauncherItemById(categoryId, itemId),
             launchItem,
+            getExecutablePath,
             wait: options.wait,
         });
 

@@ -205,6 +205,7 @@ pub fn run() {
             commands::pinyin::to_pinyin,
             commands::pinyin::to_pinyin_initial,
             commands::ai_organizer::refine_installed_apps_with_ai,
+            commands::system::is_process_running,
             system::open_url,
             system::open_path,
             system::reveal_in_explorer,
