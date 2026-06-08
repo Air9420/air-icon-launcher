@@ -28,6 +28,8 @@ import {
   getScannedLaunchType,
   type ScannedLaunchType,
 } from "../utils/scanned-app-launch";
+import { classifyInstalledApp } from "../utils/classification/pipeline";
+import { normalizeApp } from "../utils/classification/normalizer";
 
 export type LauncherItem = {
   id: string;
@@ -1199,8 +1201,6 @@ export const useLauncherStore = defineStore(
         iconBase64: string | null;
       },
     ): Promise<string> {
-      const { classifyInstalledApp } = await import("../utils/classification/pipeline");
-      const { normalizeApp } = await import("../utils/classification/normalizer");
       const launchType = getScannedLaunchType(scannedApp);
       const launcherPath = getScannedLauncherFilePath(scannedApp);
       const launcherUrl = getScannedLauncherUrl(scannedApp);
