@@ -153,6 +153,23 @@
                 <span class="number-unit">秒</span>
             </div>
         </div>
+
+        <div v-if="isDev" class="section">
+            <div class="section-title">显示模式 (调试)</div>
+            <div class="hint">
+                切换窗口显示逻辑，用于排查焦点问题。模式0=Tauri API，模式1=Win32 API
+            </div>
+            <div class="segmented">
+                <button class="seg-btn" type="button" :class="{ active: showModeDraft === 0 }"
+                    @click="onSetShowMode(0)">
+                    模式0: Tauri
+                </button>
+                <button class="seg-btn" type="button" :class="{ active: showModeDraft === 1 }"
+                    @click="onSetShowMode(1)">
+                    模式1: Win32
+                </button>
+            </div>
+        </div>
     </div>
 </template>
 
@@ -160,6 +177,7 @@
 import { storeToRefs } from "pinia";
 import { markRaw, onMounted, ref, watchEffect, computed } from "vue";
 import { useSettingsStore, type AutostartType } from "../../stores";
+import { safeInvoke } from "../../utils/invoke-wrapper";
 import { DangerSquare, Clipboard, Alarm, Settings } from "@solar-icons/vue";
 
 const settingsStore = useSettingsStore();
@@ -192,6 +210,8 @@ const cornerHotspotSensitivityDraft = ref<string>("medium");
 const hideOnCtrlRightClickDraft = ref<boolean>(false);
 const autoHideEnabledDraft = ref<boolean>(true);
 const autoHideCountdownDraft = ref<number>(30);
+const showModeDraft = ref<number>(0);
+const isDev = import.meta.env.DEV;
 
 const autostartMethods = [
     {
@@ -237,6 +257,8 @@ watchEffect(() => {
 
 onMounted(async () => {
     settingsStore.refreshAutostartStatus();
+    const mode = await safeInvoke<number>("get_show_mode");
+    showModeDraft.value = mode ?? 0;
 });
 
 async function onApplyFollowMouse() {
@@ -296,6 +318,11 @@ async function onAutoHideCountdownChange() {
     value = Math.max(5, Math.min(300, value));
     autoHideCountdownDraft.value = value;
     await settingsStore.setAutoHideCountdownSeconds(value);
+}
+
+async function onSetShowMode(mode: number) {
+    showModeDraft.value = mode;
+    await safeInvoke("set_show_mode", { mode });
 }
 </script>
 

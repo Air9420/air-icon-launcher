@@ -38,8 +38,6 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
 import { useRouter } from "vue-router";
 import { useWindowPosition } from "./useWindowPosition";
-import { useSettingsStore } from "../stores";
-import { storeToRefs } from "pinia";
 import { showToast } from "./useGlobalToast";
 import { useStatsStore } from "../stores/statsStore";
 
@@ -121,26 +119,18 @@ export function useTauriEvents() {
             const win = getCurrentWindow();
             const isVisible = await win.isVisible();
             const isFocused = await win.isFocused();
-            const { saveWindowPosition, restoreWindowPosition } = useWindowPosition();
-            const settingsStore = useSettingsStore();
-            const { followMouseOnShow } = storeToRefs(settingsStore);
+            const { saveWindowPosition } = useWindowPosition();
+
+            console.log("[toggle-main] received", { currentRoute, isVisible, isFocused });
 
             if (currentRoute === "/categories" && isVisible && isFocused) {
+                console.log("[toggle-main] hiding window");
                 await saveWindowPosition();
                 await win.hide();
             } else {
+                console.log("[toggle-main] calling show_launcher");
                 router.push("/categories");
-                if (followMouseOnShow.value) {
-                    await safeInvoke("show_window_with_follow_mouse");
-                } else {
-                    const restored = await restoreWindowPosition();
-                    if (!restored) {
-                        await safeInvoke("show_window_with_follow_mouse");
-                    } else {
-                        await win.show();
-                        await win.setFocus();
-                    }
-                }
+                await safeInvoke("show_launcher");
                 await emit("window-shown", null);
             }
         });

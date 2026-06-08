@@ -52,6 +52,7 @@ pub fn create_tray(app: &AppHandle) -> tauri::tray::TrayIcon {
                     button_state: MouseButtonState::Up,
                     ..
                 } => {
+                    println!("[tray] left click detected");
                     let app = tray.app_handle();
                     app_settings::show_main_window(
                         app,

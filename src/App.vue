@@ -4,7 +4,6 @@ import { storeToRefs } from "pinia";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { safeInvoke, setPageUnloading } from "./utils/invoke-wrapper";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useRouter } from "vue-router";
 import { showToast } from "./composables/useGlobalToast";
 
@@ -69,7 +68,6 @@ const {
     windowEffectsEnabled,
     performanceMode,
     showGuideOnStartup,
-    followMouseOnShow,
     autoHideEnabled,
     autoHideCountdownSeconds,
 } = storeToRefs(settingsStore);
@@ -131,7 +129,6 @@ const { initializeWindowDrag, cleanupWindowDrag } = useWindowDrag();
 
 const {
     saveWindowPosition,
-    restoreWindowPosition,
     initializePositionTracking,
     cleanupPositionTracking,
 } = useWindowPosition();
@@ -228,23 +225,13 @@ onMounted(async () => {
     void store.syncSearchIndex().catch(() => {});
 
     const isAutostart = await invoke<boolean>("check_is_autostart_launch");
+    console.log("[App] onMounted", { isAutostart });
     if (!isAutostart) {
         try {
-            const win = getCurrentWindow();
-            const restored = await restoreWindowPosition();
-            if (restored) {
-                await win.show();
-                await win.setFocus();
-            } else {
-                if (followMouseOnShow.value) {
-                    await safeInvoke("show_window_with_follow_mouse");
-                } else {
-                    await win.show();
-                    await win.setFocus();
-                }
-            }
+            console.log("[App] calling show_launcher");
+            await safeInvoke("show_launcher");
         } catch (e) {
-            console.error("Failed to show window:", e);
+            console.error("[App] Failed to show window:", e);
         }
     }
 });

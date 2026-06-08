@@ -302,13 +302,16 @@ fn show_window_at_corner(app: &AppHandle, position: CornerPosition, screen: &Scr
         HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_RESTORE,
     };
 
+    println!("[corner_hotspot] show_window_at_corner: start");
     corner_debug!("[corner_hotspot] show_window_at_corner: start");
 
     let Some(window) = app.get_webview_window("main") else {
+        println!("[corner_hotspot] show_window_at_corner: window not found");
         corner_debug!("[corner_hotspot] show_window_at_corner: window not found");
         return;
     };
 
+    println!("[corner_hotspot] show_window_at_corner: calling window.show()");
     corner_debug!("[corner_hotspot] show_window_at_corner: calling window.show()");
     let _ = window.show();
     let _ = window.set_focus();
@@ -453,11 +456,13 @@ fn trigger_corner_hotspot(
     screen: &ScreenInfo,
     last_trigger: &mut Option<Instant>,
 ) -> bool {
+    println!("[corner_hotspot] trigger_corner_hotspot: called");
     corner_debug!("[corner_hotspot] trigger_corner_hotspot: called");
 
     if let Some(window) = app.get_webview_window("main") {
         let visible = window.is_visible().unwrap_or(false);
         let focused = window.is_focused().unwrap_or(false);
+        println!("[corner_hotspot] trigger: visible={}, focused={}", visible, focused);
         corner_debug!(
             "[corner_hotspot] trigger: visible={}, focused={}",
             visible,
@@ -465,6 +470,7 @@ fn trigger_corner_hotspot(
         );
 
         if visible && focused {
+            println!("[corner_hotspot] trigger: window already visible and focused, skip");
             corner_debug!("[corner_hotspot] trigger: window already visible and focused, skip");
             return false;
         }

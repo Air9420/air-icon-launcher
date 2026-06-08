@@ -34,7 +34,7 @@ bun run test:unit        # 前端单元测试 (vitest run)
 ### 代码风格
 - TypeScript 严格模式，`noUnusedLocals` + `noUnusedParameters` 开启
 - Vue 组件文件名：PascalCase；其他文件：kebab-case
-- 提交信息：Conventional Commits（`feat:` / `fix:` / `refactor:` 等）
+- 提交信息：Conventional Commits（`feat:` / `fix:` / `refactor:` 等），**必须使用中文**
 
 ## 开发环境
 

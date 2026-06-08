@@ -48,7 +48,9 @@ export function useWindowPosition() {
     }
 
     async function restoreWindowPosition(): Promise<boolean> {
+        console.log("[restoreWindowPosition] enter", { hasPosition: !!windowPosition.value });
         if (!windowPosition.value) {
+            console.log("[restoreWindowPosition] no saved position, returning false");
             return false;
         }
 
@@ -61,11 +63,13 @@ export function useWindowPosition() {
             });
 
             if (!savedMonitor && windowPosition.value.monitorId) {
+                console.log("[restoreWindowPosition] saved monitor not found, returning false");
                 return false;
             }
 
             const targetMonitor = savedMonitor || await primaryMonitor();
             if (!targetMonitor) {
+                console.log("[restoreWindowPosition] no target monitor, returning false");
                 return false;
             }
 
@@ -82,10 +86,12 @@ export function useWindowPosition() {
             x = Math.max(minX, Math.min(x, maxX));
             y = Math.max(minY, Math.min(y, maxY));
 
+            console.log("[restoreWindowPosition] setting position to", { x, y });
             await win.setPosition(new PhysicalPosition({ x, y }));
+            console.log("[restoreWindowPosition] success, returning true");
             return true;
         } catch (e) {
-            console.error("[WindowPosition] Failed to restore position:", e);
+            console.error("[restoreWindowPosition] Failed to restore position:", e);
             return false;
         }
     }

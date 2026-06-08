@@ -159,6 +159,7 @@ unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: L
             && win == expect_win
         {
             if should_trigger() && should_block_input() {
+                println!("[keyboard_hook] hotkey triggered, emitting toggle-main");
                 if let Some(handle) = APP_HANDLE.get() {
                     let _ = handle.emit("toggle-main", ());
                 }

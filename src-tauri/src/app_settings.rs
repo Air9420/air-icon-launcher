@@ -1,7 +1,13 @@
 use crate::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
+
+/// 显示逻辑模式
+/// 0 = Tauri API (window.show + window.set_focus)
+/// 1 = Win32 API (SetForegroundWindow + AttachThreadInput)
+pub static SHOW_MODE: AtomicU8 = AtomicU8::new(1);
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -61,14 +67,15 @@ impl AppSettingsState {
 }
 
 pub fn show_main_window(app: &AppHandle, follow_mouse_on_show: bool, anchor: FollowMouseYAnchor) {
+    let mode = SHOW_MODE.load(Ordering::Relaxed);
+    println!("[show_main_window] enter, mode={}", mode);
     let Some(window) = app.get_webview_window("main") else {
+        println!("[show_main_window] window not found");
         return;
     };
 
     if follow_mouse_on_show {
         if let Some((x, y)) = cursor_position() {
-            // 某些安装/升级后的首次启动场景中，隐藏窗口的 outer_size 可能短暂返回 0，
-            // 会导致 center/bottom 锚点退化为 top。这里提供稳定兜底尺寸。
             let size = window.outer_size().ok();
             let width = size
                 .as_ref()
@@ -123,8 +130,122 @@ pub fn show_main_window(app: &AppHandle, follow_mouse_on_show: bool, anchor: Fol
         }
     }
 
+    match mode {
+        // 模式0: Tauri API (原始实现)
+        0 => {
+            println!("[show_main_window] mode=0: using Tauri API");
+            let show_result = window.show();
+            let focus_result = window.set_focus();
+            println!("[show_main_window] show={:?}, focus={:?}", show_result, focus_result);
+        }
+        // 模式1: Win32 API (从 corner_hotspot 移植)
+        1 => {
+            println!("[show_main_window] mode=1: using Win32 API");
+            show_with_win32_api(&window);
+        }
+        _ => {
+            println!("[show_main_window] unknown mode={}, fallback to mode=0", mode);
+            let show_result = window.show();
+            let focus_result = window.set_focus();
+            println!("[show_main_window] show={:?}, focus={:?}", show_result, focus_result);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn show_with_win32_api(window: &tauri::WebviewWindow) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{SetActiveWindow, SetFocus};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, SetForegroundWindow, SetWindowPos, ShowWindow, HWND_NOTOPMOST,
+        HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_RESTORE,
+    };
+
+    let _ = window.show();
+
+    if let Ok(hwnd) = window.hwnd() {
+        let raw = HWND(hwnd.0 as isize);
+        unsafe {
+            let _ = ShowWindow(raw, SW_RESTORE);
+
+            let foreground = GetForegroundWindow();
+            let foreground_tid = GetWindowThreadProcessId(foreground, None);
+            let current_tid = GetCurrentThreadId();
+            println!("[show_with_win32_api] foreground_tid={}, current_tid={}", foreground_tid, current_tid);
+
+            if foreground_tid != current_tid && foreground_tid != 0 {
+                println!("[show_with_win32_api] using AttachThreadInput");
+                let _ = AttachThreadInput(foreground_tid, current_tid, true);
+                let _ = SetForegroundWindow(raw);
+                let _ = SetActiveWindow(raw);
+                let _ = SetFocus(raw);
+                let _ = AttachThreadInput(foreground_tid, current_tid, false);
+            } else {
+                println!("[show_with_win32_api] using SetForegroundWindow directly");
+                let _ = SetForegroundWindow(raw);
+                let _ = SetActiveWindow(raw);
+                let _ = SetFocus(raw);
+            }
+
+            let _ = SetWindowPos(
+                raw,
+                HWND_TOPMOST,
+                0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+            );
+            let _ = SetWindowPos(
+                raw,
+                HWND_NOTOPMOST,
+                0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+            );
+        }
+        println!("[show_with_win32_api] done");
+    } else {
+        println!("[show_with_win32_api] hwnd failed, using set_focus");
+        let _ = window.set_focus();
+    }
+}
+
+#[cfg(not(windows))]
+fn show_with_win32_api(window: &tauri::WebviewWindow) {
+    println!("[show_with_win32_api] non-windows, using Tauri API");
     let _ = window.show();
     let _ = window.set_focus();
+}
+
+/// 切换显示模式
+#[tauri::command]
+pub fn set_show_mode(mode: u8) -> AppResult<()> {
+    let mode = mode.min(1);
+    println!("[set_show_mode] mode={}", mode);
+    SHOW_MODE.store(mode, Ordering::Relaxed);
+    Ok(())
+}
+
+/// 获取当前显示模式
+#[tauri::command]
+pub fn get_show_mode() -> u8 {
+    SHOW_MODE.load(Ordering::Relaxed)
+}
+
+/// 统一的显示入口
+#[tauri::command]
+pub fn show_launcher(
+    app: AppHandle,
+    state: tauri::State<'_, AppSettingsState>,
+) -> AppResult<()> {
+    let (follow, anchor) = state
+        .inner
+        .lock()
+        .map(|g| (g.follow_mouse_on_show, g.follow_mouse_y_anchor))
+        .map_err(|_| AppError::internal("Failed to lock app settings state"))?;
+
+    println!("[show_launcher] enter, follow={}, anchor={:?}", follow, anchor);
+    show_main_window(&app, follow, anchor);
+    Ok(())
 }
 
 /// 切换主窗口显示：已可见且已聚焦则隐藏；已可见但未聚焦则前置并聚焦；不可见则显示并聚焦。
@@ -135,10 +256,12 @@ pub fn toggle_main_window(app: &AppHandle, follow_mouse_on_show: bool, anchor: F
     };
 
     let visible = window.is_visible().unwrap_or(true);
+    let focused = window.is_focused().unwrap_or(true);
+    println!("[toggle_main_window] visible={}, focused={}", visible, focused);
     if visible {
-        let focused = window.is_focused().unwrap_or(true);
         if focused {
             let _ = window.hide();
+            println!("[toggle_main_window] hiding window");
         } else {
             show_main_window(app, follow_mouse_on_show, anchor);
         }
@@ -202,10 +325,13 @@ pub fn register_toggle_shortcut(app: &AppHandle, shortcut: &str) -> AppResult<()
         .on_shortcut(shortcut, move |app, _shortcut, event| {
             use tauri_plugin_global_shortcut::ShortcutState;
             if event.state == ShortcutState::Pressed {
+                println!("[global_shortcut] toggle shortcut pressed");
                 if crate::corner_hotspot::is_fullscreen_app_running() {
+                    println!("[global_shortcut] fullscreen app running, skipping");
                     return;
                 }
                 if let Some(window) = app.get_webview_window("main") {
+                    println!("[global_shortcut] emitting toggle-main");
                     let _ = window.emit("toggle-main", ());
                 }
             }
@@ -375,6 +501,7 @@ pub fn show_window_with_follow_mouse(
     app: AppHandle,
     state: tauri::State<'_, AppSettingsState>,
 ) -> AppResult<()> {
+    println!("[show_window_with_follow_mouse] enter");
     let (follow, anchor) = state
         .inner
         .lock()
