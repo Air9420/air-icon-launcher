@@ -2,7 +2,7 @@ use super::types::{ClipboardConfig, ClipboardRecord};
 use crate::clipboard::image::{get_clipboard_image, save_image_atomic};
 use crate::clipboard::platform::get_clipboard_text;
 use crate::clipboard::ClipboardState;
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crate::db::{ClipboardDatabase, ClipboardRecordDb};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 #[cfg(not(target_os = "windows"))]
@@ -111,18 +111,18 @@ pub fn start_clipboard_monitor(app_handle: AppHandle, state: Arc<ClipboardState>
                 }
             }
         }
+
+        if let Ok(Some(latest)) = db.get_latest() {
+            let mut hash = state.last_content_hash.lock().unwrap();
+            *hash = latest.hash;
+        }
     }
-
-    let (sender, receiver) = bounded::<ClipboardRecord>(500);
-
-    let _ = crate::clipboard::writer::start_writer_thread(receiver.clone(), state.clone());
 
     let last_content_hash = state.last_content_hash.clone();
     let is_monitoring_clone = is_monitoring.clone();
     let config = state.config.clone();
     let images_dir = state.images_dir.clone();
-    let sender_clone = sender.clone();
-    let receiver_clone = receiver.clone();
+    let database = state.database.clone();
     let app_handle_clone = app_handle.clone();
 
     let _monitor = ClipboardMonitor::new();
@@ -141,8 +141,7 @@ pub fn start_clipboard_monitor(app_handle: AppHandle, state: Arc<ClipboardState>
                 &last_content_hash,
                 &config,
                 &images_dir,
-                &sender_clone,
-                &receiver_clone,
+                &database,
                 &app_handle_clone,
                 &mut dedup,
             );
@@ -168,8 +167,7 @@ pub fn start_clipboard_monitor(app_handle: AppHandle, state: Arc<ClipboardState>
                     &last_content_hash,
                     &config,
                     &images_dir,
-                    &sender_clone,
-                    &receiver_clone,
+                    &database,
                     &app_handle_clone,
                     &mut dedup,
                 );
@@ -196,8 +194,7 @@ fn process_clipboard_change(
     last_content_hash: &Arc<Mutex<String>>,
     config: &Arc<Mutex<ClipboardConfig>>,
     images_dir: &Arc<Mutex<PathBuf>>,
-    sender: &Sender<ClipboardRecord>,
-    receiver: &Receiver<ClipboardRecord>,
+    database: &Arc<Mutex<Option<ClipboardDatabase>>>,
     app_handle: &AppHandle,
     dedup: &mut EventDeduplicator,
 ) -> Option<ClipboardRecord> {
@@ -225,6 +222,12 @@ fn process_clipboard_change(
             };
 
             if should_process {
+                if let Some(db) = database.lock().unwrap().as_ref() {
+                    if db.hash_exists(&hash).unwrap_or(false) {
+                        return None;
+                    }
+                }
+
                 let id = generate_id();
                 let images_dir_path = images_dir.lock().unwrap().clone();
                 let image_path = save_image_atomic(&images_dir_path, &id, &image_data).ok();
@@ -238,10 +241,9 @@ fn process_clipboard_change(
                     timestamp: get_timestamp(),
                 };
 
-                let send_result = sender.try_send(record.clone());
-                if send_result.is_err() {
-                    let _ = receiver.try_recv();
-                    let _ = sender.try_send(record.clone());
+                if let Some(db) = database.lock().unwrap().as_ref() {
+                    let db_record: ClipboardRecordDb = (&record).into();
+                    let _ = db.insert(&db_record);
                 }
 
                 let _ = app_handle.emit("clipboard-changed", record.clone());
@@ -267,6 +269,12 @@ fn process_clipboard_change(
             };
 
             if should_process {
+                if let Some(db) = database.lock().unwrap().as_ref() {
+                    if db.hash_exists(&hash).unwrap_or(false) {
+                        return None;
+                    }
+                }
+
                 let record = ClipboardRecord {
                     id: generate_id(),
                     record_type: "text".to_string(),
@@ -276,10 +284,9 @@ fn process_clipboard_change(
                     timestamp: get_timestamp(),
                 };
 
-                let send_result = sender.try_send(record.clone());
-                if send_result.is_err() {
-                    let _ = receiver.try_recv();
-                    let _ = sender.try_send(record.clone());
+                if let Some(db) = database.lock().unwrap().as_ref() {
+                    let db_record: ClipboardRecordDb = (&record).into();
+                    let _ = db.insert(&db_record);
                 }
 
                 let _ = app_handle.emit("clipboard-changed", record.clone());
