@@ -322,6 +322,7 @@ import {
     watchEffect,
 } from "vue";
 import { storeToRefs } from "pinia";
+import { useSettingsStore } from "../stores";
 import { useRouter } from "vue-router";
 import draggable from "vuedraggable";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -331,6 +332,7 @@ import { useThrottleFn } from "@vueuse/core";
 import { useConfirmDialog } from "../composables/useConfirmDialog";
 import { useGlobalToast } from "../composables/useGlobalToast";
 import { useLaunchCooldown } from "../composables/useLaunchCooldown";
+import { useLaunchStatus } from "../composables/useLaunchStatus";
 import { Store } from "../stores";
 import { useUIStore } from "../stores/uiStore";
 import { useCategoryStore } from "../stores/categoryStore";
@@ -355,7 +357,9 @@ const router = useRouter();
 const store = Store();
 const uiStore = useUIStore();
 const categoryStore = useCategoryStore();
+const settingsStore = useSettingsStore();
 const { launcherCols, categorySortMode } = storeToRefs(uiStore);
+const { autoHideAfterLaunch } = storeToRefs(settingsStore);
 const localSearchKeyword = ref<string>("");
 const categorySearchResults = ref<RustSearchResult[]>([]);
 const isCategorySearchPending = ref(false);
@@ -375,6 +379,9 @@ const { showToast } = useGlobalToast();
 
 type LaunchStatus = "launching" | "success";
 const launchStatusMap = ref<Map<string, LaunchStatus>>(new Map());
+const { setLaunchStatus: setLaunchStatusWithHide } = useLaunchStatus({
+    autoHideAfterLaunch,
+});
 const hideName = computed(() => (launcherCols.value ?? 5) >= 6);
 const isSearchActive = computed(() => localSearchKeyword.value.trim().length > 0);
 const windowVisibility = ref<WindowVisibilityState>("visible");
@@ -386,6 +393,7 @@ const focusedLauncherIndex = ref(0);
 function setLaunchStatus(itemId: string, status: LaunchStatus) {
     launchStatusMap.value.set(itemId, status);
     launchStatusMap.value = new Map(launchStatusMap.value);
+    setLaunchStatusWithHide(itemId, status);
     if (status === "success") {
         setTimeout(() => {
             launchStatusMap.value.delete(itemId);
