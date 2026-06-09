@@ -47,7 +47,7 @@ describe("ClipboardHistory Context Menu", () => {
 
     it("should have context menu attributes on history items", async () => {
         const store = useClipboardStore();
-        store.replaceClipboardHistory([
+        store.clipboardHistory = [
             {
                 id: "test-id-1",
                 content_type: "text",
@@ -64,7 +64,7 @@ describe("ClipboardHistory Context Menu", () => {
                 hash: "hash-2",
                 timestamp: Date.now() - 60000,
             },
-        ]);
+        ];
 
         const wrapper = mount(ClipboardHistory);
 
@@ -79,7 +79,7 @@ describe("ClipboardHistory Context Menu", () => {
 
     it("should have correct data attributes for image items", async () => {
         const store = useClipboardStore();
-        store.replaceClipboardHistory([
+        store.clipboardHistory = [
             {
                 id: "image-id-1",
                 content_type: "image",
@@ -88,7 +88,7 @@ describe("ClipboardHistory Context Menu", () => {
                 hash: "image-hash-1",
                 timestamp: Date.now(),
             },
-        ]);
+        ];
 
         const wrapper = mount(ClipboardHistory);
 
@@ -103,7 +103,7 @@ describe("ClipboardHistory Context Menu", () => {
 
     it("should handle locate-clipboard-item event", async () => {
         const store = useClipboardStore();
-        store.replaceClipboardHistory([
+        store.clipboardHistory = [
             {
                 id: "locate-test-id",
                 content_type: "text",
@@ -112,7 +112,7 @@ describe("ClipboardHistory Context Menu", () => {
                 hash: "locate-hash",
                 timestamp: Date.now(),
             },
-        ]);
+        ];
 
         const wrapper = mount(ClipboardHistory);
 
@@ -130,7 +130,7 @@ describe("ClipboardHistory Context Menu", () => {
 
     it("should clear search keyword when locate-clipboard-item is dispatched", async () => {
         const store = useClipboardStore();
-        store.replaceClipboardHistory([
+        store.clipboardHistory = [
             {
                 id: "locate-id",
                 content_type: "text",
@@ -139,7 +139,7 @@ describe("ClipboardHistory Context Menu", () => {
                 hash: "locate-hash",
                 timestamp: Date.now(),
             },
-        ]);
+        ];
 
         const wrapper = mount(ClipboardHistory);
         await wrapper.vm.$nextTick();
@@ -164,7 +164,7 @@ describe("ClipboardHistory Context Menu", () => {
 
     it("should render history items when data exists", async () => {
         const store = useClipboardStore();
-        store.replaceClipboardHistory([
+        store.clipboardHistory = [
             {
                 id: "item-1",
                 content_type: "text",
@@ -181,7 +181,7 @@ describe("ClipboardHistory Context Menu", () => {
                 hash: "hash-2",
                 timestamp: Date.now() - 60000,
             },
-        ]);
+        ];
 
         const wrapper = mount(ClipboardHistory);
 
@@ -192,7 +192,7 @@ describe("ClipboardHistory Context Menu", () => {
 
     it("should have delete button on history items", async () => {
         const store = useClipboardStore();
-        store.replaceClipboardHistory([
+        store.clipboardHistory = [
             {
                 id: "delete-test-id",
                 content_type: "text",
@@ -201,7 +201,7 @@ describe("ClipboardHistory Context Menu", () => {
                 hash: "delete-hash",
                 timestamp: Date.now(),
             },
-        ]);
+        ];
 
         const wrapper = mount(ClipboardHistory);
 
@@ -211,7 +211,7 @@ describe("ClipboardHistory Context Menu", () => {
 
     it("should have favorite button on history items", async () => {
         const store = useClipboardStore();
-        store.replaceClipboardHistory([
+        store.clipboardHistory = [
             {
                 id: "fav-test-id",
                 content_type: "text",
@@ -220,7 +220,7 @@ describe("ClipboardHistory Context Menu", () => {
                 hash: "fav-hash",
                 timestamp: Date.now(),
             },
-        ]);
+        ];
 
         const wrapper = mount(ClipboardHistory);
 
@@ -230,7 +230,7 @@ describe("ClipboardHistory Context Menu", () => {
 
     it("should show all required data attributes for context menu integration", async () => {
         const store = useClipboardStore();
-        store.replaceClipboardHistory([
+        store.clipboardHistory = [
             {
                 id: "integration-id",
                 content_type: "text",
@@ -239,7 +239,7 @@ describe("ClipboardHistory Context Menu", () => {
                 hash: "integration-hash",
                 timestamp: Date.now(),
             },
-        ]);
+        ];
 
         const wrapper = mount(ClipboardHistory);
 

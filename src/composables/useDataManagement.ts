@@ -153,7 +153,6 @@ type FrontendImportSnapshot = {
         strongShortcutMode: boolean;
         pluginSandboxEnabled: boolean;
         clipboardHistoryEnabled: boolean;
-        clipboardMaxRecords: number;
     };
     categories: Category[];
     currentCategoryId: string | null;
@@ -709,7 +708,6 @@ export function useDataManagement() {
                 strongShortcutMode: settingsStore.strongShortcutMode,
                 pluginSandboxEnabled: await pluginManager.loadSandboxMode(),
                 clipboardHistoryEnabled: clipboardStore.clipboardHistoryEnabled,
-                clipboardMaxRecords: clipboardStore.maxRecords,
             },
             categories: cloneData(categoryStore.categories),
             currentCategoryId: categoryStore.currentCategoryId,
@@ -797,7 +795,6 @@ export function useDataManagement() {
         await settingsStore.setStrongShortcutMode(snapshot.settings.strongShortcutMode);
         await pluginManager.setSandboxMode(snapshot.settings.pluginSandboxEnabled);
         await settingsStore.setClipboardHistoryEnabled(snapshot.settings.clipboardHistoryEnabled);
-        clipboardStore.setMaxRecords(snapshot.settings.clipboardMaxRecords);
         categoryStore.importCategories(snapshot.categories);
         categoryStore.setCurrentCategory(snapshot.currentCategoryId);
 
@@ -920,9 +917,6 @@ export function useDataManagement() {
             }
             if (typeof config.clipboard_history_enabled === "boolean") {
                 await settingsStore.setClipboardHistoryEnabled(config.clipboard_history_enabled);
-            }
-            if (typeof config.clipboard_max_records === "number") {
-                clipboardStore.setMaxRecords(config.clipboard_max_records);
             }
         }
 

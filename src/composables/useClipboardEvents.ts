@@ -41,7 +41,7 @@ export async function initGlobalClipboardListeners() {
         if (currentHash && event.payload.hash === currentHash) {
             return;
         }
-        clipboardStore.addClipboardRecord(event.payload, true);
+        clipboardStore.addClipboardRecord(event.payload);
         clipboardStore.setCurrentClipboardHash(event.payload.hash);
     });
     console.log(`[clipboard-events] ✓ clipboard-changed listener (${(performance.now() - startTime).toFixed(1)}ms)`);

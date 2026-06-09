@@ -165,8 +165,14 @@
                 </section>
             </template>
 
-            <div v-if="hasMoreItems" class="load-more-hint">
-                滚动加载更多...
+            <div v-if="isLoadingMore" class="load-more-hint loading">
+                加载中...
+            </div>
+            <div v-else-if="hasMore" class="load-more-hint" @click="loadMoreItems">
+                点击加载更多
+            </div>
+            <div v-else-if="history.length > 0" class="load-more-hint no-more">
+                已加载全部
             </div>
 
             <div v-if="displayedGroupedHistory.length === 0 && groupedHistory.length > 0" class="filtered-empty">
@@ -208,6 +214,8 @@ const {
 } = useClipboardEvents();
 
 const currentHash = computed(() => clipboardStore.currentClipboardHash);
+const hasMore = computed(() => clipboardStore.hasMore);
+const isLoadingMore = computed(() => clipboardStore.isLoadingMore);
 const imagePreviewMap = ref<Record<string, string>>({});
 const imageLoadingSet = ref<Set<string>>(new Set());
 const searchKeyword = ref("");
@@ -228,7 +236,6 @@ const filterChipRefs = ref<Record<ClipboardFilter, HTMLButtonElement | null>>({
 const tabRegion = ref<ClipboardTabRegion>("search");
 const focusedFilterIndex = ref(0);
 const focusedRecordIndex = ref(0);
-const displayLimit = ref(50); // 初始显示 50 条，提升首屏速度
 let imageObserver: IntersectionObserver | null = createImageObserver();
 
 const filterOptions: Array<{ key: ClipboardFilter; label: string }> = [
@@ -450,36 +457,14 @@ const groupedHistory = computed<ClipboardGroup[]>(() => {
     return sections;
 });
 
-// 限制显示数量的分组数据（提升首屏渲染速度）
+// 直接使用分组数据（数据已经是分页加载的）
 const displayedGroupedHistory = computed<ClipboardGroup[]>(() => {
-    const groups = groupedHistory.value;
-    if (groups.length === 0) return [];
-
-    let remaining = displayLimit.value;
-    const result: ClipboardGroup[] = [];
-
-    for (const group of groups) {
-        if (remaining <= 0) break;
-        const limitedItems = group.items.slice(0, remaining);
-        result.push({
-            ...group,
-            items: limitedItems,
-        });
-        remaining -= limitedItems.length;
-    }
-
-    return result;
+    return groupedHistory.value;
 });
 
-// 是否还有更多数据
-const hasMoreItems = computed(() => {
-    const totalItems = groupedHistory.value.reduce((sum, g) => sum + g.items.length, 0);
-    return totalItems > displayLimit.value;
-});
-
-// 加载更多
+// 加载更多（从后端分页加载）
 function loadMoreItems() {
-    displayLimit.value += 50;
+    clipboardStore.loadMore();
 }
 
 // 滚动加载
@@ -487,10 +472,15 @@ function onContentScroll(e: Event) {
     const el = e.target as HTMLElement;
     if (!el) return;
     const scrollBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (scrollBottom < 200 && hasMoreItems.value) {
+    if (scrollBottom < 200 && hasMore.value && !isLoadingMore.value) {
         loadMoreItems();
     }
 }
+
+// 切换筛选类型时重新加载数据
+watch(selectedFilter, async (newFilter) => {
+    await clipboardStore.preloadHistory(newFilter);
+});
 
 watch(flatVisibleRecords, (records) => {
     if (records.length === 0) {
@@ -786,11 +776,16 @@ function getGroupLabel(group: ClipboardGroupKey): string {
 }
 
 function isFavorite(record: ClipboardRecord): boolean {
-    return clipboardStore.isFavoriteHash(record.hash);
+    return clipboardStore.favoriteHashes.includes(record.hash);
 }
 
 function onToggleFavorite(record: ClipboardRecord) {
-    clipboardStore.toggleFavoriteHash(record.hash);
+    const hash = record.hash;
+    if (clipboardStore.favoriteHashes.includes(hash)) {
+        clipboardStore.favoriteHashes = clipboardStore.favoriteHashes.filter(h => h !== hash);
+    } else {
+        clipboardStore.favoriteHashes = [hash, ...clipboardStore.favoriteHashes];
+    }
 }
 
 function isExpandableText(record: ClipboardRecord): boolean {

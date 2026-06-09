@@ -131,9 +131,8 @@ async function loadClipboardConfig() {
     clipboardConfigLoaded.value = false;
     try {
         const config = await getClipboardConfig();
-        clipboardStore.setClipboardHistoryEnabled(config.history_enabled ?? true);
+        clipboardStore.clipboardHistoryEnabled = config.history_enabled ?? true;
         clipboardMaxRecords.value = config.max_records;
-        clipboardStore.setMaxRecords(config.max_records);
         clipboardMaxImageSize.value = config.max_image_size_mb;
         clipboardStoragePath.value = config.storage_path || "";
     } catch (e) {
@@ -155,17 +154,14 @@ async function loadClipboardConfig() {
 async function onSetClipboardMaxRecords(value: number) {
     const prev = clipboardMaxRecords.value;
     clipboardMaxRecords.value = value;
-    clipboardStore.setMaxRecords(value);
     try {
         const config = await saveClipboardConfigPatch({ max_records: value });
-        clipboardStore.setClipboardHistoryEnabled(config.history_enabled ?? true);
+        clipboardStore.clipboardHistoryEnabled = config.history_enabled ?? true;
         clipboardMaxRecords.value = config.max_records;
-        clipboardStore.setMaxRecords(config.max_records);
         clipboardMaxImageSize.value = config.max_image_size_mb;
     } catch (e) {
         console.error("Failed to set clipboard max records:", e);
         clipboardMaxRecords.value = prev;
-        clipboardStore.setMaxRecords(prev);
         showToast("设置失败：" + (e instanceof Error ? e.message : String(e)), { type: "error" });
     }
 }
@@ -175,9 +171,8 @@ async function onSetClipboardMaxImageSize(value: number) {
     clipboardMaxImageSize.value = value;
     try {
         const config = await saveClipboardConfigPatch({ max_image_size_mb: value });
-        clipboardStore.setClipboardHistoryEnabled(config.history_enabled ?? true);
+        clipboardStore.clipboardHistoryEnabled = config.history_enabled ?? true;
         clipboardMaxRecords.value = config.max_records;
-        clipboardStore.setMaxRecords(config.max_records);
         clipboardMaxImageSize.value = config.max_image_size_mb;
     } catch (e) {
         console.error("Failed to set clipboard max image size:", e);
@@ -193,16 +188,16 @@ async function onToggleClipboardHistoryEnabled(event: Event) {
     try {
         await settingsStore.setClipboardHistoryEnabled(next);
         const config = await getClipboardConfig();
-        clipboardStore.setClipboardHistoryEnabled(config.history_enabled ?? next);
+        clipboardStore.clipboardHistoryEnabled = config.history_enabled ?? next;
         if (!(config.history_enabled ?? next)) {
-            clipboardStore.clearRuntimeClipboardHistoryView();
+            clipboardStore.clipboardHistory = [];
+            clipboardStore.currentClipboardHash = null;
         }
         clipboardMaxRecords.value = config.max_records;
-        clipboardStore.setMaxRecords(config.max_records);
         clipboardMaxImageSize.value = config.max_image_size_mb;
     } catch (e) {
         console.error("Failed to set clipboard history enabled:", e);
-        clipboardStore.setClipboardHistoryEnabled(prev);
+        clipboardStore.clipboardHistoryEnabled = prev;
         showToast("设置失败：" + (e instanceof Error ? e.message : String(e)), { type: "error" });
     }
 }

@@ -54,11 +54,13 @@ export function getRecordContent(record: ClipboardRecord): string {
 export const useClipboardStore = defineStore("clipboard", () => {
     const clipboardHistory = ref<ClipboardRecord[]>([]);
     const clipboardHistoryEnabled = ref<boolean>(true);
-    const maxRecords = ref<number>(100);
     const currentClipboardHash = ref<string | null>(null);
     const favoriteHashes = ref<string[]>([]);
     const historyLoaded = ref<boolean>(false);
-    const lastLoadTime = ref<number>(0);
+    const hasMore = ref<boolean>(true);
+    const isLoadingMore = ref<boolean>(false);
+    const currentFilter = ref<string>("all");
+    const PAGE_SIZE = 30;
 
     async function syncFavoriteHashesToBackend() {
         try {
@@ -70,37 +72,15 @@ export const useClipboardStore = defineStore("clipboard", () => {
         }
     }
 
-    function addClipboardRecord(record: ClipboardRecord, forcePromote: boolean = false) {
-        const existingIndex = clipboardHistory.value.findIndex(r => r.hash === record.hash);
-        if (existingIndex !== -1) {
-            if (forcePromote) {
-                clipboardHistory.value.splice(existingIndex, 1);
-                clipboardHistory.value.unshift(record);
-            }
-        } else {
-            clipboardHistory.value.unshift(record);
-            if (maxRecords.value > 0 && clipboardHistory.value.length > maxRecords.value) {
-                clipboardHistory.value = clipboardHistory.value.slice(0, maxRecords.value);
-            }
-        }
+    function addClipboardRecord(record: ClipboardRecord) {
+        // 新记录直接 unshift，不检查重复（数据库已去重）
+        clipboardHistory.value.unshift(record);
     }
 
     function setCurrentClipboardHash(hash: string | null) {
         currentClipboardHash.value = hash;
     }
 
-    function replaceClipboardHistory(records: ClipboardRecord[]) {
-        clipboardHistory.value = records;
-        const recordHashes = new Set(records.map((record) => record.hash));
-        favoriteHashes.value = favoriteHashes.value.filter((hash) => recordHashes.has(hash));
-        void syncFavoriteHashesToBackend();
-    }
-
-    /**
-     * 删除指定剪贴板记录
-     *
-     * @param id - 记录 ID
-     */
     function removeClipboardRecord(id: string) {
         const index = clipboardHistory.value.findIndex(r => r.id === id);
         if (index !== -1) {
@@ -112,146 +92,65 @@ export const useClipboardStore = defineStore("clipboard", () => {
         }
     }
 
-    /**
-     * 清空所有剪贴板历史
-     */
     function clearClipboardHistory() {
         clipboardHistory.value = [];
         favoriteHashes.value = [];
-        void syncFavoriteHashesToBackend();
     }
 
-    function isFavoriteHash(hash: string): boolean {
-        return favoriteHashes.value.includes(hash);
-    }
-
-    function setFavoriteHash(hash: string, favorite: boolean) {
-        if (!hash) return;
-        if (favorite) {
-            if (!favoriteHashes.value.includes(hash)) {
-                favoriteHashes.value = [hash, ...favoriteHashes.value];
-                void syncFavoriteHashesToBackend();
-            }
-            return;
-        }
-        if (!favoriteHashes.value.includes(hash)) {
-            return;
-        }
-        favoriteHashes.value = favoriteHashes.value.filter((target) => target !== hash);
-        void syncFavoriteHashesToBackend();
-    }
-
-    function toggleFavoriteHash(hash: string) {
-        setFavoriteHash(hash, !isFavoriteHash(hash));
-    }
-
-    /**
-     * 设置剪贴板功能开关
-     *
-     * @param enabled - 是否启用
-     */
-    function setClipboardHistoryEnabled(enabled: boolean) {
-        clipboardHistoryEnabled.value = enabled;
-    }
-
-    function clearRuntimeClipboardHistoryView() {
-        clipboardHistory.value = [];
-        currentClipboardHash.value = null;
-    }
-
-    /**
-     * 预加载剪贴板历史数据
-     * 从后端获取最新数据并更新 store
-     */
-    async function preloadHistory() {
+    async function preloadHistory(filter: string = "all") {
         const startTime = performance.now();
-        console.log("[clipboard-store] ▶ preloadHistory");
+        console.log(`[clipboard-store] ▶ preloadHistory (filter: ${filter})`);
         try {
-            const backendHistory = await invokeOrThrow<ClipboardRecord[]>("get_clipboard_history");
-            console.log(`[clipboard-store] got ${backendHistory.length} records from backend (${(performance.now() - startTime).toFixed(1)}ms)`);
-            const sortedHistory = [...backendHistory].sort((a, b) => b.timestamp - a.timestamp);
-            clipboardHistory.value = sortedHistory;
+            const backendHistory = await invokeOrThrow<ClipboardRecord[]>("get_clipboard_history", {
+                filter,
+                limit: PAGE_SIZE,
+                offset: 0,
+            });
+            console.log(`[clipboard-store] got ${backendHistory.length} records (${(performance.now() - startTime).toFixed(1)}ms)`);
+            clipboardHistory.value = backendHistory;
+            currentFilter.value = filter;
+            hasMore.value = backendHistory.length >= PAGE_SIZE;
             historyLoaded.value = true;
-            lastLoadTime.value = Date.now();
-            console.log(`[clipboard-store] ✓ preloadHistory done (${(performance.now() - startTime).toFixed(1)}ms)`);
         } catch (error) {
             console.warn("[clipboard-store] Failed to preload clipboard history:", error);
         }
     }
 
-    /**
-     * 同步剪贴板历史数据（静默）
-     * 从后端获取最新数据，只在有变化时更新
-     * 如果最近刚加载过（5秒内），跳过同步
-     */
-    async function syncHistory() {
-        // 如果最近刚加载过，跳过同步
-        const timeSinceLoad = Date.now() - lastLoadTime.value;
-        if (timeSinceLoad < 5000) {
-            console.log(`[clipboard-store] syncHistory skipped (loaded ${timeSinceLoad}ms ago)`);
-            return;
-        }
-
-        const startTime = performance.now();
-        console.log("[clipboard-store] ▶ syncHistory (background)");
+    async function loadMore() {
+        if (isLoadingMore.value || !hasMore.value) return;
+        isLoadingMore.value = true;
         try {
-            const backendHistory = await invokeOrThrow<ClipboardRecord[]>("get_clipboard_history");
-            console.log(`[clipboard-store] got ${backendHistory.length} records from backend (${(performance.now() - startTime).toFixed(1)}ms)`);
-            const sortedHistory = [...backendHistory].sort((a, b) => b.timestamp - a.timestamp);
-
-            // 检查是否有变化
-            const currentIds = new Set(clipboardHistory.value.map(r => r.id));
-            const newIds = new Set(sortedHistory.map(r => r.id));
-            const hasChanges = currentIds.size !== newIds.size ||
-                sortedHistory.some(r => !currentIds.has(r.id));
-
-            if (hasChanges) {
-                clipboardHistory.value = sortedHistory;
-                console.log(`[clipboard-store] ✓ syncHistory updated (${(performance.now() - startTime).toFixed(1)}ms)`);
-            } else {
-                console.log(`[clipboard-store] ✓ syncHistory no changes (${(performance.now() - startTime).toFixed(1)}ms)`);
+            const offset = clipboardHistory.value.length;
+            const moreRecords = await invokeOrThrow<ClipboardRecord[]>("get_clipboard_history", {
+                filter: currentFilter.value,
+                limit: PAGE_SIZE,
+                offset,
+            });
+            if (moreRecords.length > 0) {
+                clipboardHistory.value.push(...moreRecords);
             }
+            hasMore.value = moreRecords.length >= PAGE_SIZE;
         } catch (error) {
-            console.warn("[clipboard-store] Failed to sync clipboard history:", error);
-        }
-    }
-
-    /**
-     * 设置最大记录数
-     *
-     * @param value - 最大记录数，0 表示不限制
-     */
-    function setMaxRecords(value: number) {
-        maxRecords.value = value;
-        if (value > 0 && clipboardHistory.value.length > value) {
-            const favoriteSet = new Set(favoriteHashes.value);
-            const favorites = clipboardHistory.value.filter((record) => favoriteSet.has(record.hash));
-            const nonFavorites = clipboardHistory.value.filter((record) => !favoriteSet.has(record.hash));
-            const keptNonFavorites = nonFavorites.slice(0, value);
-            clipboardHistory.value = [...favorites, ...keptNonFavorites]
-                .sort((a, b) => b.timestamp - a.timestamp);
+            console.warn("[clipboard-store] Failed to load more:", error);
+        } finally {
+            isLoadingMore.value = false;
         }
     }
 
     return {
         clipboardHistory,
         clipboardHistoryEnabled,
-        maxRecords,
         currentClipboardHash,
         favoriteHashes,
         historyLoaded,
+        hasMore,
+        isLoadingMore,
+        currentFilter,
         addClipboardRecord,
-        replaceClipboardHistory,
         removeClipboardRecord,
         clearClipboardHistory,
-        setClipboardHistoryEnabled,
-        clearRuntimeClipboardHistoryView,
-        setMaxRecords,
         setCurrentClipboardHash,
-        isFavoriteHash,
-        setFavoriteHash,
-        toggleFavoriteHash,
         preloadHistory,
-        syncHistory,
+        loadMore,
     };
-}, { persist: createVersionedPersistConfig("clipboard", ["clipboardHistory", "clipboardHistoryEnabled", "maxRecords", "favoriteHashes"]) });
+}, { persist: createVersionedPersistConfig("clipboard", ["clipboardHistory", "clipboardHistoryEnabled", "favoriteHashes"]) });

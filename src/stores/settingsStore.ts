@@ -311,8 +311,7 @@ export const useSettingsStore = defineStore(
             uiStore.setCategoryCols(config.category_cols, { persist: false });
             uiStore.setLauncherCols(config.launcher_cols, { persist: false });
             uiStore.setHomeSectionLayouts(config.home_section_layouts, { persist: false });
-            clipboardStore.setClipboardHistoryEnabled(config.clipboard_history_enabled);
-            clipboardStore.setMaxRecords(config.clipboard_max_records);
+            clipboardStore.clipboardHistoryEnabled = config.clipboard_history_enabled;
         }
 
         async function hydratePersistedConfig() {
@@ -567,7 +566,7 @@ export const useSettingsStore = defineStore(
         async function setClipboardHistoryEnabled(enabled: boolean) {
             const clipboardStore = useClipboardStore();
             await saveAppConfigPatch({ clipboard_history_enabled: enabled });
-            clipboardStore.setClipboardHistoryEnabled(enabled);
+            clipboardStore.clipboardHistoryEnabled = enabled;
         }
 
         return {
