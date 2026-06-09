@@ -73,10 +73,10 @@
             <div class="usage-hint">单击条目即可复制，点击 ☆ 收藏常用内容</div>
         </div>
 
-        <div ref="contentRef" class="content" v-if="history.length > 0">
-            <template v-if="groupedHistory.length > 0">
+        <div ref="contentRef" class="content" v-if="history.length > 0" @scroll="onContentScroll">
+            <template v-if="displayedGroupedHistory.length > 0">
                 <section
-                    v-for="group in groupedHistory"
+                    v-for="group in displayedGroupedHistory"
                     :key="group.key"
                     class="group-section"
                 >
@@ -110,7 +110,13 @@
                                     class="item-image"
                                     alt="剪贴板图片"
                                 />
-                                <div v-else class="item-image-placeholder">图片预览加载中</div>
+                                <div
+                                    v-else
+                                    class="item-image-placeholder"
+                                    :ref="(el) => observeImageElement(el as HTMLElement, item.id, item.image_path || '')"
+                                >
+                                    {{ imageLoadingSet.has(item.id) ? '图片加载中...' : '图片预览' }}
+                                </div>
                                 <div v-if="item.image_path" class="item-meta">{{ item.image_path }}</div>
                             </template>
 
@@ -158,7 +164,11 @@
                 </section>
             </template>
 
-            <div v-else class="filtered-empty">
+            <div v-if="hasMoreItems" class="load-more-hint">
+                滚动加载更多...
+            </div>
+
+            <div v-if="displayedGroupedHistory.length === 0 && groupedHistory.length > 0" class="filtered-empty">
                 <div class="filtered-empty-title">未找到匹配内容</div>
                 <div class="filtered-empty-hint">可以尝试更短关键词或切换筛选类型</div>
             </div>
@@ -198,6 +208,8 @@ const {
 
 const currentHash = computed(() => clipboardStore.currentClipboardHash);
 const imagePreviewMap = ref<Record<string, string>>({});
+const imageLoadingSet = ref<Set<string>>(new Set());
+let imageObserver: IntersectionObserver | null = null;
 const searchKeyword = ref("");
 const selectedFilter = ref<ClipboardFilter>("all");
 const expandedRecordIds = ref<Record<string, boolean>>({});
@@ -216,6 +228,7 @@ const filterChipRefs = ref<Record<ClipboardFilter, HTMLButtonElement | null>>({
 const tabRegion = ref<ClipboardTabRegion>("search");
 const focusedFilterIndex = ref(0);
 const focusedRecordIndex = ref(0);
+const displayLimit = ref(50); // 初始显示 50 条，提升首屏速度
 
 const filterOptions: Array<{ key: ClipboardFilter; label: string }> = [
     { key: "all", label: "全部" },
@@ -265,6 +278,9 @@ const focusedRecordId = computed<string | null>(() => {
 watch(
     history,
     (records) => {
+        const watchStart = performance.now();
+        console.log("[clipboard-history] ▶ history watcher triggered, records:", records.length);
+
         void hydrateImagePreviews(records);
         const validIds = new Set(records.map((record) => record.id));
         expandedRecordIds.value = Object.fromEntries(
@@ -274,6 +290,13 @@ watch(
             Object.entries(itemRefs.value).filter(([id]) => validIds.has(id))
         ) as Record<string, HTMLElement | null>;
 
+        // 清理无效的加载状态
+        for (const id of imageLoadingSet.value) {
+            if (!validIds.has(id)) {
+                imageLoadingSet.value.delete(id);
+            }
+        }
+
         if (anchorFlashItemId.value && !validIds.has(anchorFlashItemId.value)) {
             anchorFlashItemId.value = null;
             if (anchorFlashTimer !== null) {
@@ -281,6 +304,7 @@ watch(
                 anchorFlashTimer = null;
             }
         }
+        console.log(`[clipboard-history] ✓ history watcher done (${(performance.now() - watchStart).toFixed(1)}ms)`);
     },
     { immediate: true }
 );
@@ -309,12 +333,15 @@ watch(
 );
 
 onMounted(() => {
+    console.log("[clipboard-history] ▶ onMounted");
     document.addEventListener("keydown", onClipboardKeydown, true);
     document.addEventListener("mousedown", onClipboardMouseDown, true);
     searchInputRef.value?.addEventListener("blur", onSearchInputBlur);
     document.addEventListener("locate-clipboard-item", onLocateClipboardItem);
+    imageObserver = createImageObserver();
     nextTick(() => {
         searchInputRef.value?.focus();
+        console.log("[clipboard-history] ✓ onMounted complete, focus set");
     });
 });
 
@@ -323,6 +350,11 @@ onBeforeUnmount(() => {
     document.removeEventListener("mousedown", onClipboardMouseDown, true);
     searchInputRef.value?.removeEventListener("blur", onSearchInputBlur);
     document.removeEventListener("locate-clipboard-item", onLocateClipboardItem);
+
+    if (imageObserver) {
+        imageObserver.disconnect();
+        imageObserver = null;
+    }
 
     if (scrollAnimationFrame === null) {
         if (anchorFlashTimer !== null) {
@@ -422,6 +454,48 @@ const groupedHistory = computed<ClipboardGroup[]>(() => {
 
     return sections;
 });
+
+// 限制显示数量的分组数据（提升首屏渲染速度）
+const displayedGroupedHistory = computed<ClipboardGroup[]>(() => {
+    const groups = groupedHistory.value;
+    if (groups.length === 0) return [];
+
+    let remaining = displayLimit.value;
+    const result: ClipboardGroup[] = [];
+
+    for (const group of groups) {
+        if (remaining <= 0) break;
+        const limitedItems = group.items.slice(0, remaining);
+        result.push({
+            ...group,
+            items: limitedItems,
+        });
+        remaining -= limitedItems.length;
+    }
+
+    return result;
+});
+
+// 是否还有更多数据
+const hasMoreItems = computed(() => {
+    const totalItems = groupedHistory.value.reduce((sum, g) => sum + g.items.length, 0);
+    return totalItems > displayLimit.value;
+});
+
+// 加载更多
+function loadMoreItems() {
+    displayLimit.value += 50;
+}
+
+// 滚动加载
+function onContentScroll(e: Event) {
+    const el = e.target as HTMLElement;
+    if (!el) return;
+    const scrollBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (scrollBottom < 200 && hasMoreItems.value) {
+        loadMoreItems();
+    }
+}
 
 watch(flatVisibleRecords, (records) => {
     if (records.length === 0) {
@@ -824,30 +898,66 @@ async function hydrateImagePreviews(records: typeof history.value) {
     const imageRecords = records.filter(
         (record) => record.content_type === "image" && !!record.image_path
     );
-    const nextMap = { ...imagePreviewMap.value };
 
-    await Promise.all(
-        imageRecords.map(async (record) => {
-            if (nextMap[record.id] || !record.image_path) {
-                return;
-            }
-
-            try {
-                nextMap[record.id] = await readLocalImageAsDataUrl(record.image_path);
-            } catch (error) {
-                console.warn("Failed to load clipboard image preview:", error);
-            }
-        })
-    );
-
+    // 清理无效的缓存
     const validIds = new Set(imageRecords.map((record) => record.id));
-    for (const id of Object.keys(nextMap)) {
+    for (const id of Object.keys(imagePreviewMap.value)) {
         if (!validIds.has(id)) {
-            delete nextMap[id];
+            delete imagePreviewMap.value[id];
         }
     }
 
-    imagePreviewMap.value = nextMap;
+    // 不再立即加载所有图片，等待 IntersectionObserver 触发
+}
+
+function loadImagePreview(recordId: string, imagePath: string) {
+    if (imagePreviewMap.value[recordId] || imageLoadingSet.value.has(recordId)) {
+        return;
+    }
+    imageLoadingSet.value.add(recordId);
+
+    readLocalImageAsDataUrl(imagePath)
+        .then((dataUrl) => {
+            imagePreviewMap.value[recordId] = dataUrl;
+        })
+        .catch((error) => {
+            console.warn("Failed to load clipboard image preview:", error);
+        })
+        .finally(() => {
+            imageLoadingSet.value.delete(recordId);
+        });
+}
+
+function observeImageElement(el: HTMLElement | null, recordId: string, imagePath: string) {
+    if (!el) return;
+    (el as HTMLElement & { _lazyRecordId?: string })._lazyRecordId = recordId;
+    (el as HTMLElement & { _lazyImagePath?: string })._lazyImagePath = imagePath;
+
+    if (imageObserver) {
+        imageObserver.observe(el);
+    }
+}
+
+function createImageObserver() {
+    return new IntersectionObserver(
+        (entries) => {
+            for (const entry of entries) {
+                if (entry.isIntersecting) {
+                    const el = entry.target as HTMLElement & { _lazyRecordId?: string; _lazyImagePath?: string };
+                    const recordId = el._lazyRecordId;
+                    const imagePath = el._lazyImagePath;
+                    if (recordId && imagePath) {
+                        loadImagePreview(recordId, imagePath);
+                    }
+                    imageObserver?.unobserve(el);
+                }
+            }
+        },
+        {
+            rootMargin: "200px",
+            threshold: 0,
+        }
+    );
 }
 
 function isPartiallyOutsideViewport(container: HTMLElement, target: HTMLElement): boolean {
@@ -1310,6 +1420,13 @@ function animateScrollTo(container: HTMLElement, targetScrollTop: number) {
 }
 
 .filtered-empty-hint {
+    font-size: 12px;
+    color: var(--text-hint);
+}
+
+.load-more-hint {
+    text-align: center;
+    padding: 16px;
     font-size: 12px;
     color: var(--text-hint);
 }

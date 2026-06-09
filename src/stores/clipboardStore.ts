@@ -57,6 +57,8 @@ export const useClipboardStore = defineStore("clipboard", () => {
     const maxRecords = ref<number>(100);
     const currentClipboardHash = ref<string | null>(null);
     const favoriteHashes = ref<string[]>([]);
+    const historyLoaded = ref<boolean>(false);
+    const lastLoadTime = ref<number>(0);
 
     async function syncFavoriteHashesToBackend() {
         try {
@@ -158,6 +160,63 @@ export const useClipboardStore = defineStore("clipboard", () => {
     }
 
     /**
+     * 预加载剪贴板历史数据
+     * 从后端获取最新数据并更新 store
+     */
+    async function preloadHistory() {
+        const startTime = performance.now();
+        console.log("[clipboard-store] ▶ preloadHistory");
+        try {
+            const backendHistory = await invokeOrThrow<ClipboardRecord[]>("get_clipboard_history");
+            console.log(`[clipboard-store] got ${backendHistory.length} records from backend (${(performance.now() - startTime).toFixed(1)}ms)`);
+            const sortedHistory = [...backendHistory].sort((a, b) => b.timestamp - a.timestamp);
+            clipboardHistory.value = sortedHistory;
+            historyLoaded.value = true;
+            lastLoadTime.value = Date.now();
+            console.log(`[clipboard-store] ✓ preloadHistory done (${(performance.now() - startTime).toFixed(1)}ms)`);
+        } catch (error) {
+            console.warn("[clipboard-store] Failed to preload clipboard history:", error);
+        }
+    }
+
+    /**
+     * 同步剪贴板历史数据（静默）
+     * 从后端获取最新数据，只在有变化时更新
+     * 如果最近刚加载过（5秒内），跳过同步
+     */
+    async function syncHistory() {
+        // 如果最近刚加载过，跳过同步
+        const timeSinceLoad = Date.now() - lastLoadTime.value;
+        if (timeSinceLoad < 5000) {
+            console.log(`[clipboard-store] syncHistory skipped (loaded ${timeSinceLoad}ms ago)`);
+            return;
+        }
+
+        const startTime = performance.now();
+        console.log("[clipboard-store] ▶ syncHistory (background)");
+        try {
+            const backendHistory = await invokeOrThrow<ClipboardRecord[]>("get_clipboard_history");
+            console.log(`[clipboard-store] got ${backendHistory.length} records from backend (${(performance.now() - startTime).toFixed(1)}ms)`);
+            const sortedHistory = [...backendHistory].sort((a, b) => b.timestamp - a.timestamp);
+
+            // 检查是否有变化
+            const currentIds = new Set(clipboardHistory.value.map(r => r.id));
+            const newIds = new Set(sortedHistory.map(r => r.id));
+            const hasChanges = currentIds.size !== newIds.size ||
+                sortedHistory.some(r => !currentIds.has(r.id));
+
+            if (hasChanges) {
+                clipboardHistory.value = sortedHistory;
+                console.log(`[clipboard-store] ✓ syncHistory updated (${(performance.now() - startTime).toFixed(1)}ms)`);
+            } else {
+                console.log(`[clipboard-store] ✓ syncHistory no changes (${(performance.now() - startTime).toFixed(1)}ms)`);
+            }
+        } catch (error) {
+            console.warn("[clipboard-store] Failed to sync clipboard history:", error);
+        }
+    }
+
+    /**
      * 设置最大记录数
      *
      * @param value - 最大记录数，0 表示不限制
@@ -180,6 +239,7 @@ export const useClipboardStore = defineStore("clipboard", () => {
         maxRecords,
         currentClipboardHash,
         favoriteHashes,
+        historyLoaded,
         addClipboardRecord,
         replaceClipboardHistory,
         removeClipboardRecord,
@@ -191,5 +251,7 @@ export const useClipboardStore = defineStore("clipboard", () => {
         isFavoriteHash,
         setFavoriteHash,
         toggleFavoriteHash,
+        preloadHistory,
+        syncHistory,
     };
 }, { persist: createVersionedPersistConfig("clipboard", ["clipboardHistory", "clipboardHistoryEnabled", "maxRecords", "favoriteHashes"]) });

@@ -18,6 +18,7 @@ const OnboardingGuide = defineAsyncComponent(() => import("./components/Onboardi
 import { Store, useCategoryStore, useSettingsStore, useGuideStore } from "./stores";
 import { useUIStore } from "./stores/uiStore";
 import { useStatsStore } from "./stores/statsStore";
+import { useClipboardStore } from "./stores/clipboardStore";
 import { initOverrideLookupFromStore } from "./utils/classification/pipeline";
 
 import { useContextMenu } from "./composables/useContextMenu";
@@ -33,6 +34,7 @@ import { useInputDialog } from "./composables/useInputDialog";
 import { useWindowPosition } from "./composables/useWindowPosition";
 import { useAutoHideCountdown } from "./composables/useAutoHideCountdown";
 import { getPluginManager } from "./plugins";
+import { initGlobalClipboardListeners, cleanupGlobalClipboardListeners } from "./composables/useClipboardEvents";
 
 import "./styles/themes.scss";
 
@@ -60,6 +62,7 @@ const uiStore = useUIStore();
 const statsStore = useStatsStore();
 const guideStore = useGuideStore();
 const searchStore = useSearchStore();
+const clipboardStore = useClipboardStore();
 const router = useRouter();
 const isDev = import.meta.env.DEV;
 
@@ -190,6 +193,20 @@ onMounted(async () => {
     await settingsStore.hydratePersistedConfig();
     await settingsStore.refreshAutostartStatus();
 
+    // 预加载剪贴板历史数据（不阻塞其他初始化）
+    console.log("[App] starting clipboard preload...");
+    void clipboardStore.preloadHistory().then(() => {
+        console.log("[App] ✓ clipboard preload complete");
+    }).catch(() => {});
+
+    // 预加载剪贴板历史组件（消除懒加载延迟）
+    void import("./components/ClipboardHistory.vue").then(() => {
+        console.log("[App] ✓ ClipboardHistory component preloaded");
+    }).catch(() => {});
+
+    // 初始化全局剪贴板事件监听器（只注册一次）
+    void initGlobalClipboardListeners().catch(() => {});
+
     const pluginManager = getPluginManager();
     await pluginManager.refreshPlugins();
 
@@ -246,6 +263,7 @@ onBeforeUnmount(async () => {
     cleanupTauriEvents();
     cleanupWindowDrag();
     cleanupThemeWatcher();
+    cleanupGlobalClipboardListeners();
     searchStore.stopListening();
 });
 </script>

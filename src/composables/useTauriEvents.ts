@@ -110,7 +110,16 @@ export function useTauriEvents() {
         unlisteners.push(unlistenTraySettings);
 
         const unlistenClipboard = await listen("toggle-clipboard", async () => {
-            router.push("/clipboard");
+            const totalStart = performance.now();
+            console.log(`[clipboard-event] ▶ received toggle-clipboard event (total timer started)`);
+            await router.push("/clipboard");
+            console.log(`[clipboard-event] ✓ router.push done (${(performance.now() - totalStart).toFixed(1)}ms)`);
+            // 等待下一帧，确保 DOM 已渲染
+            requestAnimationFrame(() => {
+                console.log(`[clipboard-event] ═══════════════════════════════════════════`);
+                console.log(`[clipboard-event] ✓✓✓ 页面渲染完成 (总耗时: ${(performance.now() - totalStart).toFixed(1)}ms)`);
+                console.log(`[clipboard-event] ═══════════════════════════════════════════`);
+            });
         });
         unlisteners.push(unlistenClipboard);
 

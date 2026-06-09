@@ -53,4 +53,16 @@ const router = createRouter({
     routes,
 })
 
+// 添加路由导航守卫用于调试
+let routeStartTime = 0;
+router.beforeEach((to, from) => {
+    routeStartTime = performance.now();
+    console.log(`[router] ▶ navigating: ${from.path} → ${to.path}`);
+});
+
+router.afterEach((to, from) => {
+    const elapsed = performance.now() - routeStartTime;
+    console.log(`[router] ✓ navigated: ${from.path} → ${to.path} (${elapsed.toFixed(1)}ms)`);
+});
+
 export default router

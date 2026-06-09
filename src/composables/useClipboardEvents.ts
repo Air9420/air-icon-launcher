@@ -1,29 +1,77 @@
-import { onMounted, onBeforeUnmount, ref } from "vue";
+import { ref } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import { invokeOrThrow } from "../utils/invoke-wrapper";
 import { useClipboardStore, type ClipboardRecord } from "../stores/clipboardStore";
 import { storeToRefs } from "pinia";
 import { showToast } from "./useGlobalToast";
 
+// 全局监听器状态 - 只注册一次
+let globalListenersInitialized = false;
+let globalUnlisten: (() => void) | null = null;
+let globalUnlistenSetFromHistory: (() => void) | null = null;
+let globalSkipNextClipboardChanged = false;
+
+/**
+ * 初始化全局剪贴板事件监听器
+ * 应在 App.vue 中调用一次，避免每次组件挂载都重新注册
+ */
+export async function initGlobalClipboardListeners() {
+    if (globalListenersInitialized) {
+        console.log("[clipboard-events] global listeners already initialized, skipping");
+        return;
+    }
+
+    const clipboardStore = useClipboardStore();
+    const startTime = performance.now();
+    console.log("[clipboard-events] ▶ initGlobalClipboardListeners");
+
+    globalUnlistenSetFromHistory = await listen<boolean>("clipboard-set-from-history", (event) => {
+        if (event.payload) {
+            globalSkipNextClipboardChanged = true;
+        }
+    });
+    console.log(`[clipboard-events] ✓ clipboard-set-from-history listener (${(performance.now() - startTime).toFixed(1)}ms)`);
+
+    globalUnlisten = await listen<ClipboardRecord>("clipboard-changed", (event) => {
+        if (globalSkipNextClipboardChanged) {
+            globalSkipNextClipboardChanged = false;
+            return;
+        }
+        const currentHash = clipboardStore.currentClipboardHash;
+        if (currentHash && event.payload.hash === currentHash) {
+            return;
+        }
+        clipboardStore.addClipboardRecord(event.payload, true);
+        clipboardStore.setCurrentClipboardHash(event.payload.hash);
+    });
+    console.log(`[clipboard-events] ✓ clipboard-changed listener (${(performance.now() - startTime).toFixed(1)}ms)`);
+
+    globalListenersInitialized = true;
+    console.log(`[clipboard-events] ✓ initGlobalClipboardListeners done (${(performance.now() - startTime).toFixed(1)}ms total)`);
+}
+
+/**
+ * 清理全局剪贴板事件监听器
+ */
+export function cleanupGlobalClipboardListeners() {
+    if (globalUnlisten) {
+        globalUnlisten();
+        globalUnlisten = null;
+    }
+    if (globalUnlistenSetFromHistory) {
+        globalUnlistenSetFromHistory();
+        globalUnlistenSetFromHistory = null;
+    }
+    globalListenersInitialized = false;
+}
+
 export function useClipboardEvents() {
     const clipboardStore = useClipboardStore();
     const { clipboardHistory: history } = storeToRefs(clipboardStore);
     const currentTime = ref(Date.now());
-    let unlisten: (() => void) | null = null;
-    let unlistenSetFromHistory: (() => void) | null = null;
-    let skipNextClipboardChanged = false;
 
     function updateCurrentTime() {
         currentTime.value = Date.now();
-    }
-
-    async function fetchCurrentClipboardHash() {
-        try {
-            const hash = await invokeOrThrow<string>("get_current_clipboard_hash");
-            clipboardStore.setCurrentClipboardHash(hash);
-        } catch (e) {
-            console.error("Failed to get current clipboard hash:", e);
-        }
     }
 
     async function onCopyItem(item: ClipboardRecord) {
@@ -87,46 +135,7 @@ export function useClipboardEvents() {
         });
     }
 
-    onMounted(async () => {
-        try {
-            const backendHistory = await invokeOrThrow<ClipboardRecord[]>("get_clipboard_history");
-            const sortedHistory = [...backendHistory].sort((a, b) => b.timestamp - a.timestamp);
-            clipboardStore.replaceClipboardHistory(sortedHistory);
-        } catch (e) {
-            console.error("Failed to load clipboard history:", e);
-        }
-
-        await fetchCurrentClipboardHash();
-
-        unlistenSetFromHistory = await listen<boolean>("clipboard-set-from-history", (event) => {
-            if (event.payload) {
-                skipNextClipboardChanged = true;
-            }
-        });
-
-        unlisten = await listen<ClipboardRecord>("clipboard-changed", (event) => {
-            if (skipNextClipboardChanged) {
-                skipNextClipboardChanged = false;
-                return;
-            }
-            const currentHash = clipboardStore.currentClipboardHash;
-            if (currentHash && event.payload.hash === currentHash) {
-                return;
-            }
-            clipboardStore.addClipboardRecord(event.payload, true);
-            clipboardStore.setCurrentClipboardHash(event.payload.hash);
-            updateCurrentTime();
-        });
-    });
-
-    onBeforeUnmount(() => {
-        if (unlisten) {
-            unlisten();
-        }
-        if (unlistenSetFromHistory) {
-            unlistenSetFromHistory();
-        }
-    });
+    // 不再注册事件监听器，使用全局监听器
 
     return {
         history,
