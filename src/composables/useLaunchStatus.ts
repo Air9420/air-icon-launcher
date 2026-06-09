@@ -1,5 +1,6 @@
-import { shallowRef, triggerRef, type Ref } from "vue";
+import { shallowRef, triggerRef, type Ref, onScopeDispose } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 
 export type LaunchStatus = "launching" | "success";
 
@@ -14,6 +15,22 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
     let isCtrlPressed = false;
     let hasLaunchedWhileCtrlPressed = false;
     let hideTimeout: ReturnType<typeof setTimeout> | null = null;
+    let unlistenCtrlReleased: (() => void) | null = null;
+
+    // 监听后端 Ctrl 释放事件（全局钩子，不受焦点影响）
+    listen("ctrl-released", () => {
+        isCtrlPressed = false;
+        if (hideTimeout) {
+            clearTimeout(hideTimeout);
+            hideTimeout = null;
+        }
+        if (hasLaunchedWhileCtrlPressed && autoHideAfterLaunch?.value) {
+            getCurrentWindow().hide();
+        }
+        hasLaunchedWhileCtrlPressed = false;
+    }).then((unlisten) => {
+        unlistenCtrlReleased = unlisten;
+    });
 
     function onKeyDown(e: KeyboardEvent) {
         if (e.key === "Control" || e.ctrlKey) {
@@ -95,11 +112,20 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
             window.removeEventListener("keydown", onKeyDown);
             window.removeEventListener("keyup", onKeyUp);
         }
+        if (unlistenCtrlReleased) {
+            unlistenCtrlReleased();
+            unlistenCtrlReleased = null;
+        }
         if (hideTimeout) {
             clearTimeout(hideTimeout);
             hideTimeout = null;
         }
     }
+
+    // Vue scope 自动清理
+    onScopeDispose(() => {
+        cleanup();
+    });
 
     return {
         launchStatusMap,
