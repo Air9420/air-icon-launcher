@@ -5,27 +5,23 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
-pub mod cache;
 pub mod image;
 pub mod monitor;
 pub mod platform;
 pub mod types;
 pub mod writer;
 
-pub use cache::ClipboardCache;
 pub use image::set_clipboard_image_from_png;
 pub use monitor::{start_clipboard_monitor, stop_clipboard_monitor};
 pub use platform::{get_clipboard_text, set_clipboard_text};
 pub use types::{ClipboardConfig, ClipboardConfigDebug, ClipboardConfigPatch, ClipboardRecord};
 
 pub struct ClipboardState {
-    pub cache: Arc<Mutex<ClipboardCache>>,
     pub last_content_hash: Arc<Mutex<String>>,
     pub is_monitoring: Arc<Mutex<bool>>,
     pub config: Arc<Mutex<ClipboardConfig>>,
     pub storage_path: Arc<Mutex<PathBuf>>,
     pub database: Arc<Mutex<Option<ClipboardDatabase>>>,
-    pub sender: Arc<Mutex<Option<crossbeam_channel::Sender<ClipboardRecord>>>>,
     pub images_dir: Arc<Mutex<PathBuf>>,
     pub favorite_hashes: Arc<Mutex<HashSet<String>>>,
 }
@@ -33,13 +29,11 @@ pub struct ClipboardState {
 impl Default for ClipboardState {
     fn default() -> Self {
         Self {
-            cache: Arc::new(Mutex::new(ClipboardCache::new())),
             last_content_hash: Arc::new(Mutex::new(String::new())),
             is_monitoring: Arc::new(Mutex::new(false)),
             config: Arc::new(Mutex::new(ClipboardConfig::default())),
             storage_path: Arc::new(Mutex::new(PathBuf::new())),
             database: Arc::new(Mutex::new(None)),
-            sender: Arc::new(Mutex::new(None)),
             images_dir: Arc::new(Mutex::new(PathBuf::new())),
             favorite_hashes: Arc::new(Mutex::new(HashSet::new())),
         }
@@ -65,7 +59,6 @@ impl ClipboardState {
         fs::create_dir_all(&images_dir).ok();
 
         Self {
-            cache: Arc::new(Mutex::new(ClipboardCache::new())),
             last_content_hash: Arc::new(Mutex::new(String::new())),
             is_monitoring: Arc::new(Mutex::new(false)),
             config: Arc::new(Mutex::new(ClipboardConfig {
@@ -77,7 +70,6 @@ impl ClipboardState {
             })),
             storage_path: Arc::new(Mutex::new(storage_path)),
             database: Arc::new(Mutex::new(database)),
-            sender: Arc::new(Mutex::new(None)),
             images_dir: Arc::new(Mutex::new(images_dir)),
             favorite_hashes: Arc::new(Mutex::new(HashSet::new())),
         }
@@ -133,43 +125,11 @@ fn enforce_runtime_max_records(
         let pruned = db
             .enforce_max_records_with_protected(max_records, &protected_hashes)
             .map_err(|e| e.to_string())?;
-        let pruned_ids: Vec<String> = pruned.iter().map(|record| record.id.clone()).collect();
-        if !pruned_ids.is_empty() {
-            let mut cache = state.cache.lock().unwrap();
-            let _ = cache.remove_by_ids(&pruned_ids);
-        }
         for record in pruned {
             if let Some(image_path) = record.image_path {
                 if !image_path.is_empty() {
                     let _ = std::fs::remove_file(image_path);
                 }
-            }
-        }
-    }
-
-    let removed = {
-        let mut cache = state.cache.lock().unwrap();
-        let mut removed = cache.enforce_max_records(max_records);
-        if !protected_hashes.is_empty() {
-            let mut protected = Vec::new();
-            removed.retain(|record| {
-                if protected_hashes.contains(&record.hash) {
-                    protected.push(record.clone());
-                    false
-                } else {
-                    true
-                }
-            });
-            for record in protected {
-                cache.push_with_limit(record, 0);
-            }
-        }
-        removed
-    };
-    for record in removed {
-        if let Some(image_path) = record.image_path {
-            if !image_path.is_empty() {
-                let _ = std::fs::remove_file(image_path);
             }
         }
     }
@@ -263,23 +223,6 @@ mod tests {
         let base = create_test_base("runtime-sync");
         let state = Arc::new(ClipboardState::default());
 
-        {
-            let mut cache = state.cache.lock().unwrap();
-            for index in 0..3 {
-                cache.push_with_limit(
-                    ClipboardRecord {
-                        id: format!("clip-{index}"),
-                        record_type: "text".to_string(),
-                        text_content: Some(format!("text-{index}")),
-                        image_path: None,
-                        hash: format!("hash-{index}"),
-                        timestamp: index,
-                    },
-                    10,
-                );
-            }
-        }
-
         let storage_path = base.join("clipboard_history");
         apply_runtime_config_snapshot(
             &state,
@@ -304,7 +247,6 @@ mod tests {
             Some(storage_path.to_string_lossy().to_string())
         );
         assert_eq!(state.storage_path.lock().unwrap().clone(), storage_path);
-        assert_eq!(state.cache.lock().unwrap().get_all().len(), 2);
         assert!(state.database.lock().unwrap().is_some());
 
         let _ = std::fs::remove_dir_all(&base);
@@ -364,6 +306,8 @@ pub fn set_clipboard_content(
 
 #[tauri::command]
 pub fn get_clipboard_history(
+    limit: Option<usize>,
+    offset: Option<usize>,
     state: tauri::State<'_, Arc<ClipboardState>>,
 ) -> Result<Vec<ClipboardRecord>, String> {
     let config = state.config.lock().unwrap().clone();
@@ -371,22 +315,62 @@ pub fn get_clipboard_history(
         return Ok(Vec::new());
     }
 
-    let max_records = config.max_records;
-    let cache = state.cache.lock().unwrap();
-    let mut records = cache.get_all();
-    if max_records > 0 && records.len() > max_records {
-        records.truncate(max_records);
+    let limit = limit.unwrap_or(30);
+    let offset = offset.unwrap_or(0);
+
+    if let Some(db) = state.database.lock().unwrap().as_ref() {
+        let db_records = db
+            .get_all_paged(limit, offset)
+            .map_err(|e| e.to_string())?;
+        let records: Vec<ClipboardRecord> = db_records.into_iter().map(|r| r.into()).collect();
+        return Ok(records);
     }
-    Ok(records)
+
+    Ok(Vec::new())
+}
+
+#[tauri::command]
+pub fn get_clipboard_history_by_type(
+    content_type: String,
+    limit: Option<usize>,
+    offset: Option<usize>,
+    state: tauri::State<'_, Arc<ClipboardState>>,
+) -> Result<Vec<ClipboardRecord>, String> {
+    let config = state.config.lock().unwrap().clone();
+    if !config.history_enabled {
+        return Ok(Vec::new());
+    }
+
+    if let Some(db) = state.database.lock().unwrap().as_ref() {
+        let limit = limit.unwrap_or(30);
+        let offset = offset.unwrap_or(0);
+        let db_records = db
+            .get_by_content_type(&content_type, limit, offset)
+            .map_err(|e| e.to_string())?;
+        let records: Vec<ClipboardRecord> = db_records.into_iter().map(|r| r.into()).collect();
+        return Ok(records);
+    }
+
+    Ok(Vec::new())
+}
+
+#[tauri::command]
+pub fn get_clipboard_type_counts(
+    state: tauri::State<'_, Arc<ClipboardState>>,
+) -> Result<serde_json::Value, String> {
+    if let Some(db) = state.database.lock().unwrap().as_ref() {
+        let text_count = db.count_by_content_type("text").unwrap_or(0);
+        let image_count = db.count_by_content_type("image").unwrap_or(0);
+        return Ok(serde_json::json!({
+            "text": text_count,
+            "image": image_count,
+        }));
+    }
+    Ok(serde_json::json!({ "text": 0, "image": 0 }))
 }
 
 #[tauri::command]
 pub fn clear_clipboard_history(state: tauri::State<'_, Arc<ClipboardState>>) -> Result<(), String> {
-    {
-        let mut cache = state.cache.lock().unwrap();
-        cache.clear_and_release();
-    }
-
     if let Some(db) = state.database.lock().unwrap().as_ref() {
         let images = db.clear().map_err(|e| e.to_string())?;
         for image_path in images {
@@ -402,23 +386,10 @@ pub fn delete_clipboard_record(
     id: String,
     state: tauri::State<'_, Arc<ClipboardState>>,
 ) -> Result<(), String> {
-    let removed = {
-        let mut cache = state.cache.lock().unwrap();
-        cache.remove_by_id(&id)
-    };
-
-    if let Some(record) = removed {
-        if let Some(db) = state.database.lock().unwrap().as_ref() {
-            if let Ok(Some(image_path)) = db.delete(&id) {
-                if !image_path.is_empty() {
-                    let _ = std::fs::remove_file(&image_path);
-                }
-            }
-        }
-
-        if let Some(ref image_path) = record.image_path {
+    if let Some(db) = state.database.lock().unwrap().as_ref() {
+        if let Ok(Some(image_path)) = db.delete(&id) {
             if !image_path.is_empty() {
-                let _ = std::fs::remove_file(image_path);
+                let _ = std::fs::remove_file(&image_path);
             }
         }
     }

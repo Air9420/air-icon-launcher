@@ -76,11 +76,6 @@ fn prune_after_flush(state: &Arc<ClipboardState>) {
         return;
     };
     if let Ok(pruned) = db.enforce_max_records_with_protected(max_records, &protected_hashes) {
-        let pruned_ids: Vec<String> = pruned.iter().map(|record| record.id.clone()).collect();
-        if !pruned_ids.is_empty() {
-            let mut cache = state.cache.lock().unwrap();
-            let _ = cache.remove_by_ids(&pruned_ids);
-        }
         for record in pruned {
             if let Some(image_path) = record.image_path {
                 if !image_path.is_empty() {

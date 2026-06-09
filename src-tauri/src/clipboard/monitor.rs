@@ -1,5 +1,4 @@
 use super::types::{ClipboardConfig, ClipboardRecord};
-use crate::clipboard::cache::{ClipboardCache, EventDeduplicator};
 use crate::clipboard::image::{get_clipboard_image, save_image_atomic};
 use crate::clipboard::platform::get_clipboard_text;
 use crate::clipboard::ClipboardState;
@@ -10,9 +9,39 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 #[cfg(not(target_os = "windows"))]
 use std::time::Duration;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 use tauri::{Emitter, Manager};
+
+pub struct EventDeduplicator {
+    last_event_hash: Option<String>,
+    last_event_time: Option<Instant>,
+}
+
+impl EventDeduplicator {
+    pub fn new() -> Self {
+        Self {
+            last_event_hash: None,
+            last_event_time: None,
+        }
+    }
+
+    pub fn should_process(&mut self, hash: &str) -> bool {
+        let now = Instant::now();
+
+        if let (Some(ref last_hash), Some(last_time)) =
+            (&self.last_event_hash, &self.last_event_time)
+        {
+            if last_hash == hash && now.duration_since(*last_time).as_millis() < 100 {
+                return false;
+            }
+        }
+
+        self.last_event_hash = Some(hash.to_string());
+        self.last_event_time = Some(now);
+        true
+    }
+}
 
 #[cfg(target_os = "windows")]
 use crate::clipboard_listener::listen_clipboard;
@@ -62,7 +91,11 @@ pub fn start_clipboard_monitor(app_handle: AppHandle, state: Arc<ClipboardState>
         *monitoring = true;
     }
 
-    let max_records = state.config.lock().unwrap().max_records;
+    let max_records = {
+        let config = state.config.lock().unwrap();
+        config.max_records
+    };
+
     if let Some(db) = state.database.lock().unwrap().as_ref() {
         if max_records > 0 {
             let protected_hashes = state.favorite_hashes.lock().unwrap().clone();
@@ -78,27 +111,12 @@ pub fn start_clipboard_monitor(app_handle: AppHandle, state: Arc<ClipboardState>
                 }
             }
         }
-
-        if let Ok(records) = db.get_all() {
-            let mut cache = state.cache.lock().unwrap();
-            let mut records = records;
-            records.reverse();
-            for record in records {
-                let clipboard_record: ClipboardRecord = record.into();
-                cache.push_with_limit(clipboard_record, max_records);
-            }
-        }
     }
 
     let (sender, receiver) = bounded::<ClipboardRecord>(500);
-    {
-        let mut s = state.sender.lock().unwrap();
-        *s = Some(sender.clone());
-    }
 
     let _ = crate::clipboard::writer::start_writer_thread(receiver.clone(), state.clone());
 
-    let cache = state.cache.clone();
     let last_content_hash = state.last_content_hash.clone();
     let is_monitoring_clone = is_monitoring.clone();
     let config = state.config.clone();
@@ -120,7 +138,6 @@ pub fn start_clipboard_monitor(app_handle: AppHandle, state: Arc<ClipboardState>
 
             let mut dedup = EventDeduplicator::new();
             process_clipboard_change(
-                &cache,
                 &last_content_hash,
                 &config,
                 &images_dir,
@@ -148,7 +165,6 @@ pub fn start_clipboard_monitor(app_handle: AppHandle, state: Arc<ClipboardState>
                 }
 
                 process_clipboard_change(
-                    &cache,
                     &last_content_hash,
                     &config,
                     &images_dir,
@@ -170,20 +186,13 @@ pub fn stop_clipboard_monitor(state: &Arc<ClipboardState>) {
         *monitoring = false;
     }
 
-    let mut sender = state.sender.lock().unwrap();
-    *sender = None;
-
     #[cfg(target_os = "windows")]
     {
         stop_clipboard_listener();
     }
-
-    let mut cache = state.cache.lock().unwrap();
-    cache.clear_and_release();
 }
 
 fn process_clipboard_change(
-    cache: &Arc<Mutex<ClipboardCache>>,
     last_content_hash: &Arc<Mutex<String>>,
     config: &Arc<Mutex<ClipboardConfig>>,
     images_dir: &Arc<Mutex<PathBuf>>,
@@ -192,12 +201,9 @@ fn process_clipboard_change(
     app_handle: &AppHandle,
     dedup: &mut EventDeduplicator,
 ) -> Option<ClipboardRecord> {
-    let (max_image_size, max_records) = {
+    let max_image_size = {
         let cfg = config.lock().unwrap();
-        (
-            (cfg.max_image_size_mb * 1024.0 * 1024.0) as usize,
-            cfg.max_records,
-        )
+        (cfg.max_image_size_mb * 1024.0 * 1024.0) as usize
     };
 
     if let Some(image_data) = get_clipboard_image() {
@@ -231,10 +237,6 @@ fn process_clipboard_change(
                     hash: hash.clone(),
                     timestamp: get_timestamp(),
                 };
-
-                let mut c = cache.lock().unwrap();
-                c.push_with_limit(record.clone(), max_records);
-                c.clear_buffer_hashes();
 
                 let send_result = sender.try_send(record.clone());
                 if send_result.is_err() {
@@ -273,10 +275,6 @@ fn process_clipboard_change(
                     hash: hash.clone(),
                     timestamp: get_timestamp(),
                 };
-
-                let mut c = cache.lock().unwrap();
-                c.push_with_limit(record.clone(), max_records);
-                c.clear_buffer_hashes();
 
                 let send_result = sender.try_send(record.clone());
                 if send_result.is_err() {
