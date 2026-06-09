@@ -51,9 +51,12 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
     async function startFocusListener() {
         if (unlistenFocus) return;
         const win = getCurrentWindow();
+        console.log("[Ctrl-Multi] registering onFocusChanged listener");
         unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
+            console.log("[Ctrl-Multi] onFocusChanged triggered, focused:", focused);
             onFocusChanged(focused);
         });
+        console.log("[Ctrl-Multi] onFocusChanged listener registered");
     }
 
     function stopFocusListener() {
