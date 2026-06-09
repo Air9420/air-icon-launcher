@@ -14,7 +14,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
-    UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+    UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
 };
 
 static HOOK_HANDLE: AtomicU64 = AtomicU64::new(0);
@@ -130,6 +130,20 @@ unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: L
     }
 
     let msg = w_param.0 as u32;
+
+    if msg == WM_KEYUP {
+        let kbd = *(l_param.0 as *const KBDLLHOOKSTRUCT);
+        let vk = kbd.vkCode;
+
+        if vk == VK_CONTROL.0 as u32 {
+            println!("[keyboard_hook] Ctrl released, emitting ctrl-released");
+            if let Some(handle) = APP_HANDLE.get() {
+                let _ = handle.emit("ctrl-released", ());
+            }
+        }
+        return CallNextHookEx(None, n_code, w_param, l_param);
+    }
+
     if msg != WM_KEYDOWN && msg != WM_SYSKEYDOWN {
         return CallNextHookEx(None, n_code, w_param, l_param);
     }
