@@ -51,20 +51,23 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
     async function startFocusListener() {
         if (unlistenFocus) return;
         const win = getCurrentWindow();
-        console.log("[Ctrl-Multi] registering onFocusChanged listener");
         unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
-            console.log("[Ctrl-Multi] onFocusChanged triggered, focused:", focused);
             onFocusChanged(focused);
         });
-        console.log("[Ctrl-Multi] onFocusChanged listener registered");
         
         // 延迟检查焦点，因为 onFocusChanged 可能不可靠
         setTimeout(async () => {
             if (isCtrlPressed && hasLaunchedWhileCtrlPressed) {
                 const focused = await win.isFocused();
-                console.log("[Ctrl-Multi] delayed focus check, focused:", focused);
                 if (!focused) {
-                    onFocusChanged(false);
+                    // 焦点丢失，抢回焦点
+                    await win.setFocus();
+                    // 再次检查 Ctrl 状态（用户可能已经松开）
+                    setTimeout(() => {
+                        if (hasLaunchedWhileCtrlPressed && !isCtrlPressed && autoHideAfterLaunch?.value) {
+                            getCurrentWindow().hide();
+                        }
+                    }, 50);
                 }
             }
         }, 200);
