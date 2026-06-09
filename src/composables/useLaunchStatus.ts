@@ -19,11 +19,13 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
     function onKeyDown(e: KeyboardEvent) {
         if (e.key === "Control" || e.ctrlKey) {
             isCtrlPressed = true;
+            console.log("[Ctrl-Multi] Ctrl pressed");
         }
     }
 
     function onKeyUp(e: KeyboardEvent) {
         if (e.key === "Control" || e.ctrlKey) {
+            console.log("[Ctrl-Multi] Ctrl released, hasLaunched:", hasLaunchedWhileCtrlPressed);
             isCtrlPressed = false;
             stopFocusListener();
             if (hideTimeout) {
@@ -31,6 +33,7 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
                 hideTimeout = null;
             }
             if (hasLaunchedWhileCtrlPressed && autoHideAfterLaunch?.value) {
+                console.log("[Ctrl-Multi] hiding window");
                 getCurrentWindow().hide();
             }
             hasLaunchedWhileCtrlPressed = false;
@@ -40,6 +43,7 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
     // 焦点变化时，如果按住 Ctrl 且已启动过应用，抢回焦点
     function onFocusChanged(focused: boolean) {
         if (!focused && isCtrlPressed && hasLaunchedWhileCtrlPressed) {
+            console.log("[Ctrl-Multi] focus lost, grabbing back");
             getCurrentWindow().setFocus();
         }
     }
@@ -72,9 +76,10 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
         launchStatusMap.value.set(itemId, status);
         triggerRef(launchStatusMap);
         if (status === "success") {
+            console.log("[Ctrl-Multi] launch success, isCtrlPressed:", isCtrlPressed);
             if (isCtrlPressed) {
                 hasLaunchedWhileCtrlPressed = true;
-                // 按住 Ctrl 启动时，监听焦点变化，确保能捕获 keyup 事件
+                console.log("[Ctrl-Multi] starting focus listener");
                 startFocusListener();
             }
             if (autoHideAfterLaunch?.value) {
