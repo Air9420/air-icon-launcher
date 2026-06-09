@@ -357,7 +357,7 @@ fn open_path_with_shell_execute(path: &Path) -> AppResult<()> {
             windows::core::PCWSTR(target.as_ptr()),
             windows::core::PCWSTR::null(),
             windows::core::PCWSTR::null(),
-            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE,
         )
     };
 
