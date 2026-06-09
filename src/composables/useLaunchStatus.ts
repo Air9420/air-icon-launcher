@@ -57,6 +57,17 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
             onFocusChanged(focused);
         });
         console.log("[Ctrl-Multi] onFocusChanged listener registered");
+        
+        // 延迟检查焦点，因为 onFocusChanged 可能不可靠
+        setTimeout(async () => {
+            if (isCtrlPressed && hasLaunchedWhileCtrlPressed) {
+                const focused = await win.isFocused();
+                console.log("[Ctrl-Multi] delayed focus check, focused:", focused);
+                if (!focused) {
+                    onFocusChanged(false);
+                }
+            }
+        }, 200);
     }
 
     function stopFocusListener() {
