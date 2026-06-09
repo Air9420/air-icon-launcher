@@ -9,7 +9,6 @@ pub mod image;
 pub mod monitor;
 pub mod platform;
 pub mod types;
-pub mod writer;
 
 pub use image::set_clipboard_image_from_png;
 pub use monitor::{start_clipboard_monitor, stop_clipboard_monitor};
@@ -253,12 +252,7 @@ mod tests {
     }
 }
 
-fn simple_hash(data: &[u8]) -> String {
-    use std::hash::{DefaultHasher, Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    data.hash(&mut hasher);
-    format!("{:x}", hasher.finish())
-}
+use types::simple_hash;
 
 #[tauri::command]
 pub fn get_clipboard_content() -> Result<String, String> {
@@ -306,6 +300,7 @@ pub fn set_clipboard_content(
 
 #[tauri::command]
 pub fn get_clipboard_history(
+    filter: Option<String>,
     limit: Option<usize>,
     offset: Option<usize>,
     state: tauri::State<'_, Arc<ClipboardState>>,
@@ -315,15 +310,24 @@ pub fn get_clipboard_history(
         return Ok(Vec::new());
     }
 
+    let filter = filter.unwrap_or_else(|| "all".to_string());
     let limit = limit.unwrap_or(30);
     let offset = offset.unwrap_or(0);
 
     if let Some(db) = state.database.lock().unwrap().as_ref() {
-        let db_records = db
-            .get_all_paged(limit, offset)
-            .map_err(|e| e.to_string())?;
-        let records: Vec<ClipboardRecord> = db_records.into_iter().map(|r| r.into()).collect();
-        return Ok(records);
+        let records = match filter.as_str() {
+            "text" | "image" => {
+                db.get_by_content_type(&filter, limit, offset)
+                    .map_err(|e| e.to_string())?
+            }
+            _ => {
+                db.get_all_paged(limit, offset)
+                    .map_err(|e| e.to_string())?
+            }
+        };
+
+        let result: Vec<ClipboardRecord> = records.into_iter().map(|r| r.into()).collect();
+        return Ok(result);
     }
 
     Ok(Vec::new())
@@ -336,22 +340,7 @@ pub fn get_clipboard_history_by_type(
     offset: Option<usize>,
     state: tauri::State<'_, Arc<ClipboardState>>,
 ) -> Result<Vec<ClipboardRecord>, String> {
-    let config = state.config.lock().unwrap().clone();
-    if !config.history_enabled {
-        return Ok(Vec::new());
-    }
-
-    if let Some(db) = state.database.lock().unwrap().as_ref() {
-        let limit = limit.unwrap_or(30);
-        let offset = offset.unwrap_or(0);
-        let db_records = db
-            .get_by_content_type(&content_type, limit, offset)
-            .map_err(|e| e.to_string())?;
-        let records: Vec<ClipboardRecord> = db_records.into_iter().map(|r| r.into()).collect();
-        return Ok(records);
-    }
-
-    Ok(Vec::new())
+    get_clipboard_history(Some(content_type), limit, offset, state)
 }
 
 #[tauri::command]
