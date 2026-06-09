@@ -165,6 +165,20 @@ function buildBuiltinMenuModel(): MenuItem[] {
     },
     {
       type: "item",
+      id: "builtin:open-clipboard-image-in-explorer",
+      label: "在资源管理器中打开",
+      action: { kind: "open-in-explorer" },
+      order: 65,
+      visible: {
+        and: [
+          { menuType: enumContextMenuType.ClipboardHistoryView },
+          { clipboardContentType: "image" },
+          { itemPath: true },
+        ],
+      },
+    },
+    {
+      type: "item",
       id: "builtin:open-in-explorer",
       label: "在资源管理器中打开",
       action: { kind: "open-in-explorer" },

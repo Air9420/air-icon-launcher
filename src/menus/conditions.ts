@@ -7,6 +7,7 @@ export type VisibilityCondition =
   | { homeSection: "pinned" | "recent" | ("pinned" | "recent")[] }
   | { categorySortMode: CategorySortMode | CategorySortMode[] }
   | { itemPath: true }
+  | { clipboardContentType: "text" | "image" | ("text" | "image")[] }
   | {
       item: {
         pinned?: boolean;
@@ -91,6 +92,17 @@ function isItemPathMatch(
   return !!ctx.itemPath;
 }
 
+function isClipboardContentTypeMatch(
+  condition: { clipboardContentType: "text" | "image" | ("text" | "image")[] },
+  ctx: ResolveContext,
+): boolean {
+  if (!ctx.clipboardContentType) return false;
+  const types = Array.isArray(condition.clipboardContentType)
+    ? condition.clipboardContentType
+    : [condition.clipboardContentType];
+  return types.includes(ctx.clipboardContentType);
+}
+
 function isItemMatch(
   condition: {
     item: {
@@ -164,6 +176,9 @@ export function evaluateCondition(
   }
   if ("itemPath" in condition) {
     return isItemPathMatch(condition, ctx);
+  }
+  if ("clipboardContentType" in condition) {
+    return isClipboardContentTypeMatch(condition, ctx);
   }
   if ("item" in condition) {
     return isItemMatch(condition, ctx);

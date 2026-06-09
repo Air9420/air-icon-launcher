@@ -90,6 +90,7 @@
                         :data-menu-type="'Clipboard-History-View'"
                         :data-clipboard-record-id="item.id"
                         :data-clipboard-content-type="item.content_type"
+                        :data-item-path="item.image_path || undefined"
                         :class="{
                             'is-current': item.hash === currentHash,
                             'is-anchor-flashing': anchorFlashItemId === item.id,
@@ -209,7 +210,6 @@ const {
 const currentHash = computed(() => clipboardStore.currentClipboardHash);
 const imagePreviewMap = ref<Record<string, string>>({});
 const imageLoadingSet = ref<Set<string>>(new Set());
-let imageObserver: IntersectionObserver | null = null;
 const searchKeyword = ref("");
 const selectedFilter = ref<ClipboardFilter>("all");
 const expandedRecordIds = ref<Record<string, boolean>>({});
@@ -229,6 +229,7 @@ const tabRegion = ref<ClipboardTabRegion>("search");
 const focusedFilterIndex = ref(0);
 const focusedRecordIndex = ref(0);
 const displayLimit = ref(50); // 初始显示 50 条，提升首屏速度
+let imageObserver: IntersectionObserver | null = createImageObserver();
 
 const filterOptions: Array<{ key: ClipboardFilter; label: string }> = [
     { key: "all", label: "全部" },
@@ -338,7 +339,6 @@ onMounted(() => {
     document.addEventListener("mousedown", onClipboardMouseDown, true);
     searchInputRef.value?.addEventListener("blur", onSearchInputBlur);
     document.addEventListener("locate-clipboard-item", onLocateClipboardItem);
-    imageObserver = createImageObserver();
     nextTick(() => {
         searchInputRef.value?.focus();
         console.log("[clipboard-history] ✓ onMounted complete, focus set");
@@ -439,16 +439,11 @@ const groupedHistory = computed<ClipboardGroup[]>(() => {
         });
     }
 
-    const typeOrder: ClipboardGroupKey[] = ["text", "code", "image"];
-    for (const key of typeOrder) {
-        const groupItems = rest.filter((record) => getRecordGroupKey(record) === key);
-        if (groupItems.length === 0) {
-            continue;
-        }
+    if (rest.length > 0) {
         sections.push({
-            key,
-            label: getGroupLabel(key),
-            items: groupItems,
+            key: "text",
+            label: "全部",
+            items: rest,
         });
     }
 
