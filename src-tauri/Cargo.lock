@@ -36,7 +36,6 @@ dependencies = [
  "arboard",
  "base64 0.22.1",
  "chrono",
- "crossbeam-channel",
  "fuzzy-matcher",
  "image",
  "lcms2",

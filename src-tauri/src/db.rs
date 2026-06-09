@@ -168,6 +168,89 @@ impl ClipboardDatabase {
         Ok(records)
     }
 
+    pub fn get_all_paged(&self, limit: usize, offset: usize) -> SqliteResult<Vec<ClipboardRecordDb>> {
+        let conn = self.read_conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, content_type, text_content, image_path, hash, timestamp
+             FROM clipboard_records ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2",
+        )?;
+
+        let records = stmt
+            .query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+                Ok(ClipboardRecordDb {
+                    id: row.get(0)?,
+                    content_type: row.get(1)?,
+                    text_content: row.get(2)?,
+                    image_path: row.get(3)?,
+                    hash: row.get(4)?,
+                    timestamp: row.get(5)?,
+                })
+            })?
+            .collect::<SqliteResult<Vec<_>>>()?;
+
+        Ok(records)
+    }
+
+    pub fn get_by_content_type(
+        &self,
+        content_type: &str,
+        limit: usize,
+        offset: usize,
+    ) -> SqliteResult<Vec<ClipboardRecordDb>> {
+        let conn = self.read_conn.lock().unwrap();
+        let sql = if limit > 0 {
+            "SELECT id, content_type, text_content, image_path, hash, timestamp
+             FROM clipboard_records WHERE content_type = ?1
+             ORDER BY timestamp DESC LIMIT ?2 OFFSET ?3"
+        } else {
+            "SELECT id, content_type, text_content, image_path, hash, timestamp
+             FROM clipboard_records WHERE content_type = ?1
+             ORDER BY timestamp DESC"
+        };
+
+        let mut stmt = conn.prepare(sql)?;
+
+        let records = if limit > 0 {
+            stmt.query_map(
+                rusqlite::params![content_type, limit as i64, offset as i64],
+                |row| {
+                    Ok(ClipboardRecordDb {
+                        id: row.get(0)?,
+                        content_type: row.get(1)?,
+                        text_content: row.get(2)?,
+                        image_path: row.get(3)?,
+                        hash: row.get(4)?,
+                        timestamp: row.get(5)?,
+                    })
+                },
+            )?
+            .collect::<SqliteResult<Vec<_>>>()?
+        } else {
+            stmt.query_map([content_type], |row| {
+                Ok(ClipboardRecordDb {
+                    id: row.get(0)?,
+                    content_type: row.get(1)?,
+                    text_content: row.get(2)?,
+                    image_path: row.get(3)?,
+                    hash: row.get(4)?,
+                    timestamp: row.get(5)?,
+                })
+            })?
+            .collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        Ok(records)
+    }
+
+    pub fn count_by_content_type(&self, content_type: &str) -> SqliteResult<i64> {
+        let conn = self.read_conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM clipboard_records WHERE content_type = ?1",
+            [content_type],
+            |row| row.get(0),
+        )
+    }
+
     pub fn get_by_hash(&self, hash: &str) -> SqliteResult<Option<ClipboardRecordDb>> {
         let conn = self.read_conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -276,6 +359,30 @@ impl ClipboardDatabase {
         }
 
         Ok(pruned)
+    }
+
+    pub fn get_latest(&self) -> SqliteResult<Option<ClipboardRecordDb>> {
+        let conn = self.read_conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, content_type, text_content, image_path, hash, timestamp
+             FROM clipboard_records ORDER BY timestamp DESC LIMIT 1",
+        )?;
+
+        let mut records = stmt.query_map([], |row| {
+            Ok(ClipboardRecordDb {
+                id: row.get(0)?,
+                content_type: row.get(1)?,
+                text_content: row.get(2)?,
+                image_path: row.get(3)?,
+                hash: row.get(4)?,
+                timestamp: row.get(5)?,
+            })
+        })?;
+
+        if let Some(record) = records.next() {
+            return record.map(Some);
+        }
+        Ok(None)
     }
 
     pub fn hash_exists(&self, hash: &str) -> SqliteResult<bool> {

@@ -59,7 +59,7 @@ impl Default for ClipboardConfig {
     fn default() -> Self {
         Self {
             history_enabled: true,
-            max_records: 0,
+            max_records: 100,
             max_image_size_mb: 1.0,
             encrypted: false,
             storage_path: None,
@@ -76,4 +76,11 @@ pub struct ClipboardConfigDebug {
     pub disk_max_image_size_mb: f64,
     pub disk_encrypted: bool,
     pub disk_storage_path: Option<String>,
+}
+
+pub fn simple_hash(data: &[u8]) -> String {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    data.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
 }

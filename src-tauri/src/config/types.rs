@@ -161,7 +161,7 @@ impl Default for AppConfig {
             plugin_sandbox_enabled: true,
             clipboard_history_enabled: true,
             home_section_layouts: HomeSectionLayouts::default(),
-            clipboard_max_records: 0,
+            clipboard_max_records: 100,
             clipboard_max_image_size_mb: 1.0,
             clipboard_encrypted: false,
             clipboard_storage_path: None,

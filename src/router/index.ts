@@ -15,6 +15,7 @@ const SettingsData = () => import('../views/settings/Data.vue')
 const SettingsAbout = () => import('../views/settings/About.vue')
 const SettingsStats = () => import('../views/settings/Stats.vue')
 const SettingsDisplay = () => import('../views/settings/Display.vue')
+const SettingsMemoryProfiler = () => import('../views/settings/MemoryProfiler.vue')
 const ClipboardHistory = () => import('../components/ClipboardHistory.vue')
 const Plugins = () => import('../views/plugins.vue')
 
@@ -42,6 +43,7 @@ const routes = [
             { path: 'about', name: 'settings-about', component: SettingsAbout },
             { path: 'stats', name: 'settings-stats', component: SettingsStats },
             { path: 'display', name: 'settings-display', component: SettingsDisplay },
+            { path: 'memory', name: 'settings-memory', component: SettingsMemoryProfiler },
         ]
     },
     { path: '/clipboard', name: 'clipboard', component: ClipboardHistory },

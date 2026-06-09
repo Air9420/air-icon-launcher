@@ -95,6 +95,16 @@ export const useClipboardStore = defineStore("clipboard", () => {
     function clearClipboardHistory() {
         clipboardHistory.value = [];
         favoriteHashes.value = [];
+        void syncFavoriteHashesToBackend();
+    }
+
+    function toggleFavoriteHash(hash: string) {
+        if (favoriteHashes.value.includes(hash)) {
+            favoriteHashes.value = favoriteHashes.value.filter(h => h !== hash);
+        } else {
+            favoriteHashes.value = [hash, ...favoriteHashes.value];
+        }
+        void syncFavoriteHashesToBackend();
     }
 
     async function preloadHistory(filter: string = "all") {
@@ -149,6 +159,7 @@ export const useClipboardStore = defineStore("clipboard", () => {
         addClipboardRecord,
         removeClipboardRecord,
         clearClipboardHistory,
+        toggleFavoriteHash,
         setCurrentClipboardHash,
         preloadHistory,
         loadMore,

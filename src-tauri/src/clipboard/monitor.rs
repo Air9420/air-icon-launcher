@@ -1,4 +1,4 @@
-use super::types::{ClipboardConfig, ClipboardRecord};
+use super::types::{simple_hash, ClipboardConfig, ClipboardRecord};
 use crate::clipboard::image::{get_clipboard_image, save_image_atomic};
 use crate::clipboard::platform::get_clipboard_text;
 use crate::clipboard::ClipboardState;
@@ -320,11 +320,4 @@ fn get_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
-}
-
-fn simple_hash(data: &[u8]) -> String {
-    use std::hash::{DefaultHasher, Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    data.hash(&mut hasher);
-    format!("{:x}", hasher.finish())
 }

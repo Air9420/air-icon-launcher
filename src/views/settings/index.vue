@@ -56,6 +56,7 @@ const tabs = [
     { name: "关于", path: "/settings/about" },
     { name: "统计", path: "/settings/stats" },
     { name: "显示器", path: "/settings/display" },
+    { name: "内存", path: "/settings/memory" },
 ];
 
 function onBack() {

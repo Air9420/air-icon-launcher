@@ -12,6 +12,7 @@ mod drag;
 mod error;
 mod icc;
 mod keyboard_hook;
+mod memory_profiler;
 mod pinyin;
 mod plugins;
 mod process_monitor;
@@ -156,6 +157,8 @@ pub fn run() {
             clipboard::get_current_clipboard_hash,
             clipboard::set_clipboard_content,
             clipboard::get_clipboard_history,
+            clipboard::get_clipboard_history_by_type,
+            clipboard::get_clipboard_type_counts,
             clipboard::clear_clipboard_history,
             clipboard::delete_clipboard_record,
             clipboard::get_clipboard_config,
@@ -233,6 +236,9 @@ pub fn run() {
             icc::select_icc_file,
             icc::get_system_icc_profiles,
             icc::warmup_wcs,
+            commands::memory::get_memory_stats,
+            commands::memory::force_memory_cleanup,
+            commands::memory::get_memory_recommendations,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
