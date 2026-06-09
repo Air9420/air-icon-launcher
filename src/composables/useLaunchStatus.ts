@@ -40,7 +40,18 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
     // 焦点变化时，如果按住 Ctrl 且已启动过应用，抢回焦点
     function onFocusChanged(focused: boolean) {
         if (!focused && isCtrlPressed && hasLaunchedWhileCtrlPressed) {
+            // 连续抢夺焦点，防止被目标应用抢回
             getCurrentWindow().setFocus();
+            setTimeout(() => {
+                if (isCtrlPressed && hasLaunchedWhileCtrlPressed) {
+                    getCurrentWindow().setFocus();
+                }
+            }, 50);
+            setTimeout(() => {
+                if (isCtrlPressed && hasLaunchedWhileCtrlPressed) {
+                    getCurrentWindow().setFocus();
+                }
+            }, 150);
         }
     }
 
