@@ -49,20 +49,23 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
             }
         });
 
-        // 轮询备份（启动后 2 秒内，每 200ms 检查一次）
-        let pollCount = 0;
-        const maxPolls = 10; // 2秒 / 200ms = 10次
-        focusPollInterval = setInterval(async () => {
-            pollCount++;
-            if (pollCount >= maxPolls || !isCtrlPressed || !hasLaunchedWhileCtrlPressed) {
+        // 轮询备份（启动后 2 秒内，每 16ms 检查一次，约 60 帧）
+        let elapsed = 0;
+        const duration = 2000;
+        const interval = 16;
+        focusPollInterval = setInterval(() => {
+            elapsed += interval;
+            if (elapsed >= duration || !isCtrlPressed || !hasLaunchedWhileCtrlPressed) {
                 stopFocusListener();
                 return;
             }
-            const focused = await win.isFocused();
-            if (!focused) {
-                win.setFocus();
-            }
-        }, 200);
+            // 异步检查焦点，不阻塞轮询
+            win.isFocused().then(focused => {
+                if (!focused && isCtrlPressed && hasLaunchedWhileCtrlPressed) {
+                    win.setFocus();
+                }
+            });
+        }, interval);
     }
 
     function stopFocusListener() {
