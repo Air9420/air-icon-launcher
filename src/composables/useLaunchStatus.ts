@@ -51,8 +51,6 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
     async function startFocusListener() {
         if (unlistenFocus) return;
         const win = getCurrentWindow();
-        // 强制窗口保持在最前面，防止被目标应用覆盖
-        await win.setAlwaysOnTop(true);
         unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
             onFocusChanged(focused);
         });
@@ -62,8 +60,6 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
         if (unlistenFocus) {
             unlistenFocus();
             unlistenFocus = null;
-            // 恢复正常窗口层级
-            getCurrentWindow().setAlwaysOnTop(false);
         }
     }
 
