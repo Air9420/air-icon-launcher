@@ -14,6 +14,14 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
     let isCtrlPressed = false;
     let hasLaunchedWhileCtrlPressed = false;
     let hideTimeout: ReturnType<typeof setTimeout> | null = null;
+    let focusInterval: ReturnType<typeof setInterval> | null = null;
+
+    function stopFocusInterval() {
+        if (focusInterval) {
+            clearInterval(focusInterval);
+            focusInterval = null;
+        }
+    }
 
     function onKeyDown(e: KeyboardEvent) {
         if (e.key === "Control" || e.ctrlKey) {
@@ -24,6 +32,7 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
     function onKeyUp(e: KeyboardEvent) {
         if (e.key === "Control" || e.ctrlKey) {
             isCtrlPressed = false;
+            stopFocusInterval();
             if (hideTimeout) {
                 clearTimeout(hideTimeout);
                 hideTimeout = null;
@@ -46,8 +55,16 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
         if (status === "success") {
             if (isCtrlPressed) {
                 hasLaunchedWhileCtrlPressed = true;
-                // 按住 Ctrl 启动时，保持窗口焦点，确保能捕获 keyup 事件
+                // 按住 Ctrl 启动时，持续保持窗口焦点，确保能捕获 keyup 事件
+                stopFocusInterval();
                 getCurrentWindow().setFocus();
+                focusInterval = setInterval(() => {
+                    if (isCtrlPressed) {
+                        getCurrentWindow().setFocus();
+                    } else {
+                        stopFocusInterval();
+                    }
+                }, 100);
             }
             if (autoHideAfterLaunch?.value) {
                 if (isCtrlPressed) {
@@ -97,6 +114,7 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
             window.removeEventListener("keydown", onKeyDown);
             window.removeEventListener("keyup", onKeyUp);
         }
+        stopFocusInterval();
         if (hideTimeout) {
             clearTimeout(hideTimeout);
             hideTimeout = null;
