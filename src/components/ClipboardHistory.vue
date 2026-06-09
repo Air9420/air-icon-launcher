@@ -780,12 +780,7 @@ function isFavorite(record: ClipboardRecord): boolean {
 }
 
 function onToggleFavorite(record: ClipboardRecord) {
-    const hash = record.hash;
-    if (clipboardStore.favoriteHashes.includes(hash)) {
-        clipboardStore.favoriteHashes = clipboardStore.favoriteHashes.filter(h => h !== hash);
-    } else {
-        clipboardStore.favoriteHashes = [hash, ...clipboardStore.favoriteHashes];
-    }
+    clipboardStore.toggleFavoriteHash(record.hash);
 }
 
 function isExpandableText(record: ClipboardRecord): boolean {
