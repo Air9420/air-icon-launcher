@@ -41,17 +41,16 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
     function onFocusChanged(focused: boolean) {
         if (!focused && isCtrlPressed && hasLaunchedWhileCtrlPressed) {
             // 连续抢夺焦点，防止被目标应用抢回
-            getCurrentWindow().setFocus();
-            setTimeout(() => {
-                if (isCtrlPressed && hasLaunchedWhileCtrlPressed) {
-                    getCurrentWindow().setFocus();
-                }
-            }, 50);
-            setTimeout(() => {
-                if (isCtrlPressed && hasLaunchedWhileCtrlPressed) {
-                    getCurrentWindow().setFocus();
-                }
-            }, 150);
+            // 启动已在运行中的应用时，Windows 会激活该应用的现有窗口
+            const win = getCurrentWindow();
+            const delays = [0, 50, 100, 200, 300, 500];
+            for (const delay of delays) {
+                setTimeout(() => {
+                    if (isCtrlPressed && hasLaunchedWhileCtrlPressed) {
+                        win.setFocus();
+                    }
+                }, delay);
+            }
         }
     }
 
