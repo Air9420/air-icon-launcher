@@ -1,6 +1,5 @@
 import { shallowRef, triggerRef, type Ref, onScopeDispose } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { listen } from "@tauri-apps/api/event";
 
 export type LaunchStatus = "launching" | "success";
 
@@ -15,18 +14,17 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
     let isCtrlPressed = false;
     let hasLaunchedWhileCtrlPressed = false;
     let hideTimeout: ReturnType<typeof setTimeout> | null = null;
-    let unlistenFocusChanged: (() => void) | null = null;
+    let unlistenFocus: (() => void) | null = null;
+    let focusPollInterval: ReturnType<typeof setInterval> | null = null;
 
     function onKeyDown(e: KeyboardEvent) {
         if (e.key === "Control" || e.ctrlKey) {
             isCtrlPressed = true;
-            console.log("[Ctrl-Multi] Ctrl pressed");
         }
     }
 
     function onKeyUp(e: KeyboardEvent) {
         if (e.key === "Control" || e.ctrlKey) {
-            console.log("[Ctrl-Multi] Ctrl released, hasLaunched:", hasLaunchedWhileCtrlPressed);
             isCtrlPressed = false;
             stopFocusListener();
             if (hideTimeout) {
@@ -34,7 +32,6 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
                 hideTimeout = null;
             }
             if (hasLaunchedWhileCtrlPressed && autoHideAfterLaunch?.value) {
-                console.log("[Ctrl-Multi] hiding window");
                 getCurrentWindow().hide();
             }
             hasLaunchedWhileCtrlPressed = false;
@@ -42,25 +39,35 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
     }
 
     async function startFocusListener() {
-        if (unlistenFocusChanged) return;
+        if (unlistenFocus) return;
         const win = getCurrentWindow();
-        
-        // 监听后端的焦点变化事件（WinAPI SetWinEventHook，更可靠）
-        unlistenFocusChanged = await listen("focus-changed", async () => {
+
+        // Tauri 焦点事件
+        unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
+            if (!focused && isCtrlPressed && hasLaunchedWhileCtrlPressed) {
+                win.setFocus();
+            }
+        });
+
+        // 轮询备份（每 100ms 检查焦点）
+        focusPollInterval = setInterval(async () => {
             if (isCtrlPressed && hasLaunchedWhileCtrlPressed) {
                 const focused = await win.isFocused();
                 if (!focused) {
-                    console.log("[Ctrl-Multi] focus lost via WinAPI event");
                     win.setFocus();
                 }
             }
-        });
+        }, 100);
     }
 
     function stopFocusListener() {
-        if (unlistenFocusChanged) {
-            unlistenFocusChanged();
-            unlistenFocusChanged = null;
+        if (unlistenFocus) {
+            unlistenFocus();
+            unlistenFocus = null;
+        }
+        if (focusPollInterval) {
+            clearInterval(focusPollInterval);
+            focusPollInterval = null;
         }
     }
 
@@ -73,10 +80,8 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
         launchStatusMap.value.set(itemId, status);
         triggerRef(launchStatusMap);
         if (status === "success") {
-            console.log("[Ctrl-Multi] launch success, isCtrlPressed:", isCtrlPressed);
             if (isCtrlPressed) {
                 hasLaunchedWhileCtrlPressed = true;
-                console.log("[Ctrl-Multi] starting focus listener");
                 startFocusListener();
             }
             if (autoHideAfterLaunch?.value) {
