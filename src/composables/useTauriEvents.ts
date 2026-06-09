@@ -110,19 +110,24 @@ export function useTauriEvents() {
         unlisteners.push(unlistenTraySettings);
 
         const unlistenClipboard = await listen("toggle-clipboard", async () => {
-            // 先隐藏内容，避免看到旧页面
+            // 先设为不可见，这样系统缓存的最后一帧也是透明的
             const transitioning = (window as unknown as Record<string, unknown>).__appIsTransitioning as { value: boolean } | undefined;
             if (transitioning) transitioning.value = true;
 
             // 切换路由
             await router.push("/clipboard");
 
-            // 显示窗口
+            // 显示窗口（此时 opacity=0，系统缓存帧不可见）
             await safeInvoke("show_launcher");
 
-            // 恢复显示
-            requestAnimationFrame(() => {
-                if (transitioning) transitioning.value = false;
+            // 等待下一帧渲染完成后再显示
+            await new Promise<void>(resolve => {
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        if (transitioning) transitioning.value = false;
+                        resolve();
+                    });
+                });
             });
         });
         unlisteners.push(unlistenClipboard);
@@ -141,17 +146,47 @@ export function useTauriEvents() {
                 await saveWindowPosition();
                 await win.hide();
             } else {
-                console.log("[toggle-main] calling show_launcher");
+                // 先设为不可见，这样系统缓存的最后一帧也是透明的
+                const transitioning = (window as unknown as Record<string, unknown>).__appIsTransitioning as { value: boolean } | undefined;
+                if (transitioning) transitioning.value = true;
+
+                // 切换路由
                 router.push("/categories");
+
+                // 显示窗口（此时 opacity=0，系统缓存帧不可见）
                 await safeInvoke("show_launcher");
                 await emit("window-shown", null);
+
+                // 等待下一帧渲染完成后再显示
+                await new Promise<void>(resolve => {
+                    requestAnimationFrame(() => {
+                        requestAnimationFrame(() => {
+                            if (transitioning) transitioning.value = false;
+                            resolve();
+                        });
+                    });
+                });
             }
         });
         unlisteners.push(unlistenToggleMain);
 
         const unlistenCornerHotspot = await listen("corner-hotspot-triggered", async () => {
+            // 先设为不可见，这样系统缓存的最后一帧也是透明的
+            const transitioning = (window as unknown as Record<string, unknown>).__appIsTransitioning as { value: boolean } | undefined;
+            if (transitioning) transitioning.value = true;
+
             router.push("/categories");
             await emit("window-shown", null);
+
+            // 等待下一帧渲染完成后再显示
+            await new Promise<void>(resolve => {
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        if (transitioning) transitioning.value = false;
+                        resolve();
+                    });
+                });
+            });
         });
         unlisteners.push(unlistenCornerHotspot);
 
