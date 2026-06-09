@@ -40,23 +40,15 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
     // 焦点变化时，如果按住 Ctrl 且已启动过应用，抢回焦点
     function onFocusChanged(focused: boolean) {
         if (!focused && isCtrlPressed && hasLaunchedWhileCtrlPressed) {
-            // 连续抢夺焦点，防止被目标应用抢回
-            // 启动已在运行中的应用时，Windows 会激活该应用的现有窗口
-            const win = getCurrentWindow();
-            const delays = [0, 50, 100, 200, 300, 500];
-            for (const delay of delays) {
-                setTimeout(() => {
-                    if (isCtrlPressed && hasLaunchedWhileCtrlPressed) {
-                        win.setFocus();
-                    }
-                }, delay);
-            }
+            getCurrentWindow().setFocus();
         }
     }
 
     async function startFocusListener() {
         if (unlistenFocus) return;
         const win = getCurrentWindow();
+        // 强制窗口保持在最前面，防止被目标应用覆盖
+        await win.setAlwaysOnTop(true);
         unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
             onFocusChanged(focused);
         });
@@ -66,6 +58,8 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
         if (unlistenFocus) {
             unlistenFocus();
             unlistenFocus = null;
+            // 恢复正常窗口层级
+            getCurrentWindow().setAlwaysOnTop(false);
         }
     }
 
