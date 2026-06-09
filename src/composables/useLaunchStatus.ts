@@ -14,14 +14,7 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
     let isCtrlPressed = false;
     let hasLaunchedWhileCtrlPressed = false;
     let hideTimeout: ReturnType<typeof setTimeout> | null = null;
-    let focusInterval: ReturnType<typeof setInterval> | null = null;
-
-    function stopFocusInterval() {
-        if (focusInterval) {
-            clearInterval(focusInterval);
-            focusInterval = null;
-        }
-    }
+    let unlistenFocus: (() => void) | null = null;
 
     function onKeyDown(e: KeyboardEvent) {
         if (e.key === "Control" || e.ctrlKey) {
@@ -32,7 +25,7 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
     function onKeyUp(e: KeyboardEvent) {
         if (e.key === "Control" || e.ctrlKey) {
             isCtrlPressed = false;
-            stopFocusInterval();
+            stopFocusListener();
             if (hideTimeout) {
                 clearTimeout(hideTimeout);
                 hideTimeout = null;
@@ -41,6 +34,28 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
                 getCurrentWindow().hide();
             }
             hasLaunchedWhileCtrlPressed = false;
+        }
+    }
+
+    // 焦点变化时，如果按住 Ctrl 且已启动过应用，抢回焦点
+    function onFocusChanged(focused: boolean) {
+        if (!focused && isCtrlPressed && hasLaunchedWhileCtrlPressed) {
+            getCurrentWindow().setFocus();
+        }
+    }
+
+    async function startFocusListener() {
+        if (unlistenFocus) return;
+        const win = getCurrentWindow();
+        unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
+            onFocusChanged(focused);
+        });
+    }
+
+    function stopFocusListener() {
+        if (unlistenFocus) {
+            unlistenFocus();
+            unlistenFocus = null;
         }
     }
 
@@ -55,16 +70,8 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
         if (status === "success") {
             if (isCtrlPressed) {
                 hasLaunchedWhileCtrlPressed = true;
-                // 按住 Ctrl 启动时，持续保持窗口焦点，确保能捕获 keyup 事件
-                stopFocusInterval();
-                getCurrentWindow().setFocus();
-                focusInterval = setInterval(() => {
-                    if (isCtrlPressed) {
-                        getCurrentWindow().setFocus();
-                    } else {
-                        stopFocusInterval();
-                    }
-                }, 100);
+                // 按住 Ctrl 启动时，监听焦点变化，确保能捕获 keyup 事件
+                startFocusListener();
             }
             if (autoHideAfterLaunch?.value) {
                 if (isCtrlPressed) {
@@ -114,7 +121,7 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
             window.removeEventListener("keydown", onKeyDown);
             window.removeEventListener("keyup", onKeyUp);
         }
-        stopFocusInterval();
+        stopFocusListener();
         if (hideTimeout) {
             clearTimeout(hideTimeout);
             hideTimeout = null;
