@@ -115,6 +115,7 @@ pub fn run() {
 
                 keyboard_hook::set_app_handle(handle.clone());
                 keyboard_hook::start_keyboard_hook();
+                keyboard_hook::start_focus_hook();
             }
             Ok(())
         });

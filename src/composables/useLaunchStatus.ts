@@ -1,5 +1,6 @@
 import { shallowRef, triggerRef, type Ref, onScopeDispose } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 
 export type LaunchStatus = "launching" | "success";
 
@@ -14,7 +15,7 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
     let isCtrlPressed = false;
     let hasLaunchedWhileCtrlPressed = false;
     let hideTimeout: ReturnType<typeof setTimeout> | null = null;
-    let unlistenFocus: (() => void) | null = null;
+    let unlistenFocusChanged: (() => void) | null = null;
 
     function onKeyDown(e: KeyboardEvent) {
         if (e.key === "Control" || e.ctrlKey) {
@@ -40,43 +41,26 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
         }
     }
 
-    // 焦点变化时，如果按住 Ctrl 且已启动过应用，抢回焦点
-    function onFocusChanged(focused: boolean) {
-        if (!focused && isCtrlPressed && hasLaunchedWhileCtrlPressed) {
-            console.log("[Ctrl-Multi] focus lost, grabbing back");
-            getCurrentWindow().setFocus();
-        }
-    }
-
     async function startFocusListener() {
-        if (unlistenFocus) return;
+        if (unlistenFocusChanged) return;
         const win = getCurrentWindow();
-        unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
-            onFocusChanged(focused);
-        });
         
-        // 延迟检查焦点，因为 onFocusChanged 可能不可靠
-        setTimeout(async () => {
+        // 监听后端的焦点变化事件（WinAPI SetWinEventHook，更可靠）
+        unlistenFocusChanged = await listen("focus-changed", async () => {
             if (isCtrlPressed && hasLaunchedWhileCtrlPressed) {
                 const focused = await win.isFocused();
                 if (!focused) {
-                    // 焦点丢失，抢回焦点
-                    await win.setFocus();
-                    // 再次检查 Ctrl 状态（用户可能已经松开）
-                    setTimeout(() => {
-                        if (hasLaunchedWhileCtrlPressed && !isCtrlPressed && autoHideAfterLaunch?.value) {
-                            getCurrentWindow().hide();
-                        }
-                    }, 50);
+                    console.log("[Ctrl-Multi] focus lost via WinAPI event");
+                    win.setFocus();
                 }
             }
-        }, 200);
+        });
     }
 
     function stopFocusListener() {
-        if (unlistenFocus) {
-            unlistenFocus();
-            unlistenFocus = null;
+        if (unlistenFocusChanged) {
+            unlistenFocusChanged();
+            unlistenFocusChanged = null;
         }
     }
 

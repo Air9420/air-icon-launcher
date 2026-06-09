@@ -4,9 +4,11 @@ use std::time::Instant;
 use tauri::Emitter;
 
 #[cfg(target_os = "windows")]
-use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 #[cfg(target_os = "windows")]
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
@@ -15,9 +17,11 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
     UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+    EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
 };
 
 static HOOK_HANDLE: AtomicU64 = AtomicU64::new(0);
+static FOCUS_HOOK_HANDLE: AtomicU64 = AtomicU64::new(0);
 static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
 
 static REGISTERED_VK: AtomicU32 = AtomicU32::new(0);
@@ -290,4 +294,54 @@ pub fn parse_hotkey(hotkey: &str) -> Option<HotkeyConfig> {
     } else {
         None
     }
+}
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn focus_event_proc(
+    _h_win_event_hook: HWINEVENTHOOK,
+    _event: u32,
+    _hwnd: HWND,
+    _id_object: i32,
+    _id_child: i32,
+    _dw_event_thread: u32,
+    _dwms_event_time: u32,
+) {
+    if let Some(handle) = APP_HANDLE.get() {
+        let _ = handle.emit("focus-changed", ());
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn start_focus_hook() -> bool {
+    std::thread::spawn(move || unsafe {
+        let h_instance = GetModuleHandleW(None).expect("Failed to get module handle");
+
+        let hook = SetWinEventHook(
+            EVENT_SYSTEM_FOREGROUND,
+            EVENT_SYSTEM_FOREGROUND,
+            h_instance,
+            Some(focus_event_proc),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+        );
+
+        if !hook.is_invalid() {
+            FOCUS_HOOK_HANDLE.store(hook.0 as u64, Ordering::SeqCst);
+            let mut msg = MSG::default();
+            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                let _ = TranslateMessage(&msg);
+                let _ = DispatchMessageW(&msg);
+            }
+        } else {
+            eprintln!("[focus_hook] Failed to set hook");
+        }
+    });
+
+    true
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn start_focus_hook() -> bool {
+    false
 }
