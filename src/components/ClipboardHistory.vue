@@ -340,12 +340,16 @@ watch(
     { immediate: true }
 );
 
-onMounted(() => {
+onMounted(async () => {
     console.log("[clipboard-history] ▶ onMounted");
     document.addEventListener("keydown", onClipboardKeydown, true);
     document.addEventListener("mousedown", onClipboardMouseDown, true);
     searchInputRef.value?.addEventListener("blur", onSearchInputBlur);
     document.addEventListener("locate-clipboard-item", onLocateClipboardItem);
+    
+    // 加载剪贴板历史
+    await clipboardStore.preloadHistory(selectedFilter.value);
+    
     nextTick(() => {
         searchInputRef.value?.focus();
         console.log("[clipboard-history] ✓ onMounted complete, focus set");
