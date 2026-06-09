@@ -110,15 +110,19 @@ export function useTauriEvents() {
         unlisteners.push(unlistenTraySettings);
 
         const unlistenClipboard = await listen("toggle-clipboard", async () => {
-            const totalStart = performance.now();
-            console.log(`[clipboard-event] ▶ received toggle-clipboard event (total timer started)`);
+            // 先隐藏内容，避免看到旧页面
+            const transitioning = (window as unknown as Record<string, unknown>).__appIsTransitioning as { value: boolean } | undefined;
+            if (transitioning) transitioning.value = true;
+
+            // 切换路由
             await router.push("/clipboard");
-            console.log(`[clipboard-event] ✓ router.push done (${(performance.now() - totalStart).toFixed(1)}ms)`);
-            // 等待下一帧，确保 DOM 已渲染
+
+            // 显示窗口
+            await safeInvoke("show_launcher");
+
+            // 恢复显示
             requestAnimationFrame(() => {
-                console.log(`[clipboard-event] ═══════════════════════════════════════════`);
-                console.log(`[clipboard-event] ✓✓✓ 页面渲染完成 (总耗时: ${(performance.now() - totalStart).toFixed(1)}ms)`);
-                console.log(`[clipboard-event] ═══════════════════════════════════════════`);
+                if (transitioning) transitioning.value = false;
             });
         });
         unlisteners.push(unlistenClipboard);

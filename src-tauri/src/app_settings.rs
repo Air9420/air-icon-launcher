@@ -351,23 +351,11 @@ pub fn register_clipboard_shortcut(app: &AppHandle, shortcut: &str) -> AppResult
         .on_shortcut(shortcut, move |app, _shortcut, event| {
             use tauri_plugin_global_shortcut::ShortcutState;
             if event.state == ShortcutState::Pressed {
-                println!("[clipboard-shortcut] ▶ shortcut pressed");
                 if crate::corner_hotspot::is_fullscreen_app_running() {
-                    println!("[clipboard-shortcut] fullscreen app, skipping");
                     return;
                 }
                 if let Some(window) = app.get_webview_window("main") {
-                    println!("[clipboard-shortcut] emitting toggle-clipboard event");
                     let _ = window.emit("toggle-clipboard", ());
-                    println!("[clipboard-shortcut] event emitted, now showing window");
-                    let (follow, anchor) = app
-                        .state::<AppSettingsState>()
-                        .inner
-                        .lock()
-                        .map(|g| (g.follow_mouse_on_show, g.follow_mouse_y_anchor))
-                        .unwrap_or((false, FollowMouseYAnchor::Center));
-                    show_main_window(app, follow, anchor);
-                    println!("[clipboard-shortcut] ✓ show_main_window done");
                 }
             }
         })

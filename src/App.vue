@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, defineAsyncComponent } from "vue";
+import { computed, onMounted, onBeforeUnmount, defineAsyncComponent, ref } from "vue";
 import { storeToRefs } from "pinia";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -65,6 +65,10 @@ const searchStore = useSearchStore();
 const clipboardStore = useClipboardStore();
 const router = useRouter();
 const isDev = import.meta.env.DEV;
+const isTransitioning = ref(false);
+
+// 暴露到全局，供事件处理使用
+(window as unknown as Record<string, unknown>).__appIsTransitioning = isTransitioning;
 
 const {
     theme,
@@ -269,7 +273,7 @@ onBeforeUnmount(async () => {
 </script>
 
 <template>
-    <main class="main" :style="{ '--performance-mode': performanceMode ? 1 : 0 }" @contextmenu="openContextMenu">
+    <main class="main" :style="{ '--performance-mode': performanceMode ? 1 : 0, opacity: isTransitioning ? 0 : 1 }" @contextmenu="openContextMenu">
         <router-view></router-view>
     </main>
     <ContextMenu
