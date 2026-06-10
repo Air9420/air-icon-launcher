@@ -1328,7 +1328,9 @@ function animateScrollTo(container: HTMLElement, targetScrollTop: number) {
 
 .item-image {
     max-width: 100%;
+    max-height: 200px;
     border-radius: 8px;
+    object-fit: contain;
 }
 
 .item-image-placeholder {
@@ -1338,6 +1340,10 @@ function animateScrollTo(container: HTMLElement, targetScrollTop: number) {
     background: var(--hover-bg);
     color: var(--text-hint);
     font-size: 12px;
+    min-height: 100px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .item-actions {
