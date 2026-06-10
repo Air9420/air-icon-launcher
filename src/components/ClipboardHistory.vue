@@ -13,7 +13,7 @@
             <button
                 class="clear-btn"
                 type="button"
-                @click="onClearAll"
+                @click="handleClearAll"
                 @mousedown.stop
                 :disabled="history.length === 0"
             >
@@ -198,10 +198,12 @@ import { getRecordContent, type ClipboardRecord } from "../stores/clipboardStore
 import { useClipboardStore } from "../stores/clipboardStore";
 import { useClipboardEvents } from "../composables/useClipboardEvents";
 import { readLocalImageAsDataUrl } from "../utils/system-commands";
+import { useConfirmDialog } from "../composables/useConfirmDialog";
 
 const router = useRouter();
 const route = useRoute();
 const clipboardStore = useClipboardStore();
+const { confirm } = useConfirmDialog();
 const {
     history,
     onCopyItem,
@@ -496,6 +498,31 @@ watch(flatVisibleRecords, (records) => {
     }
     focusedRecordIndex.value = Math.max(0, Math.min(focusedRecordIndex.value, records.length - 1));
 });
+
+async function handleClearAll() {
+    const filter = selectedFilter.value;
+    let title = "清空全部历史";
+    let message = "确定要清空全部剪贴板历史吗？此操作不可撤销。";
+    
+    if (filter === "text") {
+        title = "清空文本历史";
+        message = "确定要清空所有文本类型的剪贴板历史吗？此操作不可撤销。";
+    } else if (filter === "image") {
+        title = "清空图片历史";
+        message = "确定要清空所有图片类型的剪贴板历史吗？此操作不可撤销。";
+    }
+    
+    const confirmed = await confirm({
+        title,
+        message,
+        confirmText: "清空",
+        cancelText: "取消",
+    });
+    
+    if (confirmed) {
+        await onClearAll(filter);
+    }
+}
 
 function onBack() {
     router.back();

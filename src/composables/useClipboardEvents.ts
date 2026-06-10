@@ -99,10 +99,15 @@ export function useClipboardEvents() {
         }
     }
 
-    async function onClearAll() {
+    async function onClearAll(filter: string = "all") {
         try {
-            await invokeOrThrow("clear_clipboard_history");
-            clipboardStore.clearClipboardHistory();
+            if (filter === "all") {
+                await invokeOrThrow("clear_clipboard_history");
+            } else if (filter === "text" || filter === "image") {
+                await invokeOrThrow("clear_clipboard_history_by_type", { contentType: filter });
+            }
+            // 重新加载当前分类的数据
+            await clipboardStore.preloadHistory(filter);
         } catch (e) {
             console.error("Failed to clear history:", e);
         }

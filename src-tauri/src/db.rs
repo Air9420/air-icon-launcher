@@ -410,6 +410,23 @@ impl ClipboardDatabase {
 
         Ok(images)
     }
+
+    pub fn clear_by_content_type(&self, content_type: &str) -> SqliteResult<Vec<String>> {
+        let conn = self.write_conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT image_path FROM clipboard_records WHERE content_type = ?1 AND image_path IS NOT NULL",
+        )?;
+
+        let images: Vec<String> = stmt
+            .query_map([content_type], |row| row.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .filter(|p| !p.is_empty())
+            .collect();
+
+        conn.execute("DELETE FROM clipboard_records WHERE content_type = ?1", [content_type])?;
+
+        Ok(images)
+    }
 }
 
 #[derive(Debug, Clone)]

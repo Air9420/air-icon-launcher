@@ -371,6 +371,21 @@ pub fn clear_clipboard_history(state: tauri::State<'_, Arc<ClipboardState>>) -> 
 }
 
 #[tauri::command]
+pub fn clear_clipboard_history_by_type(
+    content_type: String,
+    state: tauri::State<'_, Arc<ClipboardState>>,
+) -> Result<(), String> {
+    if let Some(db) = state.database.lock().unwrap().as_ref() {
+        let images = db.clear_by_content_type(&content_type).map_err(|e| e.to_string())?;
+        for image_path in images {
+            let _ = std::fs::remove_file(image_path);
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub fn delete_clipboard_record(
     id: String,
     state: tauri::State<'_, Arc<ClipboardState>>,
