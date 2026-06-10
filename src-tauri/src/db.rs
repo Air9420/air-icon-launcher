@@ -4,6 +4,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
 
+use crate::migration::{backup_database, MigrationRunner};
+
 fn configure_connection(conn: &Connection) -> SqliteResult<()> {
     conn.execute_batch(
         "PRAGMA journal_mode=WAL;
@@ -52,14 +54,26 @@ pub struct PrunedClipboardRecord {
 
 #[allow(dead_code)]
 impl ClipboardDatabase {
-    pub fn new(db_path: &Path) -> SqliteResult<Self> {
+    pub fn new(db_path: &Path, favorite_hashes: Vec<String>) -> SqliteResult<Self> {
         if let Some(parent) = db_path.parent() {
             fs::create_dir_all(parent).ok();
+        }
+
+        // 备份数据库（如果存在）
+        if db_path.exists() {
+            if let Err(e) = backup_database(db_path) {
+                eprintln!("Failed to backup database: {}", e);
+            }
         }
 
         let write_conn = Connection::open(db_path)?;
         configure_connection(&write_conn)?;
         initialize_schema(&write_conn)?;
+
+        // 执行迁移
+        let runner = MigrationRunner::new(favorite_hashes);
+        runner.run(&write_conn)?;
+
         let read_conn = Connection::open(db_path)?;
         configure_connection(&read_conn)?;
 
