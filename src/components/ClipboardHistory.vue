@@ -510,6 +510,12 @@ async function handleClearAll() {
     } else if (filter === "image") {
         title = "清空图片历史";
         message = "确定要清空所有图片类型的剪贴板历史吗？此操作不可撤销。";
+    } else if (filter === "code") {
+        title = "清空代码历史";
+        message = "确定要清空所有代码类型的剪贴板历史吗？此操作不可撤销。";
+    } else if (filter === "favorites") {
+        title = "清空收藏";
+        message = "确定要清空所有收藏吗？收藏的记录不会被删除，只是取消收藏状态。";
     }
     
     const confirmed = await confirm({
@@ -804,11 +810,11 @@ function getGroupLabel(group: ClipboardGroupKey): string {
 }
 
 function isFavorite(record: ClipboardRecord): boolean {
-    return clipboardStore.favoriteHashes.includes(record.hash);
+    return record.is_favorite;
 }
 
 function onToggleFavorite(record: ClipboardRecord) {
-    clipboardStore.toggleFavoriteHash(record.hash);
+    clipboardStore.toggleFavorite(record.id);
 }
 
 function isExpandableText(record: ClipboardRecord): boolean {
