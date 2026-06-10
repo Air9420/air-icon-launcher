@@ -53,7 +53,8 @@ impl ClipboardState {
             .unwrap_or(&storage_path)
             .join("images");
 
-        let database = ClipboardDatabase::new(&db_path).ok();
+        let favorite_hashes = app_config.clipboard_favorite_hashes.clone();
+        let database = ClipboardDatabase::new(&db_path, favorite_hashes.clone()).ok();
 
         fs::create_dir_all(&images_dir).ok();
 
@@ -70,7 +71,7 @@ impl ClipboardState {
             storage_path: Arc::new(Mutex::new(storage_path)),
             database: Arc::new(Mutex::new(database)),
             images_dir: Arc::new(Mutex::new(images_dir)),
-            favorite_hashes: Arc::new(Mutex::new(HashSet::new())),
+            favorite_hashes: Arc::new(Mutex::new(favorite_hashes.into_iter().collect())),
         }
     }
 
@@ -88,7 +89,7 @@ impl ClipboardState {
         }
         fs::create_dir_all(&images_dir).map_err(|e| e.to_string())?;
 
-        let new_db = ClipboardDatabase::new(&db_path).map_err(|e| e.to_string())?;
+        let new_db = ClipboardDatabase::new(&db_path, Vec::new()).map_err(|e| e.to_string())?;
 
         let mut db_lock = self.database.lock().unwrap();
         *db_lock = Some(new_db);
@@ -140,13 +141,24 @@ fn enforce_runtime_max_records(
 pub fn set_clipboard_favorite_hashes(
     hashes: Vec<String>,
     state: tauri::State<'_, Arc<ClipboardState>>,
+    config_manager: tauri::State<'_, crate::config::ConfigManager>,
 ) -> Result<(), String> {
-    let mut favorite_hashes = state.favorite_hashes.lock().unwrap();
-    *favorite_hashes = hashes
+    let cleaned_hashes: Vec<String> = hashes
         .into_iter()
         .map(|hash| hash.trim().to_string())
         .filter(|hash| !hash.is_empty())
         .collect();
+
+    {
+        let mut favorite_hashes = state.favorite_hashes.lock().unwrap();
+        *favorite_hashes = cleaned_hashes.iter().cloned().collect();
+    }
+
+    // 同步到配置文件
+    let mut app_config = config_manager.load_config();
+    app_config.clipboard_favorite_hashes = cleaned_hashes;
+    config_manager.save_config(&app_config)?;
+
     Ok(())
 }
 
@@ -320,6 +332,14 @@ pub fn get_clipboard_history(
                 db.get_by_content_type(&filter, limit, offset)
                     .map_err(|e| e.to_string())?
             }
+            "code" => {
+                db.get_by_subtype("code", limit, offset)
+                    .map_err(|e| e.to_string())?
+            }
+            "favorites" => {
+                db.get_favorites(limit, offset)
+                    .map_err(|e| e.to_string())?
+            }
             _ => {
                 db.get_all_paged(limit, offset)
                     .map_err(|e| e.to_string())?
@@ -350,20 +370,48 @@ pub fn get_clipboard_type_counts(
     if let Some(db) = state.database.lock().unwrap().as_ref() {
         let text_count = db.count_by_content_type("text").unwrap_or(0);
         let image_count = db.count_by_content_type("image").unwrap_or(0);
+        let code_count = db.count_by_content_subtype("code").unwrap_or(0);
+        let favorites_count = db.count_favorites().unwrap_or(0);
         return Ok(serde_json::json!({
             "text": text_count,
             "image": image_count,
+            "code": code_count,
+            "favorites": favorites_count,
         }));
     }
-    Ok(serde_json::json!({ "text": 0, "image": 0 }))
+    Ok(serde_json::json!({ "text": 0, "image": 0, "code": 0, "favorites": 0 }))
 }
 
 #[tauri::command]
-pub fn clear_clipboard_history(state: tauri::State<'_, Arc<ClipboardState>>) -> Result<(), String> {
+pub fn clear_clipboard_history(
+    filter: Option<String>,
+    state: tauri::State<'_, Arc<ClipboardState>>,
+) -> Result<(), String> {
     if let Some(db) = state.database.lock().unwrap().as_ref() {
-        let images = db.clear().map_err(|e| e.to_string())?;
-        for image_path in images {
-            let _ = std::fs::remove_file(image_path);
+        let filter = filter.unwrap_or_else(|| "all".to_string());
+
+        match filter.as_str() {
+            "text" | "image" => {
+                let images = db.clear_by_content_type(&filter).map_err(|e| e.to_string())?;
+                for image_path in images {
+                    let _ = std::fs::remove_file(image_path);
+                }
+            }
+            "code" => {
+                let images = db.clear_by_subtype("code").map_err(|e| e.to_string())?;
+                for image_path in images {
+                    let _ = std::fs::remove_file(image_path);
+                }
+            }
+            "favorites" => {
+                db.clear_favorites().map_err(|e| e.to_string())?;
+            }
+            _ => {
+                let images = db.clear().map_err(|e| e.to_string())?;
+                for image_path in images {
+                    let _ = std::fs::remove_file(image_path);
+                }
+            }
         }
     }
 
@@ -398,6 +446,18 @@ pub fn delete_clipboard_record(
         }
     }
 
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_clipboard_favorite(
+    id: String,
+    is_favorite: bool,
+    state: tauri::State<'_, Arc<ClipboardState>>,
+) -> Result<(), String> {
+    if let Some(db) = state.database.lock().unwrap().as_ref() {
+        db.set_favorite(&id, is_favorite).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 

@@ -43,6 +43,14 @@ impl Migration for AddFavoriteAndSubtypeFields {
         }
 
         // 迁移 content_subtype 数据
+        //
+        // 注意：代码检测是"尽力而为"的启发式方法，基于简单的关键词匹配。
+        // 这种方法有局限性：
+        // - 可能误判包含代码关键词的普通文本为代码
+        // - 可能遗漏不常见语法的代码片段
+        // - 不支持所有编程语言
+        //
+        // 如果需要更精确的代码检测，建议使用专门的语法分析库。
         conn.execute(
             "UPDATE clipboard_records SET content_subtype = CASE
                 WHEN content_type = 'image' THEN 'image'
@@ -76,7 +84,10 @@ impl Migration for AddFavoriteAndSubtypeFields {
     }
 
     fn down(&self, _conn: &Connection) -> SqliteResult<()> {
-        // SQLite 不支持 DROP COLUMN（3.35.0 之前）
-        Ok(())
+        // SQLite 3.35.0 之前不支持 DROP COLUMN
+        // 回滚此迁移需要重建表，风险较高，建议从备份恢复
+        Err(rusqlite::Error::InvalidParameterName(
+            "Rollback of V2 migration is not supported. Restore from backup instead.".to_string(),
+        ))
     }
 }

@@ -164,6 +164,7 @@ pub fn run() {
             clipboard::clear_clipboard_history,
             clipboard::clear_clipboard_history_by_type,
             clipboard::delete_clipboard_record,
+            clipboard::set_clipboard_favorite,
             clipboard::get_clipboard_config,
             clipboard::get_clipboard_config_debug,
             clipboard::set_clipboard_config,

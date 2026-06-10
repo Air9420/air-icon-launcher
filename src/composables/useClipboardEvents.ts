@@ -101,11 +101,7 @@ export function useClipboardEvents() {
 
     async function onClearAll(filter: string = "all") {
         try {
-            if (filter === "all") {
-                await invokeOrThrow("clear_clipboard_history");
-            } else if (filter === "text" || filter === "image") {
-                await invokeOrThrow("clear_clipboard_history_by_type", { contentType: filter });
-            }
+            await invokeOrThrow("clear_clipboard_history", { filter });
             // 重新加载当前分类的数据
             await clipboardStore.preloadHistory(filter);
         } catch (e) {

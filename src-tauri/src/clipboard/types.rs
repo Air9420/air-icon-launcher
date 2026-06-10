@@ -6,10 +6,12 @@ pub struct ClipboardRecord {
     pub id: String,
     #[serde(rename = "content_type")]
     pub record_type: String,
+    pub content_subtype: Option<String>,
     pub text_content: Option<String>,
     pub image_path: Option<String>,
     pub hash: String,
     pub timestamp: u64,
+    pub is_favorite: bool,
 }
 
 impl From<ClipboardRecordDb> for ClipboardRecord {
@@ -17,10 +19,12 @@ impl From<ClipboardRecordDb> for ClipboardRecord {
         Self {
             id: db_record.id,
             record_type: db_record.content_type,
+            content_subtype: db_record.content_subtype,
             text_content: db_record.text_content,
             image_path: db_record.image_path,
             hash: db_record.hash,
             timestamp: db_record.timestamp as u64,
+            is_favorite: db_record.is_favorite,
         }
     }
 }
@@ -30,10 +34,12 @@ impl From<&ClipboardRecord> for ClipboardRecordDb {
         Self {
             id: record.id.clone(),
             content_type: record.record_type.clone(),
+            content_subtype: record.content_subtype.clone(),
             text_content: record.text_content.clone(),
             image_path: record.image_path.clone(),
             hash: record.hash.clone(),
             timestamp: record.timestamp as i64,
+            is_favorite: record.is_favorite,
         }
     }
 }

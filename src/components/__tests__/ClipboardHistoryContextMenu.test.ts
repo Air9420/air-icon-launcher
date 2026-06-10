@@ -51,18 +51,22 @@ describe("ClipboardHistory Context Menu", () => {
             {
                 id: "test-id-1",
                 content_type: "text",
+                content_subtype: null,
                 text_content: "Hello World",
                 image_path: null,
                 hash: "hash-1",
                 timestamp: Date.now(),
+                is_favorite: false,
             },
             {
                 id: "test-id-2",
                 content_type: "text",
+                content_subtype: null,
                 text_content: "Test Content",
                 image_path: null,
                 hash: "hash-2",
                 timestamp: Date.now() - 60000,
+                is_favorite: false,
             },
         ];
 
@@ -83,10 +87,12 @@ describe("ClipboardHistory Context Menu", () => {
             {
                 id: "image-id-1",
                 content_type: "image",
+                content_subtype: null,
                 text_content: null,
                 image_path: "/path/to/image.png",
                 hash: "image-hash-1",
                 timestamp: Date.now(),
+                is_favorite: false,
             },
         ];
 
@@ -107,10 +113,12 @@ describe("ClipboardHistory Context Menu", () => {
             {
                 id: "locate-test-id",
                 content_type: "text",
+                content_subtype: null,
                 text_content: "Locate me",
                 image_path: null,
                 hash: "locate-hash",
                 timestamp: Date.now(),
+                is_favorite: false,
             },
         ];
 
@@ -134,10 +142,12 @@ describe("ClipboardHistory Context Menu", () => {
             {
                 id: "locate-id",
                 content_type: "text",
+                content_subtype: null,
                 text_content: "Some text",
                 image_path: null,
                 hash: "locate-hash",
                 timestamp: Date.now(),
+                is_favorite: false,
             },
         ];
 
@@ -168,18 +178,22 @@ describe("ClipboardHistory Context Menu", () => {
             {
                 id: "item-1",
                 content_type: "text",
+                content_subtype: null,
                 text_content: "First item",
                 image_path: null,
                 hash: "hash-1",
                 timestamp: Date.now(),
+                is_favorite: false,
             },
             {
                 id: "item-2",
                 content_type: "text",
+                content_subtype: null,
                 text_content: "Second item",
                 image_path: null,
                 hash: "hash-2",
                 timestamp: Date.now() - 60000,
+                is_favorite: false,
             },
         ];
 
@@ -196,10 +210,12 @@ describe("ClipboardHistory Context Menu", () => {
             {
                 id: "delete-test-id",
                 content_type: "text",
+                content_subtype: null,
                 text_content: "Delete me",
                 image_path: null,
                 hash: "delete-hash",
                 timestamp: Date.now(),
+                is_favorite: false,
             },
         ];
 
@@ -215,10 +231,12 @@ describe("ClipboardHistory Context Menu", () => {
             {
                 id: "fav-test-id",
                 content_type: "text",
+                content_subtype: null,
                 text_content: "Favorite me",
                 image_path: null,
                 hash: "fav-hash",
                 timestamp: Date.now(),
+                is_favorite: false,
             },
         ];
 
@@ -234,10 +252,12 @@ describe("ClipboardHistory Context Menu", () => {
             {
                 id: "integration-id",
                 content_type: "text",
+                content_subtype: null,
                 text_content: "Integration test",
                 image_path: null,
                 hash: "integration-hash",
                 timestamp: Date.now(),
+                is_favorite: false,
             },
         ];
 

@@ -13,6 +13,54 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 use tauri::{Emitter, Manager};
 
+/// 检测文本内容是否为代码
+fn detect_code_subtype(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    
+    // 代码特征模式
+    let code_patterns = [
+        // 常见代码关键字
+        "function ", "const ", "let ", "var ", "class ", "import ", "export ",
+        "def ", "return ", "if (", "for (", "while (", "switch (",
+        "public ", "private ", "protected ", "static ", "void ", "int ",
+        "#include", "#define", "#pragma",
+        // 常见代码符号组合
+        "({", "})", "=>", "->", "::", "&&", "||", "!=",
+        // 常见代码结构
+        "};", "];", ");", "{\n", "}\n",
+        // HTML/XML
+        "</div>", "</span>", "<script", "<style", "<template",
+        // Shell/命令行
+        "$ ", "#!/", "sudo ", "chmod ", "mkdir ",
+        // SQL
+        "SELECT ", "INSERT ", "UPDATE ", "DELETE ", "CREATE TABLE",
+        // JSON
+        "\"\":", "\"\": ",
+    ];
+    
+    let code_keyword_count = code_patterns.iter()
+        .filter(|pattern| trimmed.contains(*pattern))
+        .count();
+    
+    // 如果匹配多个代码特征，认为是代码
+    if code_keyword_count >= 2 {
+        return Some("code".to_string());
+    }
+    
+    // 检查是否有多行且有缩进（代码的常见特征）
+    let lines: Vec<&str> = trimmed.lines().collect();
+    if lines.len() >= 3 {
+        let indented_lines = lines.iter()
+            .filter(|line| line.starts_with("    ") || line.starts_with("\t"))
+            .count();
+        if indented_lines >= 2 {
+            return Some("code".to_string());
+        }
+    }
+    
+    None
+}
+
 pub struct EventDeduplicator {
     last_event_hash: Option<String>,
     last_event_time: Option<Instant>,
@@ -235,10 +283,12 @@ fn process_clipboard_change(
                 let record = ClipboardRecord {
                     id,
                     record_type: "image".to_string(),
+                    content_subtype: None,
                     text_content: None,
                     image_path,
                     hash: hash.clone(),
                     timestamp: get_timestamp(),
+                    is_favorite: false,
                 };
 
                 if let Some(db) = database.lock().unwrap().as_ref() {
@@ -275,13 +325,17 @@ fn process_clipboard_change(
                     }
                 }
 
+                let content_subtype = detect_code_subtype(&text);
+
                 let record = ClipboardRecord {
                     id: generate_id(),
                     record_type: "text".to_string(),
+                    content_subtype,
                     text_content: Some(text.clone()),
                     image_path: None,
                     hash: hash.clone(),
                     timestamp: get_timestamp(),
+                    is_favorite: false,
                 };
 
                 if let Some(db) = database.lock().unwrap().as_ref() {

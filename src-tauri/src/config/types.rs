@@ -99,6 +99,8 @@ pub struct AppConfig {
     pub clipboard_encrypted: bool,
     #[serde(alias = "clipboardStoragePath")]
     pub clipboard_storage_path: Option<String>,
+    #[serde(alias = "clipboardFavoriteHashes")]
+    pub clipboard_favorite_hashes: Vec<String>,
     #[serde(alias = "backupOnExit")]
     pub backup_on_exit: bool,
     #[serde(alias = "backupFrequency")]
@@ -165,6 +167,7 @@ impl Default for AppConfig {
             clipboard_max_image_size_mb: 1.0,
             clipboard_encrypted: false,
             clipboard_storage_path: None,
+            clipboard_favorite_hashes: Vec::new(),
             backup_on_exit: false,
             backup_frequency: "none".to_string(),
             backup_retention: 10,

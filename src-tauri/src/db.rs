@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
 
-use crate::migration::{backup_database, MigrationRunner};
+use crate::migration::MigrationRunner;
 
 fn configure_connection(conn: &Connection) -> SqliteResult<()> {
     conn.execute_batch(
@@ -20,10 +20,12 @@ fn initialize_schema(conn: &Connection) -> SqliteResult<()> {
         "CREATE TABLE IF NOT EXISTS clipboard_records (
             id TEXT PRIMARY KEY,
             content_type TEXT NOT NULL,
+            content_subtype TEXT,
             text_content TEXT,
             image_path TEXT,
             hash TEXT NOT NULL,
-            timestamp INTEGER NOT NULL
+            timestamp INTEGER NOT NULL,
+            is_favorite INTEGER NOT NULL DEFAULT 0
         )",
         [],
     )?;
@@ -35,6 +37,16 @@ fn initialize_schema(conn: &Connection) -> SqliteResult<()> {
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_time ON clipboard_records(timestamp DESC)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_subtype ON clipboard_records(content_subtype)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_favorite ON clipboard_records(is_favorite)",
         [],
     )?;
 
@@ -59,20 +71,13 @@ impl ClipboardDatabase {
             fs::create_dir_all(parent).ok();
         }
 
-        // 备份数据库（如果存在）
-        if db_path.exists() {
-            if let Err(e) = backup_database(db_path) {
-                eprintln!("Failed to backup database: {}", e);
-            }
-        }
-
         let write_conn = Connection::open(db_path)?;
         configure_connection(&write_conn)?;
         initialize_schema(&write_conn)?;
 
-        // 执行迁移
+        // 执行迁移（迁移内部会在需要时备份数据库）
         let runner = MigrationRunner::new(favorite_hashes);
-        runner.run(&write_conn)?;
+        runner.run(&write_conn, db_path)?;
 
         let read_conn = Connection::open(db_path)?;
         configure_connection(&read_conn)?;
@@ -86,15 +91,17 @@ impl ClipboardDatabase {
     pub fn insert(&self, record: &ClipboardRecordDb) -> SqliteResult<()> {
         let conn = self.write_conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO clipboard_records (id, content_type, text_content, image_path, hash, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO clipboard_records (id, content_type, content_subtype, text_content, image_path, hash, timestamp, is_favorite)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 record.id,
                 record.content_type,
+                record.content_subtype,
                 record.text_content,
                 record.image_path,
                 record.hash,
-                record.timestamp
+                record.timestamp,
+                record.is_favorite
             ],
         )?;
         Ok(())
@@ -105,15 +112,17 @@ impl ClipboardDatabase {
         let tx = conn.transaction()?;
         for record in records {
             tx.execute(
-                "INSERT INTO clipboard_records (id, content_type, text_content, image_path, hash, timestamp)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO clipboard_records (id, content_type, content_subtype, text_content, image_path, hash, timestamp, is_favorite)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     record.id,
                     record.content_type,
+                    record.content_subtype,
                     record.text_content,
                     record.image_path,
                     record.hash,
-                    record.timestamp
+                    record.timestamp,
+                    record.is_favorite
                 ],
             )?;
         }
@@ -162,7 +171,7 @@ impl ClipboardDatabase {
     pub fn get_all(&self) -> SqliteResult<Vec<ClipboardRecordDb>> {
         let conn = self.read_conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_type, text_content, image_path, hash, timestamp
+            "SELECT id, content_type, content_subtype, text_content, image_path, hash, timestamp, is_favorite
              FROM clipboard_records ORDER BY timestamp DESC",
         )?;
 
@@ -171,10 +180,12 @@ impl ClipboardDatabase {
                 Ok(ClipboardRecordDb {
                     id: row.get(0)?,
                     content_type: row.get(1)?,
-                    text_content: row.get(2)?,
-                    image_path: row.get(3)?,
-                    hash: row.get(4)?,
-                    timestamp: row.get(5)?,
+                    content_subtype: row.get(2)?,
+                    text_content: row.get(3)?,
+                    image_path: row.get(4)?,
+                    hash: row.get(5)?,
+                    timestamp: row.get(6)?,
+                    is_favorite: row.get(7)?,
                 })
             })?
             .collect::<SqliteResult<Vec<_>>>()?;
@@ -185,7 +196,7 @@ impl ClipboardDatabase {
     pub fn get_all_paged(&self, limit: usize, offset: usize) -> SqliteResult<Vec<ClipboardRecordDb>> {
         let conn = self.read_conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_type, text_content, image_path, hash, timestamp
+            "SELECT id, content_type, content_subtype, text_content, image_path, hash, timestamp, is_favorite
              FROM clipboard_records ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2",
         )?;
 
@@ -194,10 +205,12 @@ impl ClipboardDatabase {
                 Ok(ClipboardRecordDb {
                     id: row.get(0)?,
                     content_type: row.get(1)?,
-                    text_content: row.get(2)?,
-                    image_path: row.get(3)?,
-                    hash: row.get(4)?,
-                    timestamp: row.get(5)?,
+                    content_subtype: row.get(2)?,
+                    text_content: row.get(3)?,
+                    image_path: row.get(4)?,
+                    hash: row.get(5)?,
+                    timestamp: row.get(6)?,
+                    is_favorite: row.get(7)?,
                 })
             })?
             .collect::<SqliteResult<Vec<_>>>()?;
@@ -213,11 +226,11 @@ impl ClipboardDatabase {
     ) -> SqliteResult<Vec<ClipboardRecordDb>> {
         let conn = self.read_conn.lock().unwrap();
         let sql = if limit > 0 {
-            "SELECT id, content_type, text_content, image_path, hash, timestamp
+            "SELECT id, content_type, content_subtype, text_content, image_path, hash, timestamp, is_favorite
              FROM clipboard_records WHERE content_type = ?1
              ORDER BY timestamp DESC LIMIT ?2 OFFSET ?3"
         } else {
-            "SELECT id, content_type, text_content, image_path, hash, timestamp
+            "SELECT id, content_type, content_subtype, text_content, image_path, hash, timestamp, is_favorite
              FROM clipboard_records WHERE content_type = ?1
              ORDER BY timestamp DESC"
         };
@@ -231,10 +244,12 @@ impl ClipboardDatabase {
                     Ok(ClipboardRecordDb {
                         id: row.get(0)?,
                         content_type: row.get(1)?,
-                        text_content: row.get(2)?,
-                        image_path: row.get(3)?,
-                        hash: row.get(4)?,
-                        timestamp: row.get(5)?,
+                        content_subtype: row.get(2)?,
+                        text_content: row.get(3)?,
+                        image_path: row.get(4)?,
+                        hash: row.get(5)?,
+                        timestamp: row.get(6)?,
+                        is_favorite: row.get(7)?,
                     })
                 },
             )?
@@ -244,10 +259,12 @@ impl ClipboardDatabase {
                 Ok(ClipboardRecordDb {
                     id: row.get(0)?,
                     content_type: row.get(1)?,
-                    text_content: row.get(2)?,
-                    image_path: row.get(3)?,
-                    hash: row.get(4)?,
-                    timestamp: row.get(5)?,
+                    content_subtype: row.get(2)?,
+                    text_content: row.get(3)?,
+                    image_path: row.get(4)?,
+                    hash: row.get(5)?,
+                    timestamp: row.get(6)?,
+                    is_favorite: row.get(7)?,
                 })
             })?
             .collect::<SqliteResult<Vec<_>>>()?
@@ -268,7 +285,7 @@ impl ClipboardDatabase {
     pub fn get_by_hash(&self, hash: &str) -> SqliteResult<Option<ClipboardRecordDb>> {
         let conn = self.read_conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_type, text_content, image_path, hash, timestamp
+            "SELECT id, content_type, content_subtype, text_content, image_path, hash, timestamp, is_favorite
              FROM clipboard_records WHERE hash = ?1",
         )?;
 
@@ -276,10 +293,12 @@ impl ClipboardDatabase {
             Ok(ClipboardRecordDb {
                 id: row.get(0)?,
                 content_type: row.get(1)?,
-                text_content: row.get(2)?,
-                image_path: row.get(3)?,
-                hash: row.get(4)?,
-                timestamp: row.get(5)?,
+                content_subtype: row.get(2)?,
+                text_content: row.get(3)?,
+                image_path: row.get(4)?,
+                hash: row.get(5)?,
+                timestamp: row.get(6)?,
+                is_favorite: row.get(7)?,
             })
         })?;
 
@@ -378,7 +397,7 @@ impl ClipboardDatabase {
     pub fn get_latest(&self) -> SqliteResult<Option<ClipboardRecordDb>> {
         let conn = self.read_conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_type, text_content, image_path, hash, timestamp
+            "SELECT id, content_type, content_subtype, text_content, image_path, hash, timestamp, is_favorite
              FROM clipboard_records ORDER BY timestamp DESC LIMIT 1",
         )?;
 
@@ -386,10 +405,12 @@ impl ClipboardDatabase {
             Ok(ClipboardRecordDb {
                 id: row.get(0)?,
                 content_type: row.get(1)?,
-                text_content: row.get(2)?,
-                image_path: row.get(3)?,
-                hash: row.get(4)?,
-                timestamp: row.get(5)?,
+                content_subtype: row.get(2)?,
+                text_content: row.get(3)?,
+                image_path: row.get(4)?,
+                hash: row.get(5)?,
+                timestamp: row.get(6)?,
+                is_favorite: row.get(7)?,
             })
         })?;
 
@@ -441,16 +462,120 @@ impl ClipboardDatabase {
 
         Ok(images)
     }
+
+    pub fn set_favorite(&self, id: &str, is_favorite: bool) -> SqliteResult<()> {
+        let conn = self.write_conn.lock().unwrap();
+        conn.execute(
+            "UPDATE clipboard_records SET is_favorite = ?1 WHERE id = ?2",
+            params![is_favorite, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_favorites(&self, limit: usize, offset: usize) -> SqliteResult<Vec<ClipboardRecordDb>> {
+        let conn = self.read_conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, content_type, content_subtype, text_content, image_path, hash, timestamp, is_favorite
+             FROM clipboard_records WHERE is_favorite = 1
+             ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2",
+        )?;
+
+        let records = stmt
+            .query_map(params![limit as i64, offset as i64], |row| {
+                Ok(ClipboardRecordDb {
+                    id: row.get(0)?,
+                    content_type: row.get(1)?,
+                    content_subtype: row.get(2)?,
+                    text_content: row.get(3)?,
+                    image_path: row.get(4)?,
+                    hash: row.get(5)?,
+                    timestamp: row.get(6)?,
+                    is_favorite: row.get(7)?,
+                })
+            })?
+            .collect::<SqliteResult<Vec<_>>>()?;
+
+        Ok(records)
+    }
+
+    pub fn get_by_subtype(&self, subtype: &str, limit: usize, offset: usize) -> SqliteResult<Vec<ClipboardRecordDb>> {
+        let conn = self.read_conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, content_type, content_subtype, text_content, image_path, hash, timestamp, is_favorite
+             FROM clipboard_records WHERE content_subtype = ?1
+             ORDER BY timestamp DESC LIMIT ?2 OFFSET ?3",
+        )?;
+
+        let records = stmt
+            .query_map(params![subtype, limit as i64, offset as i64], |row| {
+                Ok(ClipboardRecordDb {
+                    id: row.get(0)?,
+                    content_type: row.get(1)?,
+                    content_subtype: row.get(2)?,
+                    text_content: row.get(3)?,
+                    image_path: row.get(4)?,
+                    hash: row.get(5)?,
+                    timestamp: row.get(6)?,
+                    is_favorite: row.get(7)?,
+                })
+            })?
+            .collect::<SqliteResult<Vec<_>>>()?;
+
+        Ok(records)
+    }
+
+    pub fn clear_by_subtype(&self, subtype: &str) -> SqliteResult<Vec<String>> {
+        let conn = self.write_conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT image_path FROM clipboard_records WHERE content_subtype = ?1 AND image_path IS NOT NULL",
+        )?;
+
+        let images: Vec<String> = stmt
+            .query_map([subtype], |row| row.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .filter(|p| !p.is_empty())
+            .collect();
+
+        conn.execute("DELETE FROM clipboard_records WHERE content_subtype = ?1", [subtype])?;
+
+        Ok(images)
+    }
+
+    pub fn clear_favorites(&self) -> SqliteResult<()> {
+        let conn = self.write_conn.lock().unwrap();
+        conn.execute("UPDATE clipboard_records SET is_favorite = 0 WHERE is_favorite = 1", [])?;
+        Ok(())
+    }
+
+    pub fn count_by_content_subtype(&self, subtype: &str) -> SqliteResult<i64> {
+        let conn = self.read_conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM clipboard_records WHERE content_subtype = ?1",
+            [subtype],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn count_favorites(&self) -> SqliteResult<i64> {
+        let conn = self.read_conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM clipboard_records WHERE is_favorite = 1",
+            [],
+            |row| row.get(0),
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct ClipboardRecordDb {
     pub id: String,
     pub content_type: String,
+    pub content_subtype: Option<String>,
     pub text_content: Option<String>,
     pub image_path: Option<String>,
     pub hash: String,
     pub timestamp: i64,
+    pub is_favorite: bool,
 }
 
 #[cfg(test)]
@@ -471,10 +596,12 @@ mod tests {
         ClipboardRecordDb {
             id: id.to_string(),
             content_type: content_type.to_string(),
+            content_subtype: None,
             text_content: text.map(|s| s.to_string()),
             image_path: None,
             hash: hash.to_string(),
             timestamp: ts,
+            is_favorite: false,
         }
     }
 
