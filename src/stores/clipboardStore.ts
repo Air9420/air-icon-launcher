@@ -111,7 +111,8 @@ export const useClipboardStore = defineStore("clipboard", () => {
         const startTime = performance.now();
         console.log(`[clipboard-store] ▶ preloadHistory (filter: ${filter})`);
         
-        // 立即重置状态，避免显示旧的 hasMore
+        // 立即重置状态，避免显示旧数据
+        clipboardHistory.value = [];
         hasMore.value = false;
         isLoadingMore.value = false;
         
