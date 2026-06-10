@@ -466,6 +466,7 @@ pub struct ConfigManager {
     launcher_data_path: PathBuf,
     backups_dir: PathBuf,
     runtime_ai_organizer_api_key: Arc<Mutex<String>>,
+    cached_config: Arc<Mutex<Option<AppConfig>>>,
 }
 
 impl ConfigManager {
@@ -490,6 +491,7 @@ impl ConfigManager {
             launcher_data_path,
             backups_dir,
             runtime_ai_organizer_api_key: Arc::new(Mutex::new(normalize_api_key(&env_api_key))),
+            cached_config: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -522,50 +524,68 @@ impl ConfigManager {
         config.ai_organizer_api_key = self.get_ai_organizer_api_key();
     }
 
+    fn invalidate_config_cache(&self) {
+        if let Ok(mut cache) = self.cached_config.lock() {
+            *cache = None;
+        }
+    }
+
     pub fn load_config(&self) -> AppConfig {
-        if !self.config_path.exists() {
-            let mut config = AppConfig::default();
-            self.apply_runtime_ai_organizer_api_key(&mut config);
-            return config;
+        if let Ok(cache) = self.cached_config.lock() {
+            if let Some(config) = cache.as_ref() {
+                return config.clone();
+            }
         }
 
-        match fs::read_to_string(&self.config_path) {
-            Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
-                Ok(mut config) => {
-                    let legacy_key = normalize_api_key(&config.ai_organizer_api_key);
-                    if !legacy_key.is_empty() {
-                        // Migrate legacy plaintext key from disk into runtime memory.
-                        self.set_ai_organizer_api_key(&legacy_key);
-                        redact_ai_organizer_api_key(&mut config);
-                        let _ = self.save_config(&config);
+        let loaded = if !self.config_path.exists() {
+            let mut config = AppConfig::default();
+            self.apply_runtime_ai_organizer_api_key(&mut config);
+            config
+        } else {
+            match fs::read_to_string(&self.config_path) {
+                Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
+                    Ok(mut config) => {
+                        let legacy_key = normalize_api_key(&config.ai_organizer_api_key);
+                        if !legacy_key.is_empty() {
+                            // Migrate legacy plaintext key from disk into runtime memory.
+                            self.set_ai_organizer_api_key(&legacy_key);
+                            redact_ai_organizer_api_key(&mut config);
+                            let _ = self.save_config(&config);
+                        }
+                        self.apply_runtime_ai_organizer_api_key(&mut config);
+                        config
                     }
-                    self.apply_runtime_ai_organizer_api_key(&mut config);
-                    config
-                }
+                    Err(e) => {
+                        eprintln!(
+                            "Failed to parse config file ({}): {}",
+                            self.config_path.to_string_lossy(),
+                            e
+                        );
+                        let _ = self.backup_bad_config_file();
+                        let mut default_config = AppConfig::default();
+                        self.apply_runtime_ai_organizer_api_key(&mut default_config);
+                        let _ = self.save_config(&default_config);
+                        default_config
+                    }
+                },
                 Err(e) => {
                     eprintln!(
-                        "Failed to parse config file ({}): {}",
+                        "Failed to read config file ({}): {}",
                         self.config_path.to_string_lossy(),
                         e
                     );
-                    let _ = self.backup_bad_config_file();
                     let mut default_config = AppConfig::default();
                     self.apply_runtime_ai_organizer_api_key(&mut default_config);
-                    let _ = self.save_config(&default_config);
                     default_config
                 }
-            },
-            Err(e) => {
-                eprintln!(
-                    "Failed to read config file ({}): {}",
-                    self.config_path.to_string_lossy(),
-                    e
-                );
-                let mut default_config = AppConfig::default();
-                self.apply_runtime_ai_organizer_api_key(&mut default_config);
-                default_config
             }
+        };
+
+        if let Ok(mut cache) = self.cached_config.lock() {
+            *cache = Some(loaded.clone());
         }
+
+        loaded
     }
 
     fn backup_bad_config_file(&self) -> Result<(), String> {
@@ -581,7 +601,9 @@ impl ConfigManager {
 
     pub fn save_config(&self, config: &AppConfig) -> Result<(), String> {
         let redacted = redacted_config(config);
-        write_json_pretty_atomically(&self.config_path, &redacted)
+        write_json_pretty_atomically(&self.config_path, &redacted)?;
+        self.invalidate_config_cache();
+        Ok(())
     }
 
     pub fn save_config_with_runtime_ai_key(&self, config: &AppConfig) -> Result<(), String> {
@@ -1260,6 +1282,7 @@ mod tests {
             launcher_data_path: base.join("launcher_data.json"),
             backups_dir: base.join("backups"),
             runtime_ai_organizer_api_key: Arc::new(Mutex::new(String::new())),
+            cached_config: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -1832,6 +1855,50 @@ mod tests {
         assert_eq!(restored.corner_hotspot_position, "bottom-left");
         assert_eq!(restored.corner_hotspot_sensitivity, "high");
         assert!(!restored.strong_shortcut_mode);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn load_config_reuses_cached_value_until_invalidated() {
+        let base = create_test_base("config-cache-read");
+        let manager = create_test_manager(&base);
+
+        let mut config = AppConfig::default();
+        config.theme = "dark".to_string();
+        manager.save_config(&config).unwrap();
+
+        let first = manager.load_config();
+        assert_eq!(first.theme, "dark");
+
+        let disk_override = AppConfig {
+            theme: "light".to_string(),
+            ..AppConfig::default()
+        };
+        manager.save_config(&disk_override).unwrap();
+
+        let second = manager.load_config();
+        assert_eq!(second.theme, "light");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn save_config_invalidates_cached_value() {
+        let base = create_test_base("config-cache-invalidate");
+        let manager = create_test_manager(&base);
+
+        let initial = manager.load_config();
+        assert_eq!(initial.theme, "system");
+
+        let updated = AppConfig {
+            theme: "dark".to_string(),
+            ..AppConfig::default()
+        };
+        manager.save_config(&updated).unwrap();
+
+        let reloaded = manager.load_config();
+        assert_eq!(reloaded.theme, "dark");
 
         let _ = std::fs::remove_dir_all(&base);
     }
