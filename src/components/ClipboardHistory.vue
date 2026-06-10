@@ -21,7 +21,7 @@
             </button>
         </header>
 
-        <div class="toolbar" v-if="history.length > 0">
+        <div class="toolbar">
             <div
                 class="search-wrap"
                 :class="{ 'is-keyboard-focus': tabRegion === 'search' }"
@@ -73,7 +73,7 @@
             <div class="usage-hint">单击条目即可复制，点击 ☆ 收藏常用内容</div>
         </div>
 
-        <div ref="contentRef" class="content" v-if="history.length > 0" @scroll="onContentScroll">
+        <div ref="contentRef" class="content" @scroll="onContentScroll">
             <template v-if="displayedGroupedHistory.length > 0">
                 <section
                     v-for="group in displayedGroupedHistory"
@@ -179,17 +179,17 @@
                 <div class="filtered-empty-title">未找到匹配内容</div>
                 <div class="filtered-empty-hint">可以尝试更短关键词或切换筛选类型</div>
             </div>
-        </div>
 
-        <div class="empty-state" v-else>
-            <div class="empty-icon">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                </svg>
+            <div v-if="displayedGroupedHistory.length === 0 && groupedHistory.length === 0 && !isLoadingMore" class="empty-state">
+                <div class="empty-icon">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                    </svg>
+                </div>
+                <div class="empty-text">暂无剪贴板历史</div>
+                <div class="empty-hint">复制文本后会自动记录到这里</div>
             </div>
-            <div class="empty-text">暂无剪贴板历史</div>
-            <div class="empty-hint">复制文本后会自动记录到这里</div>
         </div>
     </div>
 </template>
