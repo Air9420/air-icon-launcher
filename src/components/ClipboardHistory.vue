@@ -168,10 +168,7 @@
             <div v-if="isLoadingMore" class="load-more-hint loading">
                 加载中...
             </div>
-            <div v-else-if="hasMore" class="load-more-hint" @click="loadMoreItems">
-                点击加载更多
-            </div>
-            <div v-else-if="history.length > 0" class="load-more-hint no-more">
+            <div v-else-if="history.length > 0 && !hasMore" class="load-more-hint no-more">
                 已加载全部
             </div>
 
