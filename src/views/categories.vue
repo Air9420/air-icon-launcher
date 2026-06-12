@@ -71,7 +71,7 @@
         </div>
 
         <SearchResults
-            v-if="homeSearchViewState === 'results'"
+            v-if="homeSearchDisplayState === 'results'"
             :results="rustSearchMergedResults"
             :get-launch-status="getLaunchStatus"
             :selected-index="selectedIndex"
@@ -90,7 +90,7 @@
             @select-recent-file="openRecentFileWithCd"
         />
 
-        <template v-if="homeSearchViewState === 'home'">
+        <template v-if="homeSearchDisplayState === 'home'">
             <div
                 v-if="pinnedMergedItems.length > 0 || stableRecentDisplayItems.length > 0"
                 class="home-sections"
@@ -135,7 +135,7 @@
         </template>
 
         <SearchFallback
-            v-else-if="homeSearchViewState === 'fallback'"
+            v-else-if="homeSearchDisplayState === 'fallback'"
             :keyword="searchKeyword"
             @browser-search="onBrowserSearch"
         />
@@ -670,12 +670,26 @@ const homeSearchViewState = computed(() => {
         if (launcherCount > 0 || hasFallbackResults || hasExtensionResults) {
             return "results";
         }
-        if (launcherCount === 0 && !hasFallbackResults && !hasExtensionResults && !isHomeSearchPending.value) {
+        if (launcherCount === 0 && !hasFallbackResults && !hasExtensionResults) {
             return "fallback";
         }
         return "results";
     }
     return "home";
+});
+
+const homeSearchDisplayState = computed(() => {
+    if (isHomeSearchPending.value) {
+        const hasResults = (rustSearchMergedResults.value?.length ?? 0) > 0
+            || (scannedFallbackSection.value?.items.length ?? 0) > 0
+            || commandSearchResults.value.length > 0
+            || clipboardSearchResults.value.length > 0
+            || recentFileSearchResults.value.length > 0;
+        if (!hasResults) {
+            return homeSearchViewState.value;
+        }
+    }
+    return homeSearchViewState.value;
 });
 
 let unlistenFocus: (() => void) | null = null;
@@ -1430,6 +1444,7 @@ watch(searchKeyword, async (keyword) => {
     }
 
     closeSearchHistoryPanel();
+    scannedFallbackSection.value = null;
     isHomeSearchPending.value = true;
     const ready = await ensureRustSearchReady();
     if (!ready || requestId !== homeSearchRequestId) {

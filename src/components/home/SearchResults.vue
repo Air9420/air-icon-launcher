@@ -35,7 +35,7 @@
             </div>
         </template>
 
-        <div v-if="safeResults.length > 0 || showBrowserSearch" class="search-result-header">
+        <div v-if="safeResults.length > 0 || (showBrowserSearch && !props.isPending)" class="search-result-header">
             搜索结果 ( {{ safeResults.length }} )
         </div>
         <div v-if="safeResults.length > 0" class="search-result-list">
@@ -83,7 +83,7 @@
             </div>
         </div>
 
-        <div v-if="showBrowserSearch" :ref="el => setItemRef(el, browserSearchIndex)" class="browser-search-item"
+        <div v-if="showBrowserSearch && !props.isPending" :ref="el => setItemRef(el, browserSearchIndex)" class="browser-search-item"
             :class="{ 'is-selected': selectedIndex === browserSearchIndex }" @click.left="$emit('browser-search')">
             <div v-if="browserSearchIndex < 10" class="shortcut-hint browser-shortcut-hint"
                 :class="{ 'is-visible': !!showShortcutHints }" aria-hidden="true">
