@@ -456,8 +456,12 @@ mod tests {
         assert!(cache.contains_key("path-7"));
         assert!(cache.contains_key("path-8"));
         assert!(cache.contains_key("path-9"));
-        assert!(!cache.contains_key("path-0"));
-        assert!(!cache.contains_key("path-1"));
+        for removed in 0..6 {
+            assert!(
+                !cache.contains_key(&format!("path-{removed}")),
+                "path-{removed} should have been pruned"
+            );
+        }
     }
 
     #[test]
