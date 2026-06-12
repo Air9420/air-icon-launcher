@@ -583,7 +583,7 @@ impl ConfigManager {
                         config
                     }
                     Err(e) => {
-                        eprintln!(
+                        warn!(
                             "Failed to parse config file ({}): {}",
                             self.config_path.to_string_lossy(),
                             e
@@ -596,7 +596,7 @@ impl ConfigManager {
                     }
                 },
                 Err(e) => {
-                    eprintln!(
+                    warn!(
                         "Failed to read config file ({}): {}",
                         self.config_path.to_string_lossy(),
                         e
