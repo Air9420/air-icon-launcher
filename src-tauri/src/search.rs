@@ -72,6 +72,7 @@ pub struct SearchIndex {
     items: Vec<SearchItem>,
     matcher: SkimMatcherV2,
     pinyin_index: PinyinIndex,
+    candidate_buffer_capacity: usize,
 }
 
 pub fn parse_search_input(input: &str) -> SearchContext {
@@ -103,10 +104,12 @@ impl SearchIndex {
             items: Vec::new(),
             matcher: SkimMatcherV2::default(),
             pinyin_index: PinyinIndex::new(),
+            candidate_buffer_capacity: 0,
         }
     }
 
     pub fn build_index(&mut self, items: Vec<SearchItem>) {
+        self.candidate_buffer_capacity = items.len();
         self.items = items;
     }
 
@@ -116,7 +119,7 @@ impl SearchIndex {
         }
 
         let keyword_lower = ctx.keyword.to_lowercase();
-        let mut candidates: Vec<ScoredCandidate> = Vec::new();
+        let mut candidates: Vec<ScoredCandidate> = Vec::with_capacity(self.items.len().max(self.candidate_buffer_capacity));
 
         for item in &self.items {
             if let Some(category_id) = ctx.category_id.as_deref() {
@@ -774,6 +777,25 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    #[test]
+    fn repeated_search_returns_same_results() {
+        let items = vec![
+            make_item("1", "微信", "C:\\WeChat\\WeChat.exe", "cat-social"),
+            make_item("2", "Windows Terminal", "C:\\wt.exe", "cat-system"),
+        ];
+        let index = build_index_with_items(items);
+        let ctx = make_ctx("wx", 20);
+
+        let first = index.search(&ctx);
+        let second = index.search(&ctx);
+
+        assert_eq!(first.len(), second.len());
+        assert_eq!(
+            first.first().map(|r| r.id.as_str()),
+            second.first().map(|r| r.id.as_str())
+        );
     }
 
     #[test]
