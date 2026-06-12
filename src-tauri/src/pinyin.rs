@@ -6,6 +6,8 @@ const PINYIN_CACHE_LIMIT: usize = 512;
 
 fn cache_insert_bounded(cache: &mut HashMap<String, String>, key: &str, value: &str) {
     if cache.len() >= PINYIN_CACHE_LIMIT {
+        // Simplification: clear all instead of LRU eviction. Acceptable because
+        // pinyin computation is cheap and the cache refills naturally on demand.
         cache.clear();
     }
     cache.insert(key.to_string(), value.to_string());
@@ -25,7 +27,8 @@ impl PinyinIndex {
     }
 
     pub fn to_pinyin_full(&self, text: &str) -> String {
-        if let Ok(cache) = self.full_cache.lock() {
+        {
+            let cache = self.full_cache.lock().unwrap();
             if let Some(value) = cache.get(text) {
                 return value.clone();
             }
@@ -38,15 +41,15 @@ impl PinyinIndex {
             .collect::<Vec<_>>()
             .join("");
 
-        if let Ok(mut cache) = self.full_cache.lock() {
-            cache_insert_bounded(&mut cache, text, &computed);
-        }
+        let mut cache = self.full_cache.lock().unwrap();
+        cache_insert_bounded(&mut cache, text, &computed);
 
         computed
     }
 
     pub fn to_pinyin_initial(&self, text: &str) -> String {
-        if let Ok(cache) = self.initial_cache.lock() {
+        {
+            let cache = self.initial_cache.lock().unwrap();
             if let Some(value) = cache.get(text) {
                 return value.clone();
             }
@@ -59,9 +62,8 @@ impl PinyinIndex {
             .collect::<Vec<_>>()
             .join("");
 
-        if let Ok(mut cache) = self.initial_cache.lock() {
-            cache_insert_bounded(&mut cache, text, &computed);
-        }
+        let mut cache = self.initial_cache.lock().unwrap();
+        cache_insert_bounded(&mut cache, text, &computed);
 
         computed
     }
