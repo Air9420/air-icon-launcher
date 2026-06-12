@@ -1,26 +1,69 @@
 use pinyin::ToPinyin;
+use std::collections::HashMap;
+use std::sync::Mutex;
 
-pub struct PinyinIndex;
+const PINYIN_CACHE_LIMIT: usize = 512;
+
+fn cache_insert_bounded(cache: &mut HashMap<String, String>, key: &str, value: &str) {
+    if cache.len() >= PINYIN_CACHE_LIMIT {
+        cache.clear();
+    }
+    cache.insert(key.to_string(), value.to_string());
+}
+
+pub struct PinyinIndex {
+    full_cache: Mutex<HashMap<String, String>>,
+    initial_cache: Mutex<HashMap<String, String>>,
+}
 
 impl PinyinIndex {
     pub fn new() -> Self {
-        Self
+        Self {
+            full_cache: Mutex::new(HashMap::with_capacity(PINYIN_CACHE_LIMIT)),
+            initial_cache: Mutex::new(HashMap::with_capacity(PINYIN_CACHE_LIMIT)),
+        }
     }
 
     pub fn to_pinyin_full(&self, text: &str) -> String {
-        text.to_pinyin()
+        if let Ok(cache) = self.full_cache.lock() {
+            if let Some(value) = cache.get(text) {
+                return value.clone();
+            }
+        }
+
+        let computed: String = text
+            .to_pinyin()
             .flatten()
             .map(|py| py.plain())
             .collect::<Vec<_>>()
-            .join("")
+            .join("");
+
+        if let Ok(mut cache) = self.full_cache.lock() {
+            cache_insert_bounded(&mut cache, text, &computed);
+        }
+
+        computed
     }
 
     pub fn to_pinyin_initial(&self, text: &str) -> String {
-        text.to_pinyin()
+        if let Ok(cache) = self.initial_cache.lock() {
+            if let Some(value) = cache.get(text) {
+                return value.clone();
+            }
+        }
+
+        let computed: String = text
+            .to_pinyin()
             .flatten()
             .map(|py| py.first_letter())
             .collect::<Vec<_>>()
-            .join("")
+            .join("");
+
+        if let Ok(mut cache) = self.initial_cache.lock() {
+            cache_insert_bounded(&mut cache, text, &computed);
+        }
+
+        computed
     }
 }
 
@@ -67,5 +110,18 @@ mod tests {
         let index = PinyinIndex::new();
         assert_eq!(index.to_pinyin_full("v2.0测试"), "ceshi");
         assert_eq!(index.to_pinyin_initial("v2.0测试"), "cs");
+    }
+
+    #[test]
+    fn pinyin_cache_returns_stable_results() {
+        let index = PinyinIndex::new();
+
+        let first_full = index.to_pinyin_full("微信");
+        let second_full = index.to_pinyin_full("微信");
+        assert_eq!(first_full, second_full);
+
+        let first_initial = index.to_pinyin_initial("微信");
+        let second_initial = index.to_pinyin_initial("微信");
+        assert_eq!(first_initial, second_initial);
     }
 }
