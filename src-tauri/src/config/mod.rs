@@ -1,6 +1,7 @@
 pub mod types;
 
 use crate::error::{AppError, AppResult};
+use log::warn;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
@@ -511,7 +512,7 @@ impl ConfigManager {
         let key = match self.runtime_ai_organizer_api_key.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
-                eprintln!("[get_ai_organizer_api_key] runtime_ai_organizer_api_key mutex poisoned, recovering");
+                warn!("[get_ai_organizer_api_key] runtime_ai_organizer_api_key mutex poisoned, recovering");
                 poisoned.into_inner()
             }
         };
@@ -522,7 +523,7 @@ impl ConfigManager {
         let mut key = match self.runtime_ai_organizer_api_key.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
-                eprintln!("[set_runtime_ai_organizer_api_key] runtime_ai_organizer_api_key mutex poisoned, recovering");
+                warn!("[set_runtime_ai_organizer_api_key] runtime_ai_organizer_api_key mutex poisoned, recovering");
                 poisoned.into_inner()
             }
         };
@@ -542,7 +543,7 @@ impl ConfigManager {
         let mut cache = match self.cached_config.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
-                eprintln!("[invalidate_config_cache] cached_config mutex poisoned, recovering");
+                warn!("[invalidate_config_cache] cached_config mutex poisoned, recovering");
                 poisoned.into_inner()
             }
         };
@@ -553,7 +554,7 @@ impl ConfigManager {
         let mut cache = match self.cached_config.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
-                eprintln!("[load_config] cached_config mutex poisoned, recovering");
+                warn!("[load_config] cached_config mutex poisoned, recovering");
                 poisoned.into_inner()
             }
         };
