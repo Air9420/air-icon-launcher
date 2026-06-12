@@ -508,16 +508,19 @@ impl ConfigManager {
     }
 
     pub fn get_ai_organizer_api_key(&self) -> String {
-        self.runtime_ai_organizer_api_key
-            .lock()
-            .map(|key| key.clone())
-            .unwrap_or_default()
+        let key = match self.runtime_ai_organizer_api_key.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        key.clone()
     }
 
     fn set_runtime_ai_organizer_api_key(&self, api_key: &str) {
-        if let Ok(mut key) = self.runtime_ai_organizer_api_key.lock() {
-            *key = normalize_api_key(api_key);
-        }
+        let mut key = match self.runtime_ai_organizer_api_key.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *key = normalize_api_key(api_key);
     }
 
     pub fn set_ai_organizer_api_key(&self, api_key: &str) {
@@ -530,9 +533,11 @@ impl ConfigManager {
     }
 
     fn invalidate_config_cache(&self) {
-        if let Ok(mut cache) = self.cached_config.lock() {
-            *cache = None;
-        }
+        let mut cache = match self.cached_config.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *cache = None;
     }
 
     pub fn load_config(&self) -> AppConfig {
