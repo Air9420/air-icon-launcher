@@ -18,7 +18,25 @@ const PROCESS_SCAN_INTERVAL_MS: u64 = 1200;
 const PROCESS_LAUNCH_DEDUP_WINDOW_MS: u64 = 5000;
 const PROCESS_WINDOW_WAIT_MS: u64 = 8000;
 const PROCESS_USER_INPUT_IDLE_MAX_MS: u64 = 4500;
+const PROCESS_EMITTED_PATH_CACHE_LIMIT: usize = 128;
+const PROCESS_EMITTED_PATH_TTL_MS: u64 = 60_000;
 const EVENT_NAME: &str = "system-process-launched";
+
+fn prune_emitted_paths(cache: &mut HashMap<String, u64>, now_ms: u64, max_entries: usize, ttl_ms: u64) {
+    let cutoff = now_ms.saturating_sub(ttl_ms);
+    cache.retain(|_, value| *value >= cutoff);
+
+    if cache.len() <= max_entries {
+        return;
+    }
+
+    let mut entries: Vec<(String, u64)> = cache.iter().map(|(k, v)| (k.clone(), *v)).collect();
+    entries.sort_by_key(|(_, ts)| *ts);
+    let to_remove = cache.len().saturating_sub(max_entries);
+    for (key, _) in entries.into_iter().take(to_remove) {
+        cache.remove(&key);
+    }
+}
 
 #[cfg(target_os = "windows")]
 const NOISY_EXECUTABLE_NAMES: &[&str] = &[
@@ -392,13 +410,33 @@ pub fn start_process_monitor(app: AppHandle) {
                 pending_pids.remove(&pid);
             }
 
-            if last_emitted_by_path.len() > 300 {
-                let cutoff = now_ms().saturating_sub(60_000);
-                last_emitted_by_path.retain(|_, value| *value >= cutoff);
-            }
+            prune_emitted_paths(
+                &mut last_emitted_by_path,
+                now,
+                PROCESS_EMITTED_PATH_CACHE_LIMIT,
+                PROCESS_EMITTED_PATH_TTL_MS,
+            );
         }
     });
 }
 
 #[cfg(not(target_os = "windows"))]
 pub fn start_process_monitor(_app: AppHandle) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prune_emitted_paths_keeps_recent_entries_bounded() {
+        let mut cache = HashMap::new();
+        for index in 0..10 {
+            cache.insert(format!("path-{index}"), 1000 + index as u64);
+        }
+
+        prune_emitted_paths(&mut cache, 2_000, 4, 900);
+
+        assert!(cache.len() <= 4);
+        assert!(cache.values().all(|value| *value >= 1_100));
+    }
+}
