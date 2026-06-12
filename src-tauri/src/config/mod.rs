@@ -514,10 +514,14 @@ impl ConfigManager {
             .unwrap_or_default()
     }
 
-    pub fn set_ai_organizer_api_key(&self, api_key: &str) {
+    fn set_runtime_ai_organizer_api_key(&self, api_key: &str) {
         if let Ok(mut key) = self.runtime_ai_organizer_api_key.lock() {
             *key = normalize_api_key(api_key);
         }
+    }
+
+    pub fn set_ai_organizer_api_key(&self, api_key: &str) {
+        self.set_runtime_ai_organizer_api_key(api_key);
         self.invalidate_config_cache();
     }
 
@@ -532,10 +536,13 @@ impl ConfigManager {
     }
 
     pub fn load_config(&self) -> AppConfig {
-        if let Ok(cache) = self.cached_config.lock() {
-            if let Some(config) = cache.as_ref() {
-                return config.clone();
-            }
+        let mut cache = match self.cached_config.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        if let Some(config) = cache.as_ref() {
+            return config.clone();
         }
 
         let loaded = if !self.config_path.exists() {
@@ -549,9 +556,10 @@ impl ConfigManager {
                         let legacy_key = normalize_api_key(&config.ai_organizer_api_key);
                         if !legacy_key.is_empty() {
                             // Migrate legacy plaintext key from disk into runtime memory.
-                            self.set_ai_organizer_api_key(&legacy_key);
+                            // Inline key update to avoid deadlock (we already hold cached_config lock).
+                            self.set_runtime_ai_organizer_api_key(&legacy_key);
                             redact_ai_organizer_api_key(&mut config);
-                            let _ = self.save_config(&config);
+                            let _ = self.save_config_unlocked(&config);
                         }
                         self.apply_runtime_ai_organizer_api_key(&mut config);
                         config
@@ -565,7 +573,7 @@ impl ConfigManager {
                         let _ = self.backup_bad_config_file();
                         let mut default_config = AppConfig::default();
                         self.apply_runtime_ai_organizer_api_key(&mut default_config);
-                        let _ = self.save_config(&default_config);
+                        let _ = self.save_config_unlocked(&default_config);
                         default_config
                     }
                 },
@@ -582,10 +590,7 @@ impl ConfigManager {
             }
         };
 
-        if let Ok(mut cache) = self.cached_config.lock() {
-            *cache = Some(loaded.clone());
-        }
-
+        *cache = Some(loaded.clone());
         loaded
     }
 
@@ -607,8 +612,17 @@ impl ConfigManager {
         Ok(())
     }
 
+    /// Writes config to disk without locking `cached_config`.
+    /// Callers that already hold the `cached_config` lock must use this
+    /// instead of `save_config` to avoid deadlock, and should update the
+    /// cache directly after calling this method.
+    fn save_config_unlocked(&self, config: &AppConfig) -> Result<(), String> {
+        let redacted = redacted_config(config);
+        write_json_pretty_atomically(&self.config_path, &redacted)
+    }
+
     pub fn save_config_with_runtime_ai_key(&self, config: &AppConfig) -> Result<(), String> {
-        self.set_ai_organizer_api_key(&config.ai_organizer_api_key);
+        self.set_runtime_ai_organizer_api_key(&config.ai_organizer_api_key);
         self.save_config(config)
     }
 
@@ -1905,6 +1919,22 @@ mod tests {
 
         let reloaded = manager.load_config();
         assert_eq!(reloaded.theme, "dark");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn set_ai_organizer_api_key_invalidates_cache_for_next_load_config() {
+        let base = create_test_base("api-key-cache-invalidate");
+        let manager = create_test_manager(&base);
+
+        let initial = manager.load_config();
+        assert_eq!(initial.ai_organizer_api_key, "");
+
+        manager.set_ai_organizer_api_key("sk-new-key");
+
+        let reloaded = manager.load_config();
+        assert_eq!(reloaded.ai_organizer_api_key, "sk-new-key");
 
         let _ = std::fs::remove_dir_all(&base);
     }
