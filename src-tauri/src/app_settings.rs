@@ -236,6 +236,7 @@ pub fn get_show_mode() -> u8 {
 pub fn show_launcher(
     app: AppHandle,
     state: tauri::State<'_, AppSettingsState>,
+    force_no_follow: Option<bool>,
 ) -> AppResult<()> {
     let (follow, anchor) = state
         .inner
@@ -243,8 +244,9 @@ pub fn show_launcher(
         .map(|g| (g.follow_mouse_on_show, g.follow_mouse_y_anchor))
         .map_err(|_| AppError::internal("Failed to lock app settings state"))?;
 
-    println!("[show_launcher] enter, follow={}, anchor={:?}", follow, anchor);
-    show_main_window(&app, follow, anchor);
+    let effective_follow = if force_no_follow.unwrap_or(false) { false } else { follow };
+    println!("[show_launcher] enter, follow={}, effective_follow={}, force_no_follow={:?}", follow, effective_follow, force_no_follow);
+    show_main_window(&app, effective_follow, anchor);
     Ok(())
 }
 

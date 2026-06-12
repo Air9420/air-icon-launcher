@@ -38,6 +38,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
 import { useRouter } from "vue-router";
 import { useWindowPosition } from "./useWindowPosition";
+import { useSettingsStore } from "../stores";
+import { storeToRefs } from "pinia";
 import { showToast } from "./useGlobalToast";
 import { useStatsStore } from "../stores/statsStore";
 
@@ -137,7 +139,9 @@ export function useTauriEvents() {
             const win = getCurrentWindow();
             const isVisible = await win.isVisible();
             const isFocused = await win.isFocused();
-            const { saveWindowPosition } = useWindowPosition();
+            const { saveWindowPosition, restoreWindowPosition } = useWindowPosition();
+            const settingsStore = useSettingsStore();
+            const { followMouseOnShow } = storeToRefs(settingsStore);
 
             console.log("[toggle-main] received", { currentRoute, isVisible, isFocused });
 
@@ -153,8 +157,11 @@ export function useTauriEvents() {
                 // 切换路由
                 router.push("/categories");
 
+                // 恢复上次保存的位置（仅在非跟随鼠标模式下）
+                const restored = !followMouseOnShow.value && await restoreWindowPosition();
+
                 // 显示窗口（此时 opacity=0，系统缓存帧不可见）
-                await safeInvoke("show_launcher");
+                await safeInvoke("show_launcher", restored ? { forceNoFollow: true } : {});
                 await emit("window-shown", null);
 
                 // 等待下一帧渲染完成后再显示

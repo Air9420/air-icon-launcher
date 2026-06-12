@@ -136,6 +136,7 @@ const { initializeWindowDrag, cleanupWindowDrag } = useWindowDrag();
 
 const {
     saveWindowPosition,
+    restoreWindowPosition,
     initializePositionTracking,
     cleanupPositionTracking,
 } = useWindowPosition();
@@ -249,8 +250,10 @@ onMounted(async () => {
     console.log("[App] onMounted", { isAutostart });
     if (!isAutostart) {
         try {
-            console.log("[App] calling show_launcher");
-            await safeInvoke("show_launcher");
+            // 重启时始终恢复上次保存的位置，不受 follow_mouse_on_show 影响
+            const restored = await restoreWindowPosition();
+            console.log("[App] calling show_launcher", { restored });
+            await safeInvoke("show_launcher", restored ? { forceNoFollow: true } : {});
         } catch (e) {
             console.error("[App] Failed to show window:", e);
         }
