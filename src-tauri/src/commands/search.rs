@@ -81,12 +81,49 @@ impl Default for SearchState {
 }
 
 #[tauri::command]
-pub fn update_search_items(state: State<'_, SearchState>, items: Vec<SearchItem>) -> AppResult<()> {
+pub async fn update_search_items(state: State<'_, SearchState>, items: Vec<SearchItem>) -> AppResult<()> {
     {
         let mut stored = state.items.lock().unwrap();
         *stored = items;
     }
-    state.build_index();
+
+    let items_snapshot = {
+        let stored = state.items.lock().unwrap();
+        stored.clone()
+    };
+
+    let built_index = tokio::task::spawn_blocking(move || {
+        let pinyin_index = crate::pinyin::PinyinIndex::new();
+
+        let search_items: Vec<SearchItem> = items_snapshot
+            .iter()
+            .map(|item| {
+                let p_full = pinyin_index.to_pinyin_full(&item.name);
+                let p_initial = pinyin_index.to_pinyin_initial(&item.name);
+                SearchItem {
+                    id: item.id.clone(),
+                    name: item.name.clone(),
+                    path: item.path.clone(),
+                    category_id: item.category_id.clone(),
+                    usage_count: item.usage_count,
+                    last_used_at: item.last_used_at,
+                    is_pinned: item.is_pinned,
+                    search_tokens: vec![item.name.clone(), p_full, p_initial],
+                    rank_score: 0.0,
+                }
+            })
+            .collect();
+
+        let mut index = crate::search::SearchIndex::new();
+        index.build_index(search_items);
+        index
+    })
+    .await
+    .map_err(|e| crate::error::AppError::internal(format!("Index build failed: {}", e)))?;
+
+    let mut index = state.index.lock().unwrap();
+    *index = built_index;
+
     Ok(())
 }
 
