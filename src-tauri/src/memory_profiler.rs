@@ -192,15 +192,15 @@ impl MemoryProfiler {
         &self,
         config_manager: &crate::config::ConfigManager,
     ) -> ConfigMemoryStats {
-        // ConfigManager 不缓存配置，每次都是从文件读取
-        // 这里主要检查配置文件是否存在
+        // ConfigManager 使用 cached_config 缓存 AppConfig，避免重复磁盘读取
+        // 这里检查配置文件是否存在，以及缓存是否已填充
         let config_path = config_manager.config_path();
         let launcher_data_path = config_manager.launcher_data_path();
 
         let config_loaded = config_path.exists();
         let launcher_data_loaded = launcher_data_path.exists();
 
-        // 估算配置文件大小
+        // 估算配置文件大小（缓存后这些字节也在堆内存中）
         let config_size = if config_loaded {
             std::fs::metadata(&config_path)
                 .map(|m| m.len())
@@ -228,8 +228,8 @@ impl MemoryProfiler {
         &self,
         config_manager: &Arc<crate::config::ConfigManager>,
     ) -> ConfigMemoryStats {
-        // ConfigManager 不缓存配置，每次都是从文件读取
-        // 这里主要检查配置文件是否存在
+        // ConfigManager 使用 cached_config 缓存 AppConfig，避免重复磁盘读取
+        // 这里检查配置文件是否存在，以及缓存是否已填充
         let config_path = config_manager.config_path();
         let launcher_data_path = config_manager.launcher_data_path();
 
@@ -283,8 +283,8 @@ impl MemoryProfiler {
             recommendations.push(MemoryRecommendation {
                 severity: "info".to_string(),
                 module: "config".to_string(),
-                issue: "配置读取仍然依赖磁盘反序列化".to_string(),
-                suggestion: "优先引入短生命周期配置缓存，减少频繁磁盘 IO 和重复分配。".to_string(),
+                issue: "配置已缓存，但 launcher_data 仍每次从磁盘读取".to_string(),
+                suggestion: "考虑为 launcher_data 引入类似 AppConfig 的缓存机制，减少磁盘 IO。".to_string(),
                 estimated_savings_mb: 0.0,
             });
         }
