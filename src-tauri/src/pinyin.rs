@@ -28,6 +28,9 @@ impl PinyinIndex {
     }
 
     pub fn to_pinyin_full(&self, text: &str) -> String {
+        // TOCTOU note: read lock is released before write lock is acquired.
+        // Two threads computing the same key may both compute and insert.
+        // This is acceptable because pinyin computation is cheap and idempotent.
         {
             let cache = match self.full_cache.lock() {
                 Ok(guard) => guard,
@@ -61,6 +64,9 @@ impl PinyinIndex {
     }
 
     pub fn to_pinyin_initial(&self, text: &str) -> String {
+        // TOCTOU note: read lock is released before write lock is acquired.
+        // Two threads computing the same key may both compute and insert.
+        // This is acceptable because pinyin computation is cheap and idempotent.
         {
             let cache = match self.initial_cache.lock() {
                 Ok(guard) => guard,
