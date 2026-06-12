@@ -72,7 +72,6 @@ pub struct SearchIndex {
     items: Vec<SearchItem>,
     matcher: SkimMatcherV2,
     pinyin_index: PinyinIndex,
-    candidate_buffer_capacity: usize,
 }
 
 pub fn parse_search_input(input: &str) -> SearchContext {
@@ -104,12 +103,10 @@ impl SearchIndex {
             items: Vec::new(),
             matcher: SkimMatcherV2::default(),
             pinyin_index: PinyinIndex::new(),
-            candidate_buffer_capacity: 0,
         }
     }
 
     pub fn build_index(&mut self, items: Vec<SearchItem>) {
-        self.candidate_buffer_capacity = items.len();
         self.items = items;
     }
 
@@ -119,7 +116,7 @@ impl SearchIndex {
         }
 
         let keyword_lower = ctx.keyword.to_lowercase();
-        let mut candidates: Vec<ScoredCandidate> = Vec::with_capacity(self.items.len().max(self.candidate_buffer_capacity));
+        let mut candidates: Vec<ScoredCandidate> = Vec::with_capacity(self.items.len());
 
         for item in &self.items {
             if let Some(category_id) = ctx.category_id.as_deref() {
