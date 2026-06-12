@@ -178,7 +178,7 @@ pub fn update_search_items_incremental(
 }
 
 #[tauri::command]
-pub fn search_apps(
+pub async fn search_apps(
     state: State<'_, SearchState>,
     query: SearchQuery,
 ) -> AppResult<Vec<SearchResult>> {
