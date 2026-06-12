@@ -170,13 +170,17 @@ pub fn extract_icon_lazy(path: String) -> AppResult<Option<String>> {
 }
 
 #[tauri::command]
-pub fn resolve_lnk_target(path: String) -> AppResult<Option<String>> {
-    let path_buf = PathBuf::from(&path);
-    if path_buf.extension().and_then(|e| e.to_str()) != Some("lnk") {
-        return Ok(None);
-    }
-    match crate::drag::resolve_windows_shortcut_target_pathbuf(&path_buf) {
-        Some(target) => Ok(Some(target.to_string_lossy().into_owned())),
-        None => Ok(None),
-    }
+pub async fn resolve_lnk_target(path: String) -> AppResult<Option<String>> {
+    tokio::task::spawn_blocking(move || {
+        let path_buf = PathBuf::from(&path);
+        if path_buf.extension().and_then(|e| e.to_str()) != Some("lnk") {
+            return Ok(None);
+        }
+        match crate::drag::resolve_windows_shortcut_target_pathbuf(&path_buf) {
+            Some(target) => Ok(Some(target.to_string_lossy().into_owned())),
+            None => Ok(None),
+        }
+    })
+    .await
+    .map_err(|e| AppError::internal(format!("resolve_lnk_target failed: {}", e)))?
 }
