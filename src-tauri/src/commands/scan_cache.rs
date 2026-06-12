@@ -91,29 +91,33 @@ pub fn write_cache(app: &AppHandle, entries: &[InstalledAppEntry], scan_type: &s
 }
 
 #[tauri::command]
-pub fn read_scan_cache(app: AppHandle) -> AppResult<Option<ScanCache>> {
-    let mut cache = read_cache(&app);
-    if let Some(ref mut cache) = cache {
-        let pinyin_index = PinyinIndex::new();
-        let mut cache_updated = false;
+pub async fn read_scan_cache(app: AppHandle) -> AppResult<Option<ScanCache>> {
+    tokio::task::spawn_blocking(move || {
+        let mut cache = read_cache(&app);
+        if let Some(ref mut cache) = cache {
+            let pinyin_index = PinyinIndex::new();
+            let mut cache_updated = false;
 
-        for entry in &mut cache.apps {
-            if entry.name_pinyin_full.is_empty() {
-                entry.name_pinyin_full = pinyin_index.to_pinyin_full(&entry.name);
-                cache_updated = true;
+            for entry in &mut cache.apps {
+                if entry.name_pinyin_full.is_empty() {
+                    entry.name_pinyin_full = pinyin_index.to_pinyin_full(&entry.name);
+                    cache_updated = true;
+                }
+                if entry.name_pinyin_initial.is_empty() {
+                    entry.name_pinyin_initial = pinyin_index.to_pinyin_initial(&entry.name);
+                    cache_updated = true;
+                }
             }
-            if entry.name_pinyin_initial.is_empty() {
-                entry.name_pinyin_initial = pinyin_index.to_pinyin_initial(&entry.name);
-                cache_updated = true;
+
+            if cache_updated {
+                let path = cache_file_path(&app);
+                write_cache_file(&path, cache);
             }
         }
-
-        if cache_updated {
-            let path = cache_file_path(&app);
-            write_cache_file(&path, cache);
-        }
-    }
-    Ok(cache)
+        cache
+    })
+    .await
+    .map_err(|e| AppError::internal(format!("read_scan_cache failed: {}", e)))
 }
 
 #[tauri::command]
