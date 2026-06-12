@@ -264,24 +264,31 @@ impl MemoryProfiler {
         &self,
         _clipboard_stats: &ClipboardMemoryStats,
         search_stats: &SearchMemoryStats,
+        config_stats: &ConfigMemoryStats,
         process_memory: &ProcessMemoryInfo,
     ) -> Vec<MemoryRecommendation> {
         let mut recommendations = Vec::new();
 
-        // 检查搜索索引
-        if search_stats.indexed_items > 5000 {
-            let estimated_savings =
-                (search_stats.indexed_items - 5000) as f64 * 200.0 / 1024.0 / 1024.0;
+        if search_stats.indexed_items > 300 {
             recommendations.push(MemoryRecommendation {
-                severity: "warning".to_string(),
+                severity: "info".to_string(),
                 module: "search".to_string(),
-                issue: format!("搜索索引项过多: {} 项", search_stats.indexed_items),
-                suggestion: "考虑减少索引的应用数量或优化搜索算法".to_string(),
-                estimated_savings_mb: estimated_savings,
+                issue: format!("搜索索引项较多: {} 项", search_stats.indexed_items),
+                suggestion: "优先考虑启用拼音缓存和搜索候选向量复用，而不是扩大索引常驻内存。".to_string(),
+                estimated_savings_mb: (search_stats.estimated_total_bytes as f64) / 1024.0 / 1024.0 * 0.2,
             });
         }
 
-        // 检查进程内存（使用私有使用量，更接近任务管理器显示）
+        if config_stats.estimated_total_bytes > 0 {
+            recommendations.push(MemoryRecommendation {
+                severity: "info".to_string(),
+                module: "config".to_string(),
+                issue: "配置读取仍然依赖磁盘反序列化".to_string(),
+                suggestion: "优先引入短生命周期配置缓存，减少频繁磁盘 IO 和重复分配。".to_string(),
+                estimated_savings_mb: 0.0,
+            });
+        }
+
         if process_memory.private_usage_mb > 500.0 {
             recommendations.push(MemoryRecommendation {
                 severity: "critical".to_string(),
@@ -306,7 +313,6 @@ impl MemoryProfiler {
             });
         }
 
-        // 检查内存峰值
         if process_memory.peak_working_set_size_mb > process_memory.working_set_size_mb * 2.0 {
             recommendations.push(MemoryRecommendation {
                 severity: "info".to_string(),
@@ -356,7 +362,7 @@ impl MemoryProfiler {
             });
 
         let recommendations =
-            self.generate_recommendations(&clipboard_stats, &search_stats, &process_memory);
+            self.generate_recommendations(&clipboard_stats, &search_stats, &config_stats, &process_memory);
 
         let mut module_stats = HashMap::new();
         module_stats.insert(

@@ -15,7 +15,7 @@ pub fn get_memory_stats(
     let search_stats = profiler.analyze_search_state_from_ref(search_state.inner());
     let config_stats = profiler.analyze_config_state_from_ref(config_manager.inner());
     let process_memory = profiler.get_process_memory();
-    let recommendations = profiler.generate_recommendations(&clipboard_stats, &search_stats, &process_memory);
+    let recommendations = profiler.generate_recommendations(&clipboard_stats, &search_stats, &config_stats, &process_memory);
 
     let known_modules_bytes = clipboard_stats.estimated_total_bytes
         + search_stats.estimated_total_bytes
@@ -129,11 +129,13 @@ pub fn force_memory_cleanup(
 pub fn get_memory_recommendations(
     clipboard_state: State<'_, Arc<crate::clipboard::ClipboardState>>,
     search_state: State<'_, crate::commands::search::SearchState>,
+    config_manager: State<'_, crate::config::ConfigManager>,
 ) -> AppResult<Vec<crate::memory_profiler::MemoryRecommendation>> {
     let profiler = MemoryProfiler::new();
     let clipboard_stats = profiler.analyze_clipboard_state(clipboard_state.inner());
     let search_stats = profiler.analyze_search_state_from_ref(search_state.inner());
+    let config_stats = profiler.analyze_config_state_from_ref(config_manager.inner());
     let process_memory = profiler.get_process_memory();
 
-    Ok(profiler.generate_recommendations(&clipboard_stats, &search_stats, &process_memory))
+    Ok(profiler.generate_recommendations(&clipboard_stats, &search_stats, &config_stats, &process_memory))
 }
