@@ -146,6 +146,7 @@ impl MemoryProfiler {
         }
     }
 
+    #[allow(dead_code)]
     pub fn analyze_search_state(
         &self,
         search_state: &Arc<crate::commands::search::SearchState>,
@@ -224,6 +225,7 @@ impl MemoryProfiler {
         }
     }
 
+    #[allow(dead_code)]
     pub fn analyze_config_state(
         &self,
         config_manager: &Arc<crate::config::ConfigManager>,
@@ -329,6 +331,7 @@ impl MemoryProfiler {
         recommendations
     }
 
+    #[allow(dead_code)]
     pub fn collect_stats(
         &self,
         clipboard_state: Option<&Arc<crate::clipboard::ClipboardState>>,
