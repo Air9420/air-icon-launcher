@@ -1,3 +1,4 @@
+use log::warn;
 use pinyin::ToPinyin;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -28,7 +29,13 @@ impl PinyinIndex {
 
     pub fn to_pinyin_full(&self, text: &str) -> String {
         {
-            let cache = self.full_cache.lock().unwrap();
+            let cache = match self.full_cache.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    warn!("[to_pinyin_full] full_cache mutex poisoned, recovering");
+                    poisoned.into_inner()
+                }
+            };
             if let Some(value) = cache.get(text) {
                 return value.clone();
             }
@@ -41,7 +48,13 @@ impl PinyinIndex {
             .collect::<Vec<_>>()
             .join("");
 
-        let mut cache = self.full_cache.lock().unwrap();
+        let mut cache = match self.full_cache.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!("[to_pinyin_full] full_cache mutex poisoned, recovering");
+                poisoned.into_inner()
+            }
+        };
         cache_insert_bounded(&mut cache, text, &computed);
 
         computed
@@ -49,7 +62,13 @@ impl PinyinIndex {
 
     pub fn to_pinyin_initial(&self, text: &str) -> String {
         {
-            let cache = self.initial_cache.lock().unwrap();
+            let cache = match self.initial_cache.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    warn!("[to_pinyin_initial] initial_cache mutex poisoned, recovering");
+                    poisoned.into_inner()
+                }
+            };
             if let Some(value) = cache.get(text) {
                 return value.clone();
             }
@@ -62,7 +81,13 @@ impl PinyinIndex {
             .collect::<Vec<_>>()
             .join("");
 
-        let mut cache = self.initial_cache.lock().unwrap();
+        let mut cache = match self.initial_cache.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!("[to_pinyin_initial] initial_cache mutex poisoned, recovering");
+                poisoned.into_inner()
+            }
+        };
         cache_insert_bounded(&mut cache, text, &computed);
 
         computed
