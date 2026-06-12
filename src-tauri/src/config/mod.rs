@@ -518,6 +518,7 @@ impl ConfigManager {
         if let Ok(mut key) = self.runtime_ai_organizer_api_key.lock() {
             *key = normalize_api_key(api_key);
         }
+        self.invalidate_config_cache();
     }
 
     fn apply_runtime_ai_organizer_api_key(&self, config: &mut AppConfig) {
@@ -1870,6 +1871,11 @@ mod tests {
 
         let first = manager.load_config();
         assert_eq!(first.theme, "dark");
+
+        // Bypass save_config to mutate disk without cache invalidation
+        std::fs::write(manager.config_path(), r#"{"theme":"hijacked"}"#).unwrap();
+        let from_cache = manager.load_config();
+        assert_eq!(from_cache.theme, "dark"); // cached, not "hijacked"
 
         let disk_override = AppConfig {
             theme: "light".to_string(),
