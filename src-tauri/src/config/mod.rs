@@ -511,7 +511,7 @@ impl ConfigManager {
         let key = match self.runtime_ai_organizer_api_key.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
-                eprintln!("runtime_ai_organizer_api_key mutex poisoned, recovering");
+                eprintln!("[get_ai_organizer_api_key] runtime_ai_organizer_api_key mutex poisoned, recovering");
                 poisoned.into_inner()
             }
         };
@@ -522,7 +522,7 @@ impl ConfigManager {
         let mut key = match self.runtime_ai_organizer_api_key.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
-                eprintln!("runtime_ai_organizer_api_key mutex poisoned, recovering");
+                eprintln!("[set_runtime_ai_organizer_api_key] runtime_ai_organizer_api_key mutex poisoned, recovering");
                 poisoned.into_inner()
             }
         };
@@ -542,7 +542,7 @@ impl ConfigManager {
         let mut cache = match self.cached_config.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
-                eprintln!("cached_config mutex poisoned, recovering");
+                eprintln!("[invalidate_config_cache] cached_config mutex poisoned, recovering");
                 poisoned.into_inner()
             }
         };
@@ -553,7 +553,7 @@ impl ConfigManager {
         let mut cache = match self.cached_config.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
-                eprintln!("cached_config mutex poisoned, recovering");
+                eprintln!("[load_config] cached_config mutex poisoned, recovering");
                 poisoned.into_inner()
             }
         };
