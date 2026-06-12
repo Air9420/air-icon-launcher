@@ -276,7 +276,7 @@ impl MemoryProfiler {
                 severity: "info".to_string(),
                 module: "search".to_string(),
                 issue: format!("搜索索引项较多: {} 项", search_stats.indexed_items),
-                suggestion: "优先考虑启用拼音缓存和搜索候选向量复用，而不是扩大索引常驻内存。".to_string(),
+                suggestion: "索引构建已异步化，不会阻塞前端。如需进一步优化，可考虑增量拼音缓存。".to_string(),
                 estimated_savings_mb: (search_stats.estimated_total_bytes as f64) / 1024.0 / 1024.0 * 0.2,
             });
         }
