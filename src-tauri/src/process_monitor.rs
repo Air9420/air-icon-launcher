@@ -430,13 +430,45 @@ mod tests {
     #[test]
     fn prune_emitted_paths_keeps_recent_entries_bounded() {
         let mut cache = HashMap::new();
-        for index in 0..10 {
-            cache.insert(format!("path-{index}"), 1000 + index as u64);
+        for index in 0..10u64 {
+            cache.insert(format!("path-{index}"), 1000 + index);
         }
 
         prune_emitted_paths(&mut cache, 2_000, 4, 900);
 
-        assert!(cache.len() <= 4);
-        assert!(cache.values().all(|value| *value >= 1_100));
+        assert!(cache.is_empty(), "all entries are older than ttl cutoff 1100");
+    }
+
+    #[test]
+    fn prune_emitted_paths_capacity_pruning_removes_oldest() {
+        let mut cache = HashMap::new();
+        for index in 0..10u64 {
+            cache.insert(format!("path-{index}"), 1000 + index);
+        }
+
+        let now = 1_005;
+        let ttl = 1_000;
+        let max_entries = 4;
+        prune_emitted_paths(&mut cache, now, max_entries, ttl);
+
+        assert_eq!(cache.len(), max_entries);
+        assert!(cache.contains_key("path-6"));
+        assert!(cache.contains_key("path-7"));
+        assert!(cache.contains_key("path-8"));
+        assert!(cache.contains_key("path-9"));
+        assert!(!cache.contains_key("path-0"));
+        assert!(!cache.contains_key("path-1"));
+    }
+
+    #[test]
+    fn prune_emitted_paths_ttl_removes_expired_entries() {
+        let mut cache = HashMap::new();
+        cache.insert("old".to_string(), 100);
+        cache.insert("recent".to_string(), 1_900);
+
+        prune_emitted_paths(&mut cache, 2_000, 100, 500);
+
+        assert_eq!(cache.len(), 1);
+        assert!(cache.contains_key("recent"));
     }
 }
