@@ -232,7 +232,7 @@ fn scan_installed_apps_windows(app: AppHandle) -> AppResult<Vec<InstalledAppEntr
         .collect();
 
     let icon_start = std::time::Instant::now();
-    let extracted_icons = drag::extract_icons_from_paths(icon_extract_paths, None);
+    let extracted_icons = drag::extract_icons_from_paths_blocking(icon_extract_paths, None);
     let mut icon_base64s: Vec<Option<String>> = vec![None; icon_paths.len()];
     for ((idx, _), icon) in icon_extract_jobs
         .into_iter()
@@ -1238,7 +1238,7 @@ fn normalize_name_for_matching(value: &str) -> String {
 pub fn extract_icon_for_path(icon_path: &str) -> Option<String> {
     #[cfg(windows)]
     if let Some(resolved) = resolve_apps_folder_icon_path(icon_path) {
-        if let Some(icon) = drag::extract_icons_from_paths(vec![resolved], None)
+        if let Some(icon) = drag::extract_icons_from_paths_blocking(vec![resolved], None)
             .into_iter()
             .next()
             .flatten()
@@ -1247,7 +1247,7 @@ pub fn extract_icon_for_path(icon_path: &str) -> Option<String> {
         }
     }
 
-    drag::extract_icons_from_paths(vec![icon_path.to_string()], None)
+    drag::extract_icons_from_paths_blocking(vec![icon_path.to_string()], None)
         .into_iter()
         .next()
         .flatten()

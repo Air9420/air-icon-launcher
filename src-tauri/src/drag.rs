@@ -188,11 +188,18 @@ pub fn get_last_drop(state: State<'_, DragDropState>) -> Option<DropRecord> {
     state.last_drop.lock().ok().and_then(|g| g.clone())
 }
 
-/// 从给定的路径列表中提取图标 base64 数据（用于手动添加项目）。
-#[tauri::command]
-pub fn extract_icons_from_paths(paths: Vec<String>, max_edge: Option<u32>) -> Vec<Option<String>> {
+/// 从给定的路径列表中提取图标 base64 数据（同步版本，供内部调用）。
+pub fn extract_icons_from_paths_blocking(paths: Vec<String>, max_edge: Option<u32>) -> Vec<Option<String>> {
     let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
     extract_icon_base64s(&path_bufs, max_edge)
+}
+
+/// 从给定的路径列表中提取图标 base64 数据（用于手动添加项目）。
+#[tauri::command]
+pub async fn extract_icons_from_paths(paths: Vec<String>, max_edge: Option<u32>) -> Vec<Option<String>> {
+    tokio::task::spawn_blocking(move || extract_icons_from_paths_blocking(paths, max_edge))
+        .await
+        .unwrap_or_default()
 }
 
 /// 将操作系统回调提供的物理坐标转换为前端可用于 elementFromPoint 的逻辑坐标。

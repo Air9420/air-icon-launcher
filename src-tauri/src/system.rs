@@ -564,7 +564,7 @@ fn get_recent_files_windows(limit: usize, include_icons: bool) -> AppResult<Vec<
         }
 
         let icon_base64 = if include_icons {
-            crate::drag::extract_icons_from_paths(vec![target_path_str.clone()], None)
+            crate::drag::extract_icons_from_paths_blocking(vec![target_path_str.clone()], None)
                 .into_iter()
                 .next()
                 .flatten()
