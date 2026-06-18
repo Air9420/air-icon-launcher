@@ -525,7 +525,7 @@ fn new_drop_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use base64::{engine::general_purpose::STANDARD};
     use image::{codecs::png::PngEncoder, ColorType, ImageEncoder, Rgba, RgbaImage};
 
     fn write_test_png(width: u32, height: u32) -> Vec<u8> {
@@ -562,7 +562,7 @@ mod tests {
     #[test]
     fn extract_icons_from_paths_should_shrink_large_raster_images() {
         let path = write_temp_png_file(384, 256);
-        let result = extract_icons_from_paths(vec![path.to_string_lossy().to_string()], None);
+        let result = extract_icons_from_paths_blocking(vec![path.to_string_lossy().to_string()], None);
 
         let icon = result
             .into_iter()
@@ -601,7 +601,7 @@ mod tests {
         )
         .expect("test svg file should be writable");
 
-        let result = extract_icons_from_paths(vec![path.to_string_lossy().to_string()], None);
+        let result = extract_icons_from_paths_blocking(vec![path.to_string_lossy().to_string()], None);
         let icon = result
             .into_iter()
             .next()

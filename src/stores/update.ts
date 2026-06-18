@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { downloadAndInstallUpdate } from '../utils/updater'
 
 export interface UpdateInfo {
   version: string
@@ -14,8 +15,8 @@ export interface UpdateInfo {
 }
 
 export interface UpdateProgress {
-  total: number
-  downloaded: number
+  chunk_length: number
+  total: number | null
   percentage: number
 }
 
@@ -52,8 +53,7 @@ export const useUpdateStore = defineStore('update', () => {
     error.value = null
     
     try {
-      // 这里将调用Tauri的更新安装
-      console.log('开始更新...')
+      await downloadAndInstallUpdate()
     } catch (e) {
       error.value = e instanceof Error ? e.message : '更新失败'
     } finally {

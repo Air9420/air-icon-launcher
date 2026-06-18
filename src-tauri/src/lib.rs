@@ -24,6 +24,7 @@ mod tray;
 mod updater;
 mod window_effects;
 use tauri::tray::TrayIcon;
+use tauri::Emitter;
 use tauri::Manager;
 use tauri_plugin_updater::UpdaterExt;
 
@@ -56,9 +57,20 @@ async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
 
     match updater.check().await {
         Ok(Some(update)) => {
+            let app_handle = app.clone();
             update
                 .download_and_install(
-                    |_chunk_length, _total| {},
+                    move |chunk_length, total| {
+                        let percentage = match total {
+                            Some(t) if t > 0 => (chunk_length as f64 / t as f64 * 100.0) as u32,
+                            _ => 0,
+                        };
+                        let _ = app_handle.emit("update-progress", serde_json::json!({
+                            "chunk_length": chunk_length,
+                            "total": total,
+                            "percentage": percentage
+                        }));
+                    },
                     || {},
                 )
                 .await
