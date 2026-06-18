@@ -6,6 +6,13 @@
             </div>
             <div class="app-name">Air Launch</div>
             <div class="app-version">v{{ version }}</div>
+            <button 
+                class="check-update-btn" 
+                @click="onCheckUpdate"
+                :disabled="isChecking"
+            >
+                {{ isChecking ? '检查中...' : '检查更新' }}
+            </button>
         </div>
 
         <div class="section">
@@ -80,10 +87,14 @@ import { ref, computed, onMounted } from "vue";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { showToast } from "../../composables/useGlobalToast";
+import { checkForUpdate } from "../../utils/updater";
+import { useUpdateStore } from "../../stores/update";
 
 const version = ref("...");
 const currentYear = computed(() => new Date().getFullYear());
 const appIcon = ref("/icon.png");
+const isChecking = ref(false);
+const updateStore = useUpdateStore();
 
 onMounted(async () => {
     try {
@@ -100,6 +111,33 @@ async function onOpenGitHub() {
     } catch (e) {
         console.error("Failed to open GitHub:", e);
         showToast("无法打开链接", { type: "error" });
+    }
+}
+
+async function onCheckUpdate() {
+    isChecking.value = true;
+    try {
+        const result = await checkForUpdate();
+        if (result.available) {
+            updateStore.updateInfo = {
+                version: result.version!,
+                notes: result.notes || '',
+                pub_date: result.pub_date || new Date().toISOString(),
+                platforms: {
+                    'windows-x86_64': {
+                        signature: '',
+                        url: result.url || ''
+                    }
+                }
+            };
+            updateStore.showUpdateDialog = true;
+        } else {
+            showToast("当前已是最新版本", { type: "success" });
+        }
+    } catch (error) {
+        showToast("检查更新失败，请稍后重试", { type: "error" });
+    } finally {
+        isChecking.value = false;
     }
 }
 </script>
@@ -149,6 +187,27 @@ async function onOpenGitHub() {
 .app-version {
     font-size: 13px;
     color: var(--text-secondary);
+}
+
+.check-update-btn {
+    margin-top: 12px;
+    padding: 8px 24px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color-strong);
+    background: var(--input-bg);
+    color: var(--text-color);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    
+    &:hover:not(:disabled) {
+        background: var(--hover-bg);
+    }
+    
+    &:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
 }
 
 .section {
