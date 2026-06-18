@@ -1,0 +1,75 @@
+name: Sync to Gitee
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 获取 release 信息
+          RELEASE_TAG=${GITHUB_REF#refs/tags/}
+          echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
+          
+          # 下载 latest.json
+          curl -L -o latest.json "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/latest.json"
+          
+          # 下载更新包
+          curl -L -o update.nsis.zip "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/air-icon-launcher_${RELEASE_TAG#v}_x64-setup.nsis.zip"
+          
+          # 下载签名文件
+          curl -L -o update.nsis.zip.sig "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/air-icon-launcher_${RELEASE_TAG#v}_x64-setup.nsis.zip.sig"
+
+      - name: Update latest.json for Gitee
+        run: |
+          # 更新 latest.json 中的 URL 为 Gitee 地址
+          sed -i "s|https://github.com/${{ github.repository }}/releases/download|https://gitee.com/${{ github.repository }}/releases/download|g" latest.json
+
+      - name: Create Gitee Release
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_REPO: ${{ secrets.GITEE_REPO }}
+        run: |
+          # 创建 Gitee release
+          curl -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases" \
+            -H "Authorization: token ${GITEE_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"tag_name\": \"${RELEASE_TAG}\",
+              \"name\": \"${RELEASE_TAG}\",
+              \"body\": \"Sync from GitHub release ${RELEASE_TAG}\",
+              \"draft\": false,
+              \"prerelease\": false
+            }"
+
+      - name: Upload assets to Gitee
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_REPO: ${{ secrets.GITEE_REPO }}
+        run: |
+          # 获取 release ID
+          RELEASE_ID=$(curl -s "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases" \
+            -H "Authorization: token ${GITEE_TOKEN}" | jq -r ".[] | select(.tag_name==\"${RELEASE_TAG}\") | .id")
+          
+          # 上传 latest.json
+          curl -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases/${RELEASE_ID}/attach_files" \
+            -H "Authorization: token ${GITEE_TOKEN}" \
+            -F "file=@latest.json"
+          
+          # 上传更新包
+          curl -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases/${RELEASE_ID}/attach_files" \
+            -H "Authorization: token ${GITEE_TOKEN}" \
+            -F "file=@update.nsis.zip"
+          
+          # 上传签名文件
+          curl -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases/${RELEASE_ID}/attach_files" \
+            -H "Authorization: token ${GITEE_TOKEN}" \
+            -F "file=@update.nsis.zip.sig"
