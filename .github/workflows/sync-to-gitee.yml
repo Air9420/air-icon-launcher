@@ -59,7 +59,8 @@ jobs:
               \"name\": \"${RELEASE_TAG}\",
               \"body\": \"Sync from GitHub release ${RELEASE_TAG}\",
               \"draft\": false,
-              \"prerelease\": false
+              \"prerelease\": false,
+              \"target_commitish\": \"main\"
             }"
 
       - name: Upload assets to Gitee
