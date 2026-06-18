@@ -218,6 +218,8 @@ const isLoadingMore = computed(() => clipboardStore.isLoadingMore);
 const imagePreviewMap = ref<Record<string, string>>({});
 const imageLoadingSet = ref<Set<string>>(new Set());
 const searchKeyword = ref("");
+const backendSearchResults = ref<ClipboardRecord[]>([]);
+let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 const selectedFilter = ref<ClipboardFilter>("all");
 const expandedRecordIds = ref<Record<string, boolean>>({});
 const itemRefs = ref<Record<string, HTMLElement | null>>({});
@@ -384,7 +386,54 @@ onBeforeUnmount(() => {
 
 const normalizedKeyword = computed(() => searchKeyword.value.trim().toLowerCase());
 
+watch(searchKeyword, (newKeyword) => {
+    if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer);
+    }
+    const trimmed = newKeyword.trim();
+    if (!trimmed) {
+        backendSearchResults.value = [];
+        return;
+    }
+    searchDebounceTimer = setTimeout(async () => {
+        try {
+            const results = await clipboardStore.search(trimmed);
+            backendSearchResults.value = results;
+        } catch {
+            backendSearchResults.value = [];
+        }
+    }, 300);
+});
+
 const visibleRecords = computed(() => {
+    const keyword = normalizedKeyword.value;
+
+    if (keyword && backendSearchResults.value.length > 0) {
+        const localIds = new Set(history.value.map(r => r.id));
+        const merged = [...history.value];
+        for (const record of backendSearchResults.value) {
+            if (!localIds.has(record.id)) {
+                merged.push(record);
+            }
+        }
+        let records = merged;
+        if (selectedFilter.value === "favorites") {
+            records = records.filter((record) => isFavorite(record));
+        } else if (selectedFilter.value !== "all") {
+            records = records.filter((record) => getRecordGroupKey(record) === selectedFilter.value);
+        }
+        return records.filter((record) => {
+            const typeLabel = getRecordTypeLabel(record).toLowerCase();
+            if (typeLabel.includes(keyword)) return true;
+            if (record.content_type === "image") {
+                const imagePath = (record.image_path || "").toLowerCase();
+                return imagePath.includes(keyword) || "图片".includes(keyword);
+            }
+            const content = getRecordContent(record).toLowerCase();
+            return content.includes(keyword);
+        });
+    }
+
     let records = history.value;
 
     if (selectedFilter.value === "favorites") {
@@ -393,7 +442,6 @@ const visibleRecords = computed(() => {
         records = records.filter((record) => getRecordGroupKey(record) === selectedFilter.value);
     }
 
-    const keyword = normalizedKeyword.value;
     if (!keyword) {
         return records;
     }
