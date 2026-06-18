@@ -59,8 +59,8 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/Air/air-icon-launcher/releases/latest/download/latest.json",
-        "https://gitee.com/Air/air-icon-launcher/releases/latest/download/latest.json"
+        "https://github.com/Air9420/air-icon-launcher/releases/latest/download/latest.json",
+        "https://gitee.com/Air9420/air-icon-launcher/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYwMDAwQzBFMjBGRUJDN0EKUldSNnZQNGdEZ3dBOEtrSFRKN0VKcDRlL2JLUURnVytTdjBGTCtTTlhYTVA rM2RYdGNlTkNmOTQK"
     }

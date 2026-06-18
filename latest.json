@@ -1,0 +1,11 @@
+{
+  "version": "0.4.1",
+  "notes": "测试更新功能\n- 修复了一些问题\n- 优化了性能",
+  "pub_date": "2026-06-19T12:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "PLACEHOLDER_SIGNATURE",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.4.1/air-icon-launcher_0.4.1_x64-setup.nsis.zip"
+    }
+  }
+}
