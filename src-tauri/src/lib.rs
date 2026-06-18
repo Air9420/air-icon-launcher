@@ -160,6 +160,7 @@ pub fn run() {
             clipboard::set_clipboard_content,
             clipboard::get_clipboard_history,
             clipboard::get_clipboard_history_by_type,
+            clipboard::search_clipboard_history,
             clipboard::get_clipboard_type_counts,
             clipboard::clear_clipboard_history,
             clipboard::clear_clipboard_history_by_type,

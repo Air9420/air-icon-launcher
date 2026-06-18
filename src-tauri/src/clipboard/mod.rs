@@ -364,6 +364,36 @@ pub fn get_clipboard_history_by_type(
 }
 
 #[tauri::command]
+pub fn search_clipboard_history(
+    query: String,
+    limit: Option<usize>,
+    offset: Option<usize>,
+    state: tauri::State<'_, Arc<ClipboardState>>,
+) -> Result<Vec<ClipboardRecord>, String> {
+    let config = state.config.lock().unwrap().clone();
+    if !config.history_enabled {
+        return Ok(Vec::new());
+    }
+
+    let limit = limit.unwrap_or(50);
+    let offset = offset.unwrap_or(0);
+
+    if query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if let Some(db) = state.database.lock().unwrap().as_ref() {
+        let records = db.search(&query, limit, offset)
+            .map_err(|e| e.to_string())?;
+
+        let result: Vec<ClipboardRecord> = records.into_iter().map(|r| r.into()).collect();
+        return Ok(result);
+    }
+
+    Ok(Vec::new())
+}
+
+#[tauri::command]
 pub fn get_clipboard_type_counts(
     state: tauri::State<'_, Arc<ClipboardState>>,
 ) -> Result<serde_json::Value, String> {

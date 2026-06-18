@@ -147,6 +147,22 @@ export const useClipboardStore = defineStore("clipboard", () => {
         }
     }
 
+    async function search(query: string): Promise<ClipboardRecord[]> {
+        if (!query.trim()) return [];
+        
+        try {
+            const results = await invokeOrThrow<ClipboardRecord[]>("search_clipboard_history", {
+                query,
+                limit: 50,
+                offset: 0,
+            });
+            return results;
+        } catch (error) {
+            console.warn("[clipboard-store] Failed to search clipboard history:", error);
+            return [];
+        }
+    }
+
     return {
         clipboardHistory,
         clipboardHistoryEnabled,
@@ -162,5 +178,6 @@ export const useClipboardStore = defineStore("clipboard", () => {
         setCurrentClipboardHash,
         preloadHistory,
         loadMore,
+        search,
     };
 }, { persist: createVersionedPersistConfig("clipboard", ["clipboardHistory", "clipboardHistoryEnabled"]) });

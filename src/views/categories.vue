@@ -1460,44 +1460,69 @@ const currentSearchResults = computed(() => {
     return rustSearchMergedResults.value ?? [];
 });
 
-const clipboardSearchResults = computed<ClipboardSearchResult[]>(() => {
-    const keyword = searchKeyword.value.trim();
-    if (!keyword) return [];
-    const tokens = normalizeKeywordTokens(keyword);
-    if (tokens.length === 0) return [];
+const clipboardSearchResults = ref<ClipboardSearchResult[]>([]);
+const isSearchingClipboard = ref(false);
+let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const matched: ClipboardSearchResult[] = [];
-
-    for (const record of clipboardStore.clipboardHistory) {
-        const textContent = record.content_type === "text"
-            ? getRecordContent(record)
-            : (record.image_path || "");
-        const normalizedTarget = record.content_type === "image"
-            ? textContent
-            : `${textContent} ${buildClipboardPreview(textContent)}`;
-        const matchType = resolveExtensionMatchType(normalizedTarget, tokens);
-        if (!matchType) continue;
-
-        matched.push({
-            key: `clipboard:${record.id}`,
-            id: record.id,
-            hash: record.hash,
-            contentType: record.content_type,
-            textContent,
-            imagePath: record.image_path,
-            timestamp: record.timestamp,
-            preview: record.content_type === "image"
-                ? `图片：${record.image_path || "未命名图片"}`
-                : buildClipboardPreview(textContent),
-            matchType,
-        });
+async function performClipboardSearch(keyword: string) {
+    if (!keyword.trim()) {
+        clipboardSearchResults.value = [];
+        return;
     }
-    matched.sort((a, b) => {
-        const rankDiff = extensionMatchRank(a.matchType || "fuzzy") - extensionMatchRank(b.matchType || "fuzzy");
-        if (rankDiff !== 0) return rankDiff;
-        return b.timestamp - a.timestamp;
-    });
-    return matched.slice(0, 8);
+
+    isSearchingClipboard.value = true;
+    try {
+        const records = await clipboardStore.search(keyword);
+        const tokens = normalizeKeywordTokens(keyword);
+
+        const matched: ClipboardSearchResult[] = [];
+        for (const record of records) {
+            const textContent = record.content_type === "text"
+                ? getRecordContent(record)
+                : (record.image_path || "");
+            const normalizedTarget = record.content_type === "image"
+                ? textContent
+                : `${textContent} ${buildClipboardPreview(textContent)}`;
+            const matchType = resolveExtensionMatchType(normalizedTarget, tokens);
+            if (!matchType) continue;
+
+            matched.push({
+                key: `clipboard:${record.id}`,
+                id: record.id,
+                hash: record.hash,
+                contentType: record.content_type,
+                textContent,
+                imagePath: record.image_path,
+                timestamp: record.timestamp,
+                preview: record.content_type === "image"
+                    ? `图片：${record.image_path || "未命名图片"}`
+                    : buildClipboardPreview(textContent),
+                matchType,
+            });
+        }
+
+        matched.sort((a, b) => {
+            const rankDiff = extensionMatchRank(a.matchType || "fuzzy") - extensionMatchRank(b.matchType || "fuzzy");
+            if (rankDiff !== 0) return rankDiff;
+            return b.timestamp - a.timestamp;
+        });
+
+        clipboardSearchResults.value = matched.slice(0, 8);
+    } catch (error) {
+        console.error("Clipboard search failed:", error);
+        clipboardSearchResults.value = [];
+    } finally {
+        isSearchingClipboard.value = false;
+    }
+}
+
+watch(searchKeyword, (newKeyword) => {
+    if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer);
+    }
+    searchDebounceTimer = setTimeout(() => {
+        performClipboardSearch(newKeyword);
+    }, 300);
 });
 
 const recentFileSearchResults = computed<RecentFileSearchResult[]>(() => {
