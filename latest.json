@@ -1,11 +1,11 @@
 {
-  "version": "0.4.1",
+  "version": "0.4.0",
   "notes": "测试更新功能\n- 修复了一些问题\n- 优化了性能",
   "pub_date": "2026-06-19T12:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "PLACEHOLDER_SIGNATURE",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.4.1/air-icon-launcher_0.4.1_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUmJnVTlPY2x3aVJzZUhqZ2F3REUwTG5SRDVzU0NCMmFTQnVNd2UrQkl6OFk0UjQ3cmVKWGFFemxzdDk2eWRUeHZwdEtzUnNrL3BLVWcycDE5eCtJWUF3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxODA4NjgyCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC40LjBfeDY0LXNldHVwLm5zaXMuemlwCnduZm8zN1g0UGpnb245Si9BWW42M0ZXemJnWlBreUFnUzM0enVpT1A1SmRkOXBONDA2YzREaG5qRjROazFjRFNZMGhTVVV3b0g3dnU0OTVhWEdhQUNnPT0K",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.4.0/air-icon-launcher_0.4.0_x64-setup.nsis.zip"
     }
   }
 }

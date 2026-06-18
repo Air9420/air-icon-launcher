@@ -29,7 +29,7 @@ export const useUpdateStore = defineStore('update', () => {
   const showUpdateDialog = ref(false)
 
   const hasUpdate = computed(() => updateInfo.value !== null)
-  const currentVersion = ref('0.4.0')
+  const currentVersion = ref('0.4.1')
 
   async function checkForUpdate() {
     isChecking.value = true
