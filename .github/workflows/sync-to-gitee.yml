@@ -3,6 +3,11 @@ name: Sync to Gitee
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to sync (e.g. v0.5.0)'
+        required: true
 
 jobs:
   sync:
@@ -11,13 +16,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Get release tag
+        run: |
+          # 获取 release 信息
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RELEASE_TAG="${{ github.event.inputs.tag }}"
+          else
+            RELEASE_TAG=${GITHUB_REF#refs/tags/}
+          fi
+          echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
+
       - name: Download release assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 获取 release 信息
-          RELEASE_TAG=${GITHUB_REF#refs/tags/}
-          echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
           
           # 下载 latest.json
           curl -L -o latest.json "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/latest.json"
