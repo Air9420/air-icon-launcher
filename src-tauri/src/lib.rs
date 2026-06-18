@@ -25,9 +25,50 @@ mod updater;
 mod window_effects;
 use tauri::tray::TrayIcon;
 use tauri::Manager;
+use tauri_plugin_updater::UpdaterExt;
 
 struct TrayState {
     tray: TrayIcon,
+}
+
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let updater = app.updater().map_err(|e| format!("获取更新器失败: {}", e))?;
+
+    match updater.check().await {
+        Ok(Some(update)) => Ok(serde_json::json!({
+            "available": true,
+            "version": update.version,
+            "notes": update.body,
+            "pub_date": update.date.map(|d| d.to_string()),
+            "url": update.download_url
+        })),
+        Ok(None) => Ok(serde_json::json!({
+            "available": false
+        })),
+        Err(e) => Err(format!("检查更新失败: {}", e)),
+    }
+}
+
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+    let updater = app.updater().map_err(|e| format!("获取更新器失败: {}", e))?;
+
+    match updater.check().await {
+        Ok(Some(update)) => {
+            update
+                .download_and_install(
+                    |_chunk_length, _total| {},
+                    || {},
+                )
+                .await
+                .map_err(|e| format!("安装更新失败: {}", e))?;
+            app.restart();
+        }
+        Ok(None) => {}
+        Err(e) => return Err(format!("检查更新失败: {}", e)),
+    }
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -132,6 +173,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            check_update,
+            install_update,
             drag::report_drop_target,
             drag::get_last_drop,
             drag::extract_icons_from_paths,

@@ -35,6 +35,8 @@ import { useWindowPosition } from "./composables/useWindowPosition";
 import { useAutoHideCountdown } from "./composables/useAutoHideCountdown";
 import { getPluginManager } from "./plugins";
 import { initGlobalClipboardListeners, cleanupGlobalClipboardListeners } from "./composables/useClipboardEvents";
+import { setupUpdateCheck, listenUpdateProgress } from "./utils/updater";
+import UpdateDialog from "./components/UpdateDialog.vue";
 
 import "./styles/themes.scss";
 
@@ -244,6 +246,9 @@ onMounted(async () => {
     applyEffectsDisabled(!windowEffectsEnabled.value);
     watchThemeChanges();
 
+    setupUpdateCheck();
+    listenUpdateProgress();
+
     void store.syncSearchIndex().catch(() => {});
 
     const isAutostart = await invoke<boolean>("check_is_autostart_launch");
@@ -333,6 +338,7 @@ onBeforeUnmount(async () => {
     />
     <OnboardingGuide />
     <FocusIndicator v-if="isDev" />
+    <UpdateDialog />
 </template>
 
 <style lang="scss" scoped>
