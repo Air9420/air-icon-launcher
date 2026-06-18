@@ -1,11 +1,11 @@
 {
-  "version": "0.4.1",
-  "notes": "## v0.4.1 更新内容\n\n### 新增\n- 版本更新功能（自动检查更新、主从更新源架构）\n- 设置页面手动检查更新入口\n\n### 修复\n- 修复了一些问题\n\n### 优化\n- 优化了性能",
-  "pub_date": "2026-06-19T18:00:00Z",
+  "version": "0.5.0",
+  "notes": "## v0.5.0 更新内容\n\n### 新增\n- 版本更新功能（自动检查更新、主从更新源架构 GitHub + Gitee）\n- 设置页面手动检查更新入口\n\n### 修复\n- 修复剪贴板历史搜索只能搜索当前页的 bug\n- 搜索输入时头部闪烁\n\n### 优化\n- 搜索、图标提取、快捷方式解析等改为异步\n- 剪贴板历史页面打开速度",
+  "pub_date": "2026-06-19T20:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUlc1Tndua1hSWVE5M2R4SWRBZTZLL2NJZXhpZmxQY0o5dk5UNWYvaWQzdjF5K2tyeDVmdmFzVG5MMTR0cC8rVXI4TStoWjBVSXFjRkhLS0dBcEt1R1FrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxODA5OTIwCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC40LjFfeDY0LXNldHVwLm5zaXMuemlwCmIxVDR0ZEZlNDZYWFBlaldGQXNzUlltaDhiZERmRHFMMnV2eUdycHBRdmRZMmllU1doTStJR0ZJemozcDN2dmJsNjU2UDQ5R2dUaURWYWM3cTNYeUFnPT0K",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.4.1/air-icon-launcher_0.4.1_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUmFuWkhGS1doWUZWcWJhNUxuVDZ3Mm4yY09qU2NQdkVBU205MkhhSGJwRUhnbnV4Skg4TXBJdjdUblNKMmxGSVNRS2Nxb2x2UzVlcXF5K1N3Yk5IUnd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxODE3Mjg4CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC41LjBfeDY0LXNldHVwLm5zaXMuemlwCmJGZWVKOEM0cy9PcWYvekh6am9kS2RZa3U1eWJQc2V2Vm5rNUVYOEhQeWlGNTIxOG8yWUFhUFp3K0xHS3RzV3pVZHNIQ2tsNTByK2M1UHhGQVY4WkFnPT0K",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.5.0/air-icon-launcher_0.5.0_x64-setup.nsis.zip"
     }
   }
 }
