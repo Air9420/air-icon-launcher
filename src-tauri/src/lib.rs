@@ -21,6 +21,7 @@ mod process_monitor;
 mod search;
 mod system;
 mod tray;
+mod updater;
 mod window_effects;
 use tauri::tray::TrayIcon;
 use tauri::Manager;
@@ -129,6 +130,7 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             drag::report_drop_target,
             drag::get_last_drop,
