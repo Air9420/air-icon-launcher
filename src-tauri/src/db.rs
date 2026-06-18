@@ -218,6 +218,36 @@ impl ClipboardDatabase {
         Ok(records)
     }
 
+    pub fn search(&self, query: &str, limit: usize, offset: usize) -> SqliteResult<Vec<ClipboardRecordDb>> {
+        let conn = self.read_conn.lock().unwrap();
+        let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+        let search_pattern = format!("%{}%", escaped);
+        let mut stmt = conn.prepare(
+            "SELECT id, content_type, content_subtype, text_content, image_path, hash, timestamp, is_favorite
+             FROM clipboard_records 
+             WHERE text_content LIKE ?1 ESCAPE '\\' OR image_path LIKE ?1 ESCAPE '\\'
+             ORDER BY timestamp DESC 
+             LIMIT ?2 OFFSET ?3",
+        )?;
+
+        let records = stmt
+            .query_map(rusqlite::params![search_pattern, limit as i64, offset as i64], |row| {
+                Ok(ClipboardRecordDb {
+                    id: row.get(0)?,
+                    content_type: row.get(1)?,
+                    content_subtype: row.get(2)?,
+                    text_content: row.get(3)?,
+                    image_path: row.get(4)?,
+                    hash: row.get(5)?,
+                    timestamp: row.get(6)?,
+                    is_favorite: row.get(7)?,
+                })
+            })?
+            .collect::<SqliteResult<Vec<_>>>()?;
+
+        Ok(records)
+    }
+
     pub fn get_by_content_type(
         &self,
         content_type: &str,
@@ -832,5 +862,107 @@ mod tests {
         assert_eq!(remained_hashes.len(), 2);
         assert!(remained_hashes.contains("h0"));
         assert!(remained_hashes.contains("h3"));
+    }
+
+    #[test]
+    fn test_search_basic_match() {
+        let db = open_mem_db();
+        db.insert(&make_record("1", "text", Some("hello world"), "h1", 1000))
+            .unwrap();
+        db.insert(&make_record("2", "text", Some("goodbye world"), "h2", 2000))
+            .unwrap();
+        db.insert(&make_record("3", "text", Some("nothing"), "h3", 3000))
+            .unwrap();
+
+        let results = db.search("world", 10, 0).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].id, "2");
+        assert_eq!(results[1].id, "1");
+    }
+
+    #[test]
+    fn test_search_no_results() {
+        let db = open_mem_db();
+        db.insert(&make_record("1", "text", Some("hello"), "h1", 1000))
+            .unwrap();
+
+        let results = db.search("zzz", 10, 0).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_empty_query_matches_all() {
+        let db = open_mem_db();
+        db.insert(&make_record("1", "text", Some("a"), "h1", 1000))
+            .unwrap();
+        db.insert(&make_record("2", "text", Some("b"), "h2", 2000))
+            .unwrap();
+
+        let results = db.search("", 10, 0).unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_search_escapes_percent_wildcard() {
+        let db = open_mem_db();
+        db.insert(&make_record("1", "text", Some("100% done"), "h1", 1000))
+            .unwrap();
+        db.insert(&make_record("2", "text", Some("100 items done"), "h2", 2000))
+            .unwrap();
+
+        let results = db.search("100%", 10, 0).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "1");
+    }
+
+    #[test]
+    fn test_search_escapes_underscore_wildcard() {
+        let db = open_mem_db();
+        db.insert(&make_record("1", "text", Some("file_name"), "h1", 1000))
+            .unwrap();
+        db.insert(&make_record("2", "text", Some("filename"), "h2", 2000))
+            .unwrap();
+
+        let results = db.search("file_name", 10, 0).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "1");
+    }
+
+    #[test]
+    fn test_search_offset_beyond_results() {
+        let db = open_mem_db();
+        db.insert(&make_record("1", "text", Some("hello"), "h1", 1000))
+            .unwrap();
+
+        let results = db.search("hello", 10, 100).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_limit_and_offset() {
+        let db = open_mem_db();
+        for i in 0..5 {
+            db.insert(&make_record(
+                &format!("{}", i),
+                "text",
+                Some("match"),
+                &format!("h{}", i),
+                i as i64 * 1000,
+            ))
+            .unwrap();
+        }
+
+        let page1 = db.search("match", 2, 0).unwrap();
+        assert_eq!(page1.len(), 2);
+        assert_eq!(page1[0].id, "4");
+        assert_eq!(page1[1].id, "3");
+
+        let page2 = db.search("match", 2, 2).unwrap();
+        assert_eq!(page2.len(), 2);
+        assert_eq!(page2[0].id, "2");
+        assert_eq!(page2[1].id, "1");
+
+        let page3 = db.search("match", 2, 4).unwrap();
+        assert_eq!(page3.len(), 1);
     }
 }
