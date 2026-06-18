@@ -34,7 +34,10 @@ struct TrayState {
 
 #[tauri::command]
 async fn check_update(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
-    let updater = app.updater().map_err(|e| format!("获取更新器失败: {}", e))?;
+    let updater = app.updater_builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("获取更新器失败: {}", e))?;
 
     match updater.check().await {
         Ok(Some(update)) => Ok(serde_json::json!({
