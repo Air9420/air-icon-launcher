@@ -54,7 +54,8 @@
         "languages": ["SimpChinese"],
         "displayLanguageSelector": true
       }
-    }
+    },
+    "createUpdaterArtifacts": true
   },
   "plugins": {
     "updater": {
