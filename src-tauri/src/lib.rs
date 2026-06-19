@@ -33,24 +33,114 @@ struct TrayState {
 }
 
 #[tauri::command]
-async fn check_update(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
-    let updater = app.updater_builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("获取更新器失败: {}", e))?;
-
-    match updater.check().await {
-        Ok(Some(update)) => Ok(serde_json::json!({
-            "available": true,
-            "version": update.version,
-            "notes": update.body,
-            "pub_date": update.date.map(|d| d.to_string()),
-            "url": update.download_url
-        })),
-        Ok(None) => Ok(serde_json::json!({
-            "available": false
-        })),
-        Err(e) => Err(format!("检查更新失败: {}", e)),
+async fn check_update(app: tauri::AppHandle, window: tauri::Window) -> Result<serde_json::Value, String> {
+    use tauri::Emitter;
+    
+    let log = |msg: &str| {
+        let _ = window.emit("update-log", msg);
+    };
+    
+    log("开始检查更新...");
+    
+    // 获取 endpoints 配置
+    let config = app.config();
+    let endpoints = config.plugins.updater.endpoints.clone().unwrap_or_default();
+    
+    if endpoints.is_empty() {
+        let err = "未配置更新端点";
+        log(err);
+        return Err(err.to_string());
+    }
+    
+    log(&format!("配置了 {} 个更新源", endpoints.len()));
+    
+    // 并发检查所有 endpoints
+    let mut handles = vec![];
+    for (i, endpoint) in endpoints.iter().enumerate() {
+        let endpoint_url = endpoint.to_string();
+        let app_handle = app.clone();
+        let window_clone = window.clone();
+        
+        let handle = tokio::spawn(async move {
+            let log = |msg: &str| {
+                let _ = window_clone.emit("update-log", msg);
+            };
+            
+            log(&format!("正在检查源 {}: {}", i + 1, endpoint_url));
+            
+            let updater = match app_handle.updater_builder()
+                .endpoints(vec![endpoint_url.clone()])
+                .timeout(std::time::Duration::from_secs(15))
+                .build() {
+                    Ok(u) => u,
+                    Err(e) => {
+                        let err = format!("源 {} 构建更新器失败: {}", i + 1, e);
+                        log(&err);
+                        return Err(err);
+                    }
+                };
+            
+            match updater.check().await {
+                Ok(Some(update)) => {
+                    log(&format!("源 {} 发现新版本: {}", i + 1, update.version));
+                    Ok(Some(update))
+                }
+                Ok(None) => {
+                    log(&format!("源 {} 没有新版本", i + 1));
+                    Ok(None)
+                }
+                Err(e) => {
+                    let err = format!("源 {} 检查失败: {} (类型: {:?})", i + 1, e, e);
+                    log(&err);
+                    Err(err)
+                }
+            }
+        });
+        
+        handles.push(handle);
+    }
+    
+    // 等待第一个成功的结果
+    let mut errors = vec![];
+    let mut found_update = false;
+    let mut result = serde_json::json!({"available": false});
+    
+    for handle in handles {
+        match handle.await {
+            Ok(Ok(Some(update))) => {
+                if !found_update {
+                    found_update = true;
+                    result = serde_json::json!({
+                        "available": true,
+                        "version": update.version,
+                        "notes": update.body,
+                        "pub_date": update.date.map(|d| d.to_string()),
+                        "url": update.download_url
+                    });
+                }
+            }
+            Ok(Ok(None)) => {
+                // 没有更新，继续
+            }
+            Ok(Err(e)) => {
+                errors.push(e);
+            }
+            Err(e) => {
+                errors.push(format!("任务执行失败: {}", e));
+            }
+        }
+    }
+    
+    if found_update {
+        log("检查完成，发现新版本");
+        Ok(result)
+    } else if errors.is_empty() {
+        log("检查完成，已是最新版本");
+        Ok(serde_json::json!({"available": false}))
+    } else {
+        let err_msg = format!("所有更新源检查失败:\n{}", errors.join("\n"));
+        log(&err_msg);
+        Err(err_msg)
     }
 }
 

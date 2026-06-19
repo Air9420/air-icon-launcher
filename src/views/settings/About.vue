@@ -135,7 +135,9 @@ async function onCheckUpdate() {
             showToast("当前已是最新版本", { type: "success" });
         }
     } catch (error) {
-        showToast("检查更新失败，请稍后重试", { type: "error" });
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error("检查更新失败:", errorMsg);
+        showToast(`检查更新失败: ${errorMsg}`, { type: "error" });
     } finally {
         isChecking.value = false;
     }

@@ -32,6 +32,9 @@ export async function downloadAndInstallUpdate(): Promise<void> {
 
 export function setupUpdateCheck() {
   const updateStore = useUpdateStore()
+  
+  // 监听更新日志
+  listenUpdateLog()
 
   window.addEventListener('load', async () => {
     try {
@@ -61,5 +64,11 @@ export function listenUpdateProgress() {
   listen<UpdateProgress>('update-progress', (event) => {
     const updateStore = useUpdateStore()
     updateStore.updateProgress = event.payload
+  })
+}
+
+export function listenUpdateLog() {
+  listen<string>('update-log', (event) => {
+    console.log('[更新]', event.payload)
   })
 }
