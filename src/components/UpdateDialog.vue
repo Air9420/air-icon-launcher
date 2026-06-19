@@ -136,11 +136,11 @@ function handleRestart() {
 }
 
 .update-dialog {
-  background: white;
+  background: rgba(var(--floating-panel-rgb), 0.86);
   border-radius: 12px;
   width: 400px;
   max-width: 90vw;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
   overflow: hidden;
 }
 
@@ -149,19 +149,19 @@ function handleRestart() {
   justify-content: space-between;
   align-items: center;
   padding: 20px 24px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  background: var(--hover-bg);
+  color: var(--text-color);
   
   h3 {
     margin: 0;
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 600;
   }
   
   .close-btn {
     background: none;
     border: none;
-    color: white;
+    color: var(--text-color-secondary);
     font-size: 24px;
     cursor: pointer;
     padding: 0;
@@ -173,7 +173,7 @@ function handleRestart() {
     border-radius: 50%;
     
     &:hover {
-      background: rgba(255, 255, 255, 0.2);
+      background: var(--hover-bg-strong);
     }
   }
 }
@@ -183,7 +183,7 @@ function handleRestart() {
 }
 
 .current-version {
-  color: #666;
+  color: var(--text-color-secondary);
   font-size: 14px;
   margin-bottom: 16px;
 }
@@ -192,11 +192,11 @@ function handleRestart() {
   h4 {
     margin: 0 0 8px 0;
     font-size: 14px;
-    color: #333;
+    color: var(--text-color);
   }
   
   .notes-content {
-    background: #f5f5f5;
+    background: var(--hover-bg);
     padding: 12px;
     border-radius: 8px;
     font-size: 14px;
@@ -215,7 +215,7 @@ function handleRestart() {
     margin-top: 12px;
     margin-bottom: 8px;
     font-weight: 600;
-    color: #333;
+    color: var(--text-color);
   }
 
   :deep(h1) { font-size: 18px; }
@@ -241,7 +241,7 @@ function handleRestart() {
 
   :deep(strong) {
     font-weight: 600;
-    color: #333;
+    color: var(--text-color);
   }
 
   :deep(em) {
@@ -249,7 +249,7 @@ function handleRestart() {
   }
 
   :deep(code) {
-    background: #e8e8e8;
+    background: var(--hover-bg);
     padding: 2px 6px;
     border-radius: 4px;
     font-size: 13px;
@@ -257,8 +257,8 @@ function handleRestart() {
   }
 
   :deep(pre) {
-    background: #2d2d2d;
-    color: #f8f8f2;
+    background: var(--hover-bg-strong);
+    color: var(--text-color);
     padding: 12px;
     border-radius: 8px;
     overflow-x: auto;
@@ -272,7 +272,7 @@ function handleRestart() {
   }
 
   :deep(a) {
-    color: #667eea;
+    color: var(--primary-color, #667eea);
     text-decoration: none;
 
     &:hover {
@@ -282,26 +282,26 @@ function handleRestart() {
 
   :deep(hr) {
     border: none;
-    border-top: 1px solid #e0e0e0;
+    border-top: 1px solid var(--border-color, #e0e0e0);
     margin: 12px 0;
   }
 
   :deep(blockquote) {
-    border-left: 3px solid #667eea;
+    border-left: 3px solid var(--primary-color, #667eea);
     margin: 8px 0;
     padding: 4px 12px;
-    color: #666;
-    background: #f9f9f9;
+    color: var(--text-color-secondary);
+    background: var(--hover-bg);
   }
 }
 
 .update-error {
   margin: 0 24px 16px;
   padding: 12px;
-  background: #fee;
-  border: 1px solid #fcc;
+  background: rgba(var(--error-color-rgb, 229, 57, 53), 0.1);
+  border: 1px solid rgba(var(--error-color-rgb, 229, 57, 53), 0.3);
   border-radius: 8px;
-  color: #c33;
+  color: var(--error-color, #e53935);
   font-size: 14px;
 }
 
@@ -310,14 +310,14 @@ function handleRestart() {
   
   .progress-bar {
     height: 8px;
-    background: #eee;
+    background: var(--hover-bg);
     border-radius: 4px;
     overflow: hidden;
     margin-bottom: 8px;
     
     .progress-fill {
       height: 100%;
-      background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+      background: var(--primary-color, #667eea);
       transition: width 0.3s ease;
     }
   }
@@ -326,7 +326,7 @@ function handleRestart() {
     display: flex;
     justify-content: space-between;
     font-size: 12px;
-    color: #666;
+    color: var(--text-color-secondary);
   }
 }
 
@@ -338,7 +338,7 @@ function handleRestart() {
     width: 60px;
     height: 60px;
     margin: 0 auto 16px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: var(--primary-color, #667eea);
     border-radius: 50%;
     display: flex;
     align-items: center;
@@ -348,7 +348,7 @@ function handleRestart() {
   }
   
   p {
-    color: #333;
+    color: var(--text-color);
     font-size: 14px;
     line-height: 1.5;
   }
@@ -356,19 +356,19 @@ function handleRestart() {
 
 .update-actions {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   padding: 16px 24px 24px;
   justify-content: flex-end;
 }
 
 .btn {
-  padding: 10px 20px;
+  padding: 8px 16px;
   border-radius: 8px;
   border: none;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
   
   &:disabled {
     opacity: 0.6;
@@ -377,21 +377,20 @@ function handleRestart() {
 }
 
 .btn-secondary {
-  background: #f0f0f0;
-  color: #666;
+  background: var(--hover-bg);
+  color: var(--text-color);
   
   &:hover:not(:disabled) {
-    background: #e0e0e0;
+    background: var(--hover-bg-strong);
   }
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--error-color, #e53935);
   color: white;
   
   &:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    opacity: 0.9;
   }
 }
 </style>
