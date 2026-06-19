@@ -44,8 +44,8 @@ async fn check_update(app: tauri::AppHandle, window: tauri::Window) -> Result<se
     log("开始检查更新...".to_string());
     
     let endpoints = vec![
-        ("GitHub", "https://github.com/Air9420/air-icon-launcher/releases/latest/download/latest.json"),
-        ("Gitee", "https://gitee.com/Air9420/air-icon-launcher/releases/latest/download/latest.json"),
+        ("GitHub", "https://github.com/Air9420/air-icon-launcher/releases/latest/download/latest.json".to_string()),
+        ("Gitee", "gitee://air9420/air-icon-launcher".to_string()),
     ];
     
     log(format!("并发检查 {} 个更新源: GitHub, Gitee", endpoints.len()));
@@ -57,22 +57,56 @@ async fn check_update(app: tauri::AppHandle, window: tauri::Window) -> Result<se
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
     
     let mut handles = vec![];
+    let mut errors: Vec<String> = vec![];
     for (name, url) in endpoints {
         let client = client.clone();
-        let url = url.to_string();
         let name = name.to_string();
         let window_clone = window.clone();
         
+        // Gitee 需要先获取最新 release 的 tag
+        let actual_url = if url.starts_with("gitee://") {
+            let repo_path = url.strip_prefix("gitee://").unwrap();
+            let api_url = format!("https://gitee.com/api/v5/repos/{}/releases", repo_path);
+            match client.get(&api_url).send().await {
+                Ok(resp) => {
+                    if let Ok(releases) = resp.json::<serde_json::Value>().await {
+                        if let Some(tag) = releases.as_array().and_then(|arr| arr.first()).and_then(|r| r.get("tag_name")).and_then(|t| t.as_str()) {
+                            format!("https://gitee.com/{}/releases/download/{}/latest.json", repo_path, tag)
+                        } else {
+                            let err = format!("[{}] 无法获取最新 release tag", name);
+                            let _ = window_clone.emit("update-log", &err);
+                            errors.push(err);
+                            continue;
+                        }
+                    } else {
+                        let err = format!("[{}] Gitee API 响应解析失败", name);
+                        let _ = window_clone.emit("update-log", &err);
+                        errors.push(err);
+                        continue;
+                    }
+                }
+                Err(e) => {
+                    let err = format!("[{}] Gitee API 请求失败: {}", name, e);
+                    let _ = window_clone.emit("update-log", &err);
+                    errors.push(err);
+                    continue;
+                }
+            }
+        } else {
+            url.clone()
+        };
+        
         let name_for_task = name.clone();
+        let url_for_task = actual_url.clone();
         let handle = tokio::spawn(async move {
             let log = |msg: String| {
                 let _ = window_clone.emit("update-log", &msg);
             };
             
-            log(format!("[{}] 正在检查: {}", name_for_task, url));
+            log(format!("[{}] 正在检查: {}", name_for_task, url_for_task));
             let start = std::time::Instant::now();
             
-            match client.get(&url).send().await {
+            match client.get(&url_for_task).send().await {
                 Ok(resp) => {
                     let elapsed = start.elapsed().as_millis();
                     let status = resp.status();
@@ -113,7 +147,6 @@ async fn check_update(app: tauri::AppHandle, window: tauri::Window) -> Result<se
     }
     
     // 收集结果：优先使用第一个成功的
-    let mut errors: Vec<String> = vec![];
     let mut best_result: Option<serde_json::Value> = None;
     
     for (name, handle) in handles {
