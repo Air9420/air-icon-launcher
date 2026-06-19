@@ -1,0 +1,11 @@
+{
+  "version": "0.5.1",
+  "notes": "## v0.5.1\n\n### 修复\n- 改进 JSON 解析错误处理\n- 修复 Gitee 同步文件名\n- 双源并发检查更新优化\n- 完善更新流程：实时进度、下载完成确认、重启",
+  "pub_date": "2026-06-19T22:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUlhQdWNSNjgzL0E0Z0Z0RThxOUtOaGhtd3ViMEZjK0kxemo5bERUcXpzSFhmQW9SNVl5SlZQbUhyUXdwOUFLeWZObU1DUlJlT2xFQUhRayswZnlaVVFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxODU5ODAwCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC41LjFfeDY0LXNldHVwLm5zaXMuemlwCjJ3dXRXWlF6MEZQdURRSWdDSHBWWGg0SG1pYkRVcUw0NG82S0lLSTB6M1NZekhabVpib0VHb083YjBGLyt5WVE4cVByci9DTDJ6bzh4aUtMaFY2cUJnPT0K",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.5.1/air-icon-launcher_0.5.1_x64-setup.nsis.zip"
+    }
+  }
+}

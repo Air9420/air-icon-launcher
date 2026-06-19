@@ -55,9 +55,24 @@ async fn check_update(app: tauri::AppHandle, window: tauri::Window) -> Result<se
             Ok(resp) => {
                 if let Ok(releases) = resp.json::<serde_json::Value>().await {
                     releases.as_array()
-                        .and_then(|arr| arr.first())
-                        .and_then(|r| r.get("tag_name"))
-                        .and_then(|t| t.as_str())
+                        .and_then(|arr| {
+                            // 找到版本号最大的 release（按 tag_name 排序）
+                            arr.iter()
+                                .filter_map(|r| r.get("tag_name").and_then(|t| t.as_str()))
+                                .max_by(|a, b| {
+                                    // 比较版本号：v0.5.1 > v0.5.0
+                                    let ver_a = a.trim_start_matches('v');
+                                    let ver_b = b.trim_start_matches('v');
+                                    ver_a.split('.')
+                                        .map(|s| s.parse::<u32>().unwrap_or(0))
+                                        .collect::<Vec<_>>()
+                                        .cmp(
+                                            &ver_b.split('.')
+                                                .map(|s| s.parse::<u32>().unwrap_or(0))
+                                                .collect::<Vec<_>>()
+                                        )
+                                })
+                        })
                         .map(|tag| {
                             let _ = window.emit("update-log", format!("[Gitee] 最新 release: {}", tag));
                             format!("https://gitee.com/air9420/air-icon-launcher/releases/download/{}/latest.json", tag)
