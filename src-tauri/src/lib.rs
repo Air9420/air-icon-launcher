@@ -24,7 +24,6 @@ mod tray;
 mod updater;
 mod window_effects;
 use tauri::tray::TrayIcon;
-use tauri::Emitter;
 use tauri::Manager;
 
 struct TrayState {
@@ -34,286 +33,94 @@ struct TrayState {
 #[tauri::command]
 async fn check_update(app: tauri::AppHandle, window: tauri::Window) -> Result<serde_json::Value, String> {
     use tauri::Emitter;
+    use tauri_plugin_updater::UpdaterExt;
     
-    let _ = window.emit("update-log", "开始检查更新（并发双源）...");
+    let _ = window.emit("update-log", "开始检查更新...");
     log::info!("开始检查更新");
     
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+    let updater = app.updater().map_err(|e| format!("获取更新器失败: {}", e))?;
     
-    let current_version = app.config().version.clone().unwrap_or_default();
+    let update = updater.check().await
+        .map_err(|e| format!("检查更新失败: {}", e))?;
     
-    // GitHub 直接用 latest 路径
-    let github_url = "https://github.com/Air9420/air-icon-launcher/releases/latest/download/latest.json".to_string();
-    
-    // Gitee 需要先获取最新 release tag
-    let gitee_url = {
-        let api_url = "https://gitee.com/api/v5/repos/air9420/air-icon-launcher/releases";
-        match client.get(api_url).send().await {
-            Ok(resp) => {
-                if let Ok(releases) = resp.json::<serde_json::Value>().await {
-                    releases.as_array()
-                        .and_then(|arr| {
-                            // 找到版本号最大的 release（按 tag_name 排序）
-                            arr.iter()
-                                .filter_map(|r| r.get("tag_name").and_then(|t| t.as_str()))
-                                .max_by(|a, b| {
-                                    // 比较版本号：v0.5.1 > v0.5.0
-                                    let ver_a = a.trim_start_matches('v');
-                                    let ver_b = b.trim_start_matches('v');
-                                    ver_a.split('.')
-                                        .map(|s| s.parse::<u32>().unwrap_or(0))
-                                        .collect::<Vec<_>>()
-                                        .cmp(
-                                            &ver_b.split('.')
-                                                .map(|s| s.parse::<u32>().unwrap_or(0))
-                                                .collect::<Vec<_>>()
-                                        )
-                                })
-                        })
-                        .map(|tag| {
-                            let _ = window.emit("update-log", format!("[Gitee] 最新 release: {}", tag));
-                            format!("https://gitee.com/air9420/air-icon-launcher/releases/download/{}/latest.json", tag)
-                        })
-                } else {
-                    let _ = window.emit("update-log", "[Gitee] 无法解析 releases 响应");
-                    None
-                }
-            }
-            Err(e) => {
-                let _ = window.emit("update-log", format!("[Gitee] API 请求失败: {}", e));
-                None
-            }
-        }
-    };
-    
-    // 并发请求
-    let client2 = client.clone();
-    let window2 = window.clone();
-    let window3 = window.clone();
-    let gitee_url2 = gitee_url.clone();
-    
-    let github_task = async move {
-        fetch_latest_json(&client2, &github_url, "GitHub", &window2).await
-    };
-    
-    let gitee_task = async move {
-        match gitee_url2 {
-            Some(url) => fetch_latest_json(&client, &url, "Gitee", &window3).await,
-            None => Err("[Gitee] 跳过（无法获取 release 信息）".to_string()),
-        }
-    };
-    
-    // select: 谁先完成用谁
-    let result;
-    tokio::select! {
-        r = github_task => {
-            result = r;
-        }
-        r = gitee_task => {
-            result = r;
-        }
-    }
-    
-    match result {
-        Ok((name, json)) => {
-            if let Some(update) = parse_update_json(&json, &current_version, &name, &window) {
-                let _ = window.emit("update-log", format!("检查完成，[{}] 发现新版本", name));
-                return Ok(update);
-            }
-            let _ = window.emit("update-log", "检查完成，已是最新版本");
-            Ok(serde_json::json!({"available": false}))
-        }
-        Err(e) => {
-            let err_msg = format!("检查更新失败: {}", e);
-            let _ = window.emit("update-log", &err_msg);
-            Err(err_msg)
-        }
-    }
-}
-
-async fn fetch_latest_json(
-    client: &reqwest::Client,
-    url: &str,
-    source_name: &str,
-    window: &tauri::Window,
-) -> Result<(String, serde_json::Value), String> {
-    use tauri::Emitter;
-    let log = |msg: String| { let _ = window.emit("update-log", &msg); };
-    
-    log(format!("[{}] 正在检查: {}", source_name, url));
-    let start = std::time::Instant::now();
-    
-    match client.get(url).send().await {
-        Ok(resp) => {
-            let elapsed = start.elapsed().as_millis();
-            let status = resp.status();
-            if status.is_success() {
-                // 先获取文本，再解析 JSON（处理编码问题）
-                match resp.text().await {
-                    Ok(text) => {
-                        log(format!("[{}] 收到响应 ({}ms), 长度: {} bytes", source_name, elapsed, text.len()));
-                        match serde_json::from_str::<serde_json::Value>(&text) {
-                            Ok(json) => {
-                                log(format!("[{}] JSON 解析成功 ({}ms)", source_name, elapsed));
-                                Ok((source_name.to_string(), json))
-                            }
-                            Err(e) => {
-                                let err = format!("[{}] JSON 解析失败 ({}ms): {}, 响应前100字符: {}", source_name, elapsed, e, &text[..100.min(text.len())]);
-                                log(err.clone());
-                                Err(err)
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let err = format!("[{}] 读取响应失败 ({}ms): {}", source_name, elapsed, e);
-                        log(err.clone());
-                        Err(err)
-                    }
-                }
-            } else {
-                let err = format!("[{}] HTTP 错误 ({}ms): {}", source_name, elapsed, status);
-                log(err.clone());
-                Err(err)
-            }
-        }
-        Err(e) => {
-            let elapsed = start.elapsed().as_millis();
-            let err = if e.is_timeout() {
-                format!("[{}] 超时 ({}ms)", source_name, elapsed)
-            } else {
-                format!("[{}] 连接失败 ({}ms): {}", source_name, elapsed, e)
-            };
-            log(err.clone());
-            Err(err)
-        }
-    }
-}
-
-fn parse_update_json(
-    json: &serde_json::Value,
-    current_version: &str,
-    source_name: &str,
-    window: &tauri::Window,
-) -> Option<serde_json::Value> {
-    use tauri::Emitter;
-    let log = |msg: String| { let _ = window.emit("update-log", &msg); };
-    
-    let version = json.get("version").and_then(|v| v.as_str()).unwrap_or("");
-    let notes = json.get("notes").and_then(|v| v.as_str()).unwrap_or("");
-    let pub_date = json.get("pub_date").and_then(|v| v.as_str()).unwrap_or("");
-    
-    if version.is_empty() {
-        log(format!("[{}] 响应缺少 version 字段", source_name));
-        return None;
-    }
-    
-    if version == current_version {
-        log(format!("[{}] 版本相同 ({}), 无需更新", source_name, version));
-        return None;
-    }
-    
-    log(format!("[{}] 发现新版本 {} (当前 {})", source_name, version, current_version));
-    
-    json.get("platforms")
-        .and_then(|p| p.get("windows-x86_64"))
-        .and_then(|win_info| {
-            let signature = win_info.get("signature").and_then(|s| s.as_str()).unwrap_or("");
-            let download_url = win_info.get("url").and_then(|u| u.as_str()).unwrap_or("");
-            if download_url.is_empty() {
-                log(format!("[{}] 响应缺少下载链接", source_name));
-                return None;
-            }
-            log(format!("[{}] 使用此源的更新", source_name));
-            Some(serde_json::json!({
+    match update {
+        Some(update) => {
+            let _ = window.emit("update-log", format!("发现新版本: {}", update.version));
+            Ok(serde_json::json!({
                 "available": true,
-                "version": version,
-                "notes": notes,
-                "pub_date": pub_date,
-                "url": download_url,
-                "signature": signature,
-                "source": source_name
+                "version": update.version,
+                "notes": update.body.unwrap_or_default(),
+                "pub_date": update.date.map(|d| d.to_string()).unwrap_or_default(),
+                "url": update.download_url.to_string(),
+                "signature": update.signature
             }))
-        })
+        }
+        None => {
+            let _ = window.emit("update-log", "没有可用更新");
+            Ok(serde_json::json!({
+                "available": false
+            }))
+        }
+    }
 }
 
 #[tauri::command]
-async fn apply_and_restart(app: tauri::AppHandle, window: tauri::Window, url: String, version: String) -> Result<(), String> {
+async fn apply_and_restart(app: tauri::AppHandle, window: tauri::Window) -> Result<(), String> {
     use tauri::Emitter;
+    use tauri_plugin_updater::UpdaterExt;
     
-    let _ = window.emit("update-log", format!("开始下载更新: {}", url));
-    log::info!("开始下载更新: {}", url);
+    let _ = window.emit("update-log", "开始检查更新...");
+    log::info!("开始检查更新");
     
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(300)) // 5分钟超时
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+    let updater = app.updater().map_err(|e| format!("获取更新器失败: {}", e))?;
     
-    let _ = window.emit("update-log", "正在下载...");
+    let update = updater.check().await
+        .map_err(|e| format!("检查更新失败: {}", e))?;
     
-    let response = client.get(&url).send().await
-        .map_err(|e| {
-            let err = format!("下载请求失败: {}", e);
-            let _ = window.emit("update-log", &err);
-            err
-        })?;
+    let Some(update) = update else {
+        let _ = window.emit("update-log", "没有可用更新");
+        return Err("没有可用更新".to_string());
+    };
     
-    if !response.status().is_success() {
-        let err = format!("下载失败: HTTP {}", response.status());
-        let _ = window.emit("update-log", &err);
-        return Err(err);
-    }
+    let _ = window.emit("update-log", format!("发现新版本: {}", update.version));
+    let _ = window.emit("update-log", "开始下载更新...");
     
-    let total_size = response.content_length().unwrap_or(0);
-    let _ = window.emit("update-log", format!("文件大小: {} bytes", total_size));
+    let downloaded = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let downloaded_clone = downloaded.clone();
     
-    // 下载到临时文件
-    let temp_dir = std::env::temp_dir();
-    let file_name = format!("air-icon-launcher-{}-update.nsis.zip", version);
-    let file_path = temp_dir.join(&file_name);
-    
-    let _ = window.emit("update-log", format!("保存到: {:?}", file_path));
-    
-    let mut file = tokio::fs::File::create(&file_path).await
-        .map_err(|e| format!("创建文件失败: {}", e))?;
-    
-    let mut downloaded: u64 = 0;
-    let mut stream = response.bytes_stream();
-    
-    use futures_util::StreamExt;
-    use tokio::io::AsyncWriteExt;
-    
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("下载数据失败: {}", e))?;
-        file.write_all(&chunk).await.map_err(|e| format!("写入文件失败: {}", e))?;
-        downloaded += chunk.len() as u64;
-        
-        if total_size > 0 {
-            let percentage = (downloaded as f64 / total_size as f64 * 100.0) as u32;
+    update.download_and_install(
+        |chunk_length, total| {
+            downloaded.fetch_add(chunk_length, std::sync::atomic::Ordering::Relaxed);
+            let current = downloaded.load(std::sync::atomic::Ordering::Relaxed);
+            let percentage = if let Some(total) = total {
+                if total > 0 {
+                    (current as f64 / total as f64 * 100.0) as u32
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
             let _ = window.emit("update-progress", serde_json::json!({
-                "downloaded": downloaded,
-                "total": total_size,
+                "downloaded": current,
+                "total": total.unwrap_or(0),
                 "percentage": percentage
             }));
-        }
-    }
+        },
+        || {
+            let final_downloaded = downloaded_clone.load(std::sync::atomic::Ordering::Relaxed);
+            let _ = window.emit("update-log", "下载完成！");
+            let _ = window.emit("update-progress", serde_json::json!({
+                "downloaded": final_downloaded,
+                "total": final_downloaded,
+                "percentage": 100
+            }));
+        },
+    ).await.map_err(|e| format!("下载或安装更新失败: {}", e))?;
     
-    file.flush().await.map_err(|e| format!("刷新文件失败: {}", e))?;
-    drop(file);
-    
-    let _ = window.emit("update-log", "下载完成！");
-    let _ = window.emit("update-progress", serde_json::json!({
-        "downloaded": total_size,
-        "total": total_size,
-        "percentage": 100
-    }));
-    
-    // 通知前端下载完成，等待用户确认重启
+    let _ = window.emit("update-log", "更新已安装！");
     let _ = window.emit("update-download-complete", serde_json::json!({
-        "file_path": file_path.to_string_lossy(),
-        "version": version
+        "version": update.version
     }));
     
     Ok(())
@@ -321,7 +128,13 @@ async fn apply_and_restart(app: tauri::AppHandle, window: tauri::Window, url: St
 
 #[tauri::command]
 async fn restart_application(app: tauri::AppHandle) -> Result<(), String> {
+    // 隐藏系统托盘图标，防止重启后残留
+    if let Some(state) = app.try_state::<crate::TrayState>() {
+        let _ = state.tray.set_visible(false);
+    }
     app.restart();
+    // unreachable, but needed for return type
+    #[allow(unreachable_code)]
     Ok(())
 }
 

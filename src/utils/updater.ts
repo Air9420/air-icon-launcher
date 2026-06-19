@@ -23,9 +23,9 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
   }
 }
 
-export async function downloadAndInstallUpdate(url: string, version: string): Promise<void> {
+export async function downloadAndInstallUpdate(): Promise<void> {
   try {
-    await invokeOrThrow('apply_and_restart', { url, version })
+    await invokeOrThrow('apply_and_restart')
   } catch (error) {
     console.error('下载更新失败:', error)
     throw error

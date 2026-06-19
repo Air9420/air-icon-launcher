@@ -65,18 +65,12 @@ export const useUpdateStore = defineStore('update', () => {
   async function startUpdate() {
     if (!updateInfo.value) return
     
-    const url = updateInfo.value.platforms['windows-x86_64']?.url
-    if (!url) {
-      error.value = '更新链接不存在'
-      return
-    }
-    
     isUpdating.value = true
     error.value = null
     downloadComplete.value = false
     
     try {
-      await downloadAndInstallUpdate(url, updateInfo.value.version)
+      await downloadAndInstallUpdate()
     } catch (e) {
       error.value = e instanceof Error ? e.message : '更新失败'
     } finally {
