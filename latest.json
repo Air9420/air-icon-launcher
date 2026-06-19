@@ -1,11 +1,11 @@
 {
-  "version": "0.5.4",
-  "notes": "## v0.5.4\n\n### 修复\n- 完整修复更新流程，支持下载+安装+重启\n- 使用 tauri_plugin_updater API 修复更新流程",
-  "pub_date": "2026-06-20T06:00:00Z",
+  "version": "0.5.5",
+  "notes": "## v0.5.5\n\n### 修复\n- 移除 ICC 快捷键后端多余的 show_main_window 调用，修复竞态条件\n- 改进更新检查时机，处理页面已加载完成的情况\n\n### 改进\n- 更新对话框支持 Markdown 渲染\n- 改进更新检查功能\n- marked 改为懒加载，减少初始包大小",
+  "pub_date": "2026-06-20T08:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUmJMOTVXd2s4SEFDS2c3MkZQajA2T1ZWbXk3TWRLUThMWGNQRUh0SFRhVm9RaEM2L3VyMjQwdXJobm45MllTRU1FOWVZRWdqT1NsNmxpN29QM0JodndjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxODc2NzcwCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC41LjRfeDY0LXNldHVwLm5zaXMuemlwClQ4SDFtUmsvS1R5QUMxelVhcFR5Q29VVWVJSVJ4Zm5odEt2d09IS25sUmIyOW5Cdk43YVAyem1sSHJYdU4vazVyemdxdGltd3NKZGZRZ2xMWTU0ZENRPT0K",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.5.4/air-icon-launcher_0.5.4_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUlpPT0ZSMndRMGNwQWpnV0Fic01sWlc1Yy9YUCt0azd3eWJyejduSVJLRDY4TjJqSHpMR3pIMmRuZ3YrMThZOUhZM2lSajV5Z0Z2L1l3YjFmb0E5aGdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxODg0MzA5CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC41LjVfeDY0LXNldHVwLm5zaXMuemlwCkZ6c3IveUdCNVV3MFZKUG1MVXpqUjRSTHVGbGVSWlJVS2JoVzl1a3c0SjNZcEM3K2lhOGJ0N1ptTk15OXFueVBRdUNsQVFXejhsMEpWc2ZUR25yYUNRPT0K",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.5.5/air-icon-launcher_0.5.5_x64-setup.nsis.zip"
     }
   }
 }
