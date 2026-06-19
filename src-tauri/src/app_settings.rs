@@ -612,6 +612,10 @@ pub fn register_icc_shortcut(app: &AppHandle, shortcut: &str) -> AppResult<()> {
         .on_shortcut(shortcut, move |app, _shortcut, event| {
             use tauri_plugin_global_shortcut::ShortcutState;
             if event.state == ShortcutState::Pressed {
+                if crate::corner_hotspot::is_fullscreen_app_running() {
+                    println!("[global_shortcut] ICC shortcut: fullscreen app running, skipping");
+                    return;
+                }
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.emit("navigate-to-icc-settings", ());
                     let (follow, anchor) = app

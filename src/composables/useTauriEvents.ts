@@ -203,7 +203,46 @@ export function useTauriEvents() {
         unlisteners.push(unlistenNoExternalMonitor);
 
         const unlistenNavigateIccSettings = await listen("navigate-to-icc-settings", async () => {
-            router.push("/settings/display");
+            const currentRoute = router.currentRoute.value.path;
+            const win = getCurrentWindow();
+            const isVisible = await win.isVisible();
+            const isFocused = await win.isFocused();
+            const { saveWindowPosition, restoreWindowPosition } = useWindowPosition();
+            const settingsStore = useSettingsStore();
+            const { followMouseOnShow } = storeToRefs(settingsStore);
+
+            console.log("[navigate-to-icc-settings] received", { currentRoute, isVisible, isFocused });
+
+            // 如果当前在 ICC 设置页面、窗口可见且有焦点，则隐藏窗口
+            if (currentRoute === "/settings/display" && isVisible && isFocused) {
+                console.log("[navigate-to-icc-settings] hiding window");
+                await saveWindowPosition();
+                await win.hide();
+            } else {
+                // 先设为不可见，这样系统缓存的最后一帧也是透明的
+                const transitioning = (window as unknown as Record<string, unknown>).__appIsTransitioning as { value: boolean } | undefined;
+                if (transitioning) transitioning.value = true;
+
+                // 切换路由到 ICC 设置页面
+                router.push("/settings/display");
+
+                // 恢复上次保存的位置（仅在非跟随鼠标模式下）
+                const restored = !followMouseOnShow.value && await restoreWindowPosition();
+
+                // 显示窗口（此时 opacity=0，系统缓存帧不可见）
+                await safeInvoke("show_launcher", restored ? { forceNoFollow: true } : {});
+                await emit("window-shown", null);
+
+                // 等待下一帧渲染完成后再显示
+                await new Promise<void>(resolve => {
+                    requestAnimationFrame(() => {
+                        requestAnimationFrame(() => {
+                            if (transitioning) transitioning.value = false;
+                            resolve();
+                        });
+                    });
+                });
+            }
         });
         unlisteners.push(unlistenNavigateIccSettings);
 
