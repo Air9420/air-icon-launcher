@@ -31,36 +31,58 @@ struct TrayState {
 }
 
 #[tauri::command]
-async fn check_update(app: tauri::AppHandle, window: tauri::Window) -> Result<serde_json::Value, String> {
+async fn check_update(_app: tauri::AppHandle, window: tauri::Window) -> Result<serde_json::Value, String> {
     use tauri::Emitter;
-    use tauri_plugin_updater::UpdaterExt;
     
     let _ = window.emit("update-log", "开始检查更新...");
-    log::info!("开始检查更新");
+    log::info!("开始检查更新（并发模式）");
     
-    let updater = app.updater().map_err(|e| format!("获取更新器失败: {}", e))?;
+    let current_version = env!("CARGO_PKG_VERSION");
     
-    let update = updater.check().await
-        .map_err(|e| format!("检查更新失败: {}", e))?;
+    let mut manager = crate::updater::UpdateSourceManager::new(crate::updater::UpdateSourceConfig::default());
     
-    match update {
-        Some(update) => {
-            let _ = window.emit("update-log", format!("发现新版本: {}", update.version));
-            Ok(serde_json::json!({
-                "available": true,
-                "version": update.version,
-                "notes": update.body.unwrap_or_default(),
-                "pub_date": update.date.map(|d| d.format(&time::format_description::well_known::Rfc3339).unwrap_or_default()).unwrap_or_default(),
-                "url": update.download_url.to_string(),
-                "signature": update.signature
-            }))
-        }
-        None => {
-            let _ = window.emit("update-log", "没有可用更新");
-            Ok(serde_json::json!({
-                "available": false
-            }))
-        }
+    let result = manager.check_update().await
+        .map_err(|e| {
+            log::error!("检查更新失败: {}", e);
+            format!("检查更新失败: {}", e)
+        })?;
+    
+    // 解析 latest.json 格式
+    let version = result.get("version").and_then(|v| v.as_str()).unwrap_or("");
+    let notes = result.get("notes").and_then(|v| v.as_str()).unwrap_or("");
+    let pub_date = result.get("pub_date").and_then(|v| v.as_str()).unwrap_or("");
+    
+    // 获取 Windows 平台的下载信息
+    let platform_info = result.get("platforms")
+        .and_then(|p| p.get("windows-x86_64"));
+    
+    let url = platform_info.and_then(|p| p.get("url")).and_then(|v| v.as_str()).unwrap_or("");
+    let signature = platform_info.and_then(|p| p.get("signature")).and_then(|v| v.as_str()).unwrap_or("");
+    
+    // 比较版本号
+    let has_update = if version.is_empty() || url.is_empty() {
+        false
+    } else {
+        version != current_version
+    };
+    
+    if has_update {
+        let _ = window.emit("update-log", format!("发现新版本: {} (当前: {})", version, current_version));
+        log::info!("发现新版本: {} (当前: {})", version, current_version);
+        Ok(serde_json::json!({
+            "available": true,
+            "version": version,
+            "notes": notes,
+            "pub_date": pub_date,
+            "url": url,
+            "signature": signature
+        }))
+    } else {
+        let _ = window.emit("update-log", format!("没有可用更新 (当前版本: {})", current_version));
+        log::info!("没有可用更新 (当前版本: {})", current_version);
+        Ok(serde_json::json!({
+            "available": false
+        }))
     }
 }
 

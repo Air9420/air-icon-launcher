@@ -13,6 +13,13 @@
             >
                 {{ isChecking ? '检查中...' : '检查更新' }}
             </button>
+            <button 
+                v-if="isDev"
+                class="test-update-btn" 
+                @click="onTestUpdate"
+            >
+                测试更新弹窗
+            </button>
         </div>
 
         <div class="section">
@@ -96,6 +103,9 @@ const appIcon = ref("/icon.png");
 const isChecking = ref(false);
 const updateStore = useUpdateStore();
 
+// 开发模式判断
+const isDev = import.meta.env.DEV;
+
 onMounted(async () => {
     try {
         version.value = await getVersion();
@@ -141,6 +151,21 @@ async function onCheckUpdate() {
     } finally {
         isChecking.value = false;
     }
+}
+
+function onTestUpdate() {
+    updateStore.updateInfo = {
+        version: version.value,
+        notes: `## v${version.value}\n\n### 新增\n- 测试更新弹窗功能\n- 支持 Markdown 渲染\n\n### 修复\n- 修复了更新检查的并发问题\n- 优化错误日志输出\n\n**感谢使用 Air Launch！**`,
+        pub_date: new Date().toISOString(),
+        platforms: {
+            'windows-x86_64': {
+                signature: '',
+                url: ''
+            }
+        }
+    };
+    updateStore.showUpdateDialog = true;
 }
 </script>
 
@@ -209,6 +234,24 @@ async function onCheckUpdate() {
     &:disabled {
         opacity: 0.6;
         cursor: not-allowed;
+    }
+}
+
+.test-update-btn {
+    margin-top: 8px;
+    padding: 6px 16px;
+    border-radius: 6px;
+    border: 1px dashed var(--primary-color);
+    background: transparent;
+    color: var(--primary-color);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    opacity: 0.7;
+    
+    &:hover {
+        opacity: 1;
+        background: var(--primary-bg);
     }
 }
 
