@@ -122,6 +122,8 @@ function handleRestart() {
 </template>
 
 <style scoped lang="scss">
+@use "../styles/scrollbar" as *;
+
 .update-overlay {
   position: fixed;
   top: 0;
@@ -203,6 +205,7 @@ function handleRestart() {
     line-height: 1.5;
     max-height: 200px;
     overflow-y: auto;
+    @include custom-scrollbar;
   }
 }
 
