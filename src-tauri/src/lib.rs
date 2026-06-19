@@ -26,7 +26,6 @@ mod window_effects;
 use tauri::tray::TrayIcon;
 use tauri::Emitter;
 use tauri::Manager;
-use tauri_plugin_updater::UpdaterExt;
 
 struct TrayState {
     tray: TrayIcon,
@@ -214,34 +213,88 @@ fn parse_update_json(
 }
 
 #[tauri::command]
-async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
-    let updater = app.updater().map_err(|e| format!("获取更新器失败: {}", e))?;
-
-    match updater.check().await {
-        Ok(Some(update)) => {
-            let app_handle = app.clone();
-            update
-                .download_and_install(
-                    move |chunk_length, total| {
-                        let percentage = match total {
-                            Some(t) if t > 0 => (chunk_length as f64 / t as f64 * 100.0) as u32,
-                            _ => 0,
-                        };
-                        let _ = app_handle.emit("update-progress", serde_json::json!({
-                            "chunk_length": chunk_length,
-                            "total": total,
-                            "percentage": percentage
-                        }));
-                    },
-                    || {},
-                )
-                .await
-                .map_err(|e| format!("安装更新失败: {}", e))?;
-            app.restart();
-        }
-        Ok(None) => {}
-        Err(e) => return Err(format!("检查更新失败: {}", e)),
+async fn apply_and_restart(app: tauri::AppHandle, window: tauri::Window, url: String, version: String) -> Result<(), String> {
+    use tauri::Emitter;
+    
+    let _ = window.emit("update-log", format!("开始下载更新: {}", url));
+    log::info!("开始下载更新: {}", url);
+    
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300)) // 5分钟超时
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+    
+    let _ = window.emit("update-log", "正在下载...");
+    
+    let response = client.get(&url).send().await
+        .map_err(|e| {
+            let err = format!("下载请求失败: {}", e);
+            let _ = window.emit("update-log", &err);
+            err
+        })?;
+    
+    if !response.status().is_success() {
+        let err = format!("下载失败: HTTP {}", response.status());
+        let _ = window.emit("update-log", &err);
+        return Err(err);
     }
+    
+    let total_size = response.content_length().unwrap_or(0);
+    let _ = window.emit("update-log", format!("文件大小: {} bytes", total_size));
+    
+    // 下载到临时文件
+    let temp_dir = std::env::temp_dir();
+    let file_name = format!("air-icon-launcher-{}-update.nsis.zip", version);
+    let file_path = temp_dir.join(&file_name);
+    
+    let _ = window.emit("update-log", format!("保存到: {:?}", file_path));
+    
+    let mut file = tokio::fs::File::create(&file_path).await
+        .map_err(|e| format!("创建文件失败: {}", e))?;
+    
+    let mut downloaded: u64 = 0;
+    let mut stream = response.bytes_stream();
+    
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+    
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("下载数据失败: {}", e))?;
+        file.write_all(&chunk).await.map_err(|e| format!("写入文件失败: {}", e))?;
+        downloaded += chunk.len() as u64;
+        
+        if total_size > 0 {
+            let percentage = (downloaded as f64 / total_size as f64 * 100.0) as u32;
+            let _ = window.emit("update-progress", serde_json::json!({
+                "downloaded": downloaded,
+                "total": total_size,
+                "percentage": percentage
+            }));
+        }
+    }
+    
+    file.flush().await.map_err(|e| format!("刷新文件失败: {}", e))?;
+    drop(file);
+    
+    let _ = window.emit("update-log", "下载完成！");
+    let _ = window.emit("update-progress", serde_json::json!({
+        "downloaded": total_size,
+        "total": total_size,
+        "percentage": 100
+    }));
+    
+    // 通知前端下载完成，等待用户确认重启
+    let _ = window.emit("update-download-complete", serde_json::json!({
+        "file_path": file_path.to_string_lossy(),
+        "version": version
+    }));
+    
+    Ok(())
+}
+
+#[tauri::command]
+async fn restart_application(app: tauri::AppHandle) -> Result<(), String> {
+    app.restart();
     Ok(())
 }
 
@@ -348,7 +401,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             check_update,
-            install_update,
+            apply_and_restart,
+            restart_application,
             drag::report_drop_target,
             drag::get_last_drop,
             drag::extract_icons_from_paths,
@@ -463,6 +517,8 @@ pub fn run() {
             commands::memory::get_memory_stats,
             commands::memory::force_memory_cleanup,
             commands::memory::get_memory_recommendations,
+            apply_and_restart,
+            restart_application,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

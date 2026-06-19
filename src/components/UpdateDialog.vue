@@ -9,6 +9,7 @@ const updateInfo = computed(() => updateStore.updateInfo)
 const isUpdating = computed(() => updateStore.isUpdating)
 const progress = computed(() => updateStore.updateProgress?.percentage || 0)
 const error = computed(() => updateStore.error)
+const downloadComplete = computed(() => updateStore.downloadComplete)
 
 function handleSkip() {
   updateStore.skipUpdate()
@@ -17,24 +18,33 @@ function handleSkip() {
 function handleUpdate() {
   updateStore.startUpdate()
 }
+
+function handleRestart() {
+  updateStore.confirmRestart()
+}
 </script>
 
 <template>
   <div v-if="isVisible" class="update-overlay">
     <div class="update-dialog">
       <div class="update-header">
-        <h3>发现新版本 v{{ updateInfo?.version }}</h3>
-        <button class="close-btn" @click="handleSkip">×</button>
+        <h3>{{ downloadComplete ? '更新已下载' : '发现新版本' }} v{{ updateInfo?.version }}</h3>
+        <button class="close-btn" @click="handleSkip" :disabled="isUpdating">×</button>
       </div>
       
       <div class="update-content">
-        <div class="current-version">
+        <div v-if="!downloadComplete" class="current-version">
           当前版本: v{{ updateStore.currentVersion }}
         </div>
         
-        <div v-if="updateInfo?.notes" class="release-notes">
+        <div v-if="!downloadComplete && updateInfo?.notes" class="release-notes">
           <h4>更新内容：</h4>
           <div class="notes-content">{{ updateInfo.notes }}</div>
+        </div>
+        
+        <div v-if="downloadComplete" class="download-complete">
+          <div class="complete-icon">✓</div>
+          <p>更新包已下载完成，点击"立即重启"应用更新。</p>
         </div>
       </div>
       
@@ -46,24 +56,46 @@ function handleUpdate() {
         <div class="progress-bar">
           <div class="progress-fill" :style="{ width: `${progress}%` }"></div>
         </div>
-        <span class="progress-text">{{ progress }}%</span>
+        <div class="progress-info">
+          <span class="progress-text">{{ progress }}%</span>
+          <span v-if="updateStore.updateProgress?.total" class="progress-size">
+            {{ Math.round((updateStore.updateProgress?.downloaded || 0) / 1024 / 1024 * 100) / 100 }}MB / 
+            {{ Math.round((updateStore.updateProgress?.total || 0) / 1024 / 1024 * 100) / 100 }}MB
+          </span>
+        </div>
       </div>
       
       <div class="update-actions">
-        <button 
-          class="btn btn-secondary" 
-          @click="handleSkip"
-          :disabled="isUpdating"
-        >
-          稍后提醒
-        </button>
-        <button 
-          class="btn btn-primary" 
-          @click="handleUpdate"
-          :disabled="isUpdating"
-        >
-          {{ isUpdating ? '更新中...' : '立即更新' }}
-        </button>
+        <template v-if="!downloadComplete">
+          <button 
+            class="btn btn-secondary" 
+            @click="handleSkip"
+            :disabled="isUpdating"
+          >
+            稍后提醒
+          </button>
+          <button 
+            class="btn btn-primary" 
+            @click="handleUpdate"
+            :disabled="isUpdating"
+          >
+            {{ isUpdating ? '下载中...' : '立即更新' }}
+          </button>
+        </template>
+        <template v-else>
+          <button 
+            class="btn btn-secondary" 
+            @click="handleSkip"
+          >
+            稍后重启
+          </button>
+          <button 
+            class="btn btn-primary" 
+            @click="handleRestart"
+          >
+            立即重启
+          </button>
+        </template>
       </div>
     </div>
   </div>
@@ -181,9 +213,35 @@ function handleUpdate() {
     }
   }
   
-  .progress-text {
-    font-size: 14px;
+  .progress-info {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
     color: #666;
+  }
+}
+
+.download-complete {
+  text-align: center;
+  padding: 20px 0;
+  
+  .complete-icon {
+    width: 60px;
+    height: 60px;
+    margin: 0 auto 16px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 30px;
+  }
+  
+  p {
+    color: #333;
+    font-size: 14px;
+    line-height: 1.5;
   }
 }
 

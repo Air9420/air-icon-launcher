@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { downloadAndInstallUpdate } from '../utils/updater'
+import { downloadAndInstallUpdate, restartApplication } from '../utils/updater'
 
 export interface UpdateInfo {
   version: string
@@ -15,8 +15,8 @@ export interface UpdateInfo {
 }
 
 export interface UpdateProgress {
-  chunk_length: number
-  total: number | null
+  downloaded: number
+  total: number
   percentage: number
 }
 
@@ -27,6 +27,8 @@ export const useUpdateStore = defineStore('update', () => {
   const updateProgress = ref<UpdateProgress | null>(null)
   const error = ref<string | null>(null)
   const showUpdateDialog = ref(false)
+  const downloadComplete = ref(false)
+  const updateFilePath = ref<string | null>(null)
 
   const hasUpdate = computed(() => updateInfo.value !== null)
   const currentVersion = ref('0.4.1')
@@ -49,11 +51,18 @@ export const useUpdateStore = defineStore('update', () => {
   async function startUpdate() {
     if (!updateInfo.value) return
     
+    const url = updateInfo.value.platforms['windows-x86_64']?.url
+    if (!url) {
+      error.value = '更新链接不存在'
+      return
+    }
+    
     isUpdating.value = true
     error.value = null
+    downloadComplete.value = false
     
     try {
-      await downloadAndInstallUpdate()
+      await downloadAndInstallUpdate(url, updateInfo.value.version)
     } catch (e) {
       error.value = e instanceof Error ? e.message : '更新失败'
     } finally {
@@ -61,8 +70,18 @@ export const useUpdateStore = defineStore('update', () => {
     }
   }
 
+  async function confirmRestart() {
+    try {
+      await restartApplication()
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : '重启失败'
+    }
+  }
+
   function skipUpdate() {
     showUpdateDialog.value = false
+    downloadComplete.value = false
+    updateFilePath.value = null
     // 可以记录跳过的版本
   }
 
@@ -71,6 +90,8 @@ export const useUpdateStore = defineStore('update', () => {
     updateProgress.value = null
     error.value = null
     showUpdateDialog.value = false
+    downloadComplete.value = false
+    updateFilePath.value = null
   }
 
   return {
@@ -80,10 +101,13 @@ export const useUpdateStore = defineStore('update', () => {
     updateProgress,
     error,
     showUpdateDialog,
+    downloadComplete,
+    updateFilePath,
     hasUpdate,
     currentVersion,
     checkForUpdate,
     startUpdate,
+    confirmRestart,
     skipUpdate,
     reset
   }
