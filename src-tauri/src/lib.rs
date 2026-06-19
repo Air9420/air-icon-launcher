@@ -134,20 +134,32 @@ async fn fetch_latest_json(
     match client.get(url).send().await {
         Ok(resp) => {
             let elapsed = start.elapsed().as_millis();
-            if resp.status().is_success() {
-                match resp.json::<serde_json::Value>().await {
-                    Ok(json) => {
-                        log(format!("[{}] 成功 ({}ms)", source_name, elapsed));
-                        Ok((source_name.to_string(), json))
+            let status = resp.status();
+            if status.is_success() {
+                // 先获取文本，再解析 JSON（处理编码问题）
+                match resp.text().await {
+                    Ok(text) => {
+                        log(format!("[{}] 收到响应 ({}ms), 长度: {} bytes", source_name, elapsed, text.len()));
+                        match serde_json::from_str::<serde_json::Value>(&text) {
+                            Ok(json) => {
+                                log(format!("[{}] JSON 解析成功 ({}ms)", source_name, elapsed));
+                                Ok((source_name.to_string(), json))
+                            }
+                            Err(e) => {
+                                let err = format!("[{}] JSON 解析失败 ({}ms): {}, 响应前100字符: {}", source_name, elapsed, e, &text[..100.min(text.len())]);
+                                log(err.clone());
+                                Err(err)
+                            }
+                        }
                     }
                     Err(e) => {
-                        let err = format!("[{}] JSON 解析失败 ({}ms): {}", source_name, elapsed, e);
+                        let err = format!("[{}] 读取响应失败 ({}ms): {}", source_name, elapsed, e);
                         log(err.clone());
                         Err(err)
                     }
                 }
             } else {
-                let err = format!("[{}] HTTP 错误 ({}ms): {}", source_name, elapsed, resp.status());
+                let err = format!("[{}] HTTP 错误 ({}ms): {}", source_name, elapsed, status);
                 log(err.clone());
                 Err(err)
             }
