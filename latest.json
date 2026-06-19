@@ -1,11 +1,11 @@
 {
-  "version": "0.5.5",
-  "notes": "## v0.5.5\n\n### 修复\n- 移除 ICC 快捷键后端多余的 show_main_window 调用，修复竞态条件\n- 改进更新检查时机，处理页面已加载完成的情况\n\n### 改进\n- 更新对话框支持 Markdown 渲染\n- 改进更新检查功能\n- marked 改为懒加载，减少初始包大小",
-  "pub_date": "2026-06-20T08:00:00Z",
+  "version": "0.5.6",
+  "notes": "## v0.5.6\n\n### 修复\n- 修复 UpdateDialog 背景透明度和文字颜色\n- 统一 UpdateDialog 与 ConfirmDialog 样式\n- 统一 UpdateDialog 滚动条样式",
+  "pub_date": "2026-06-20T01:30:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUlpPT0ZSMndRMGNwQWpnV0Fic01sWlc1Yy9YUCt0azd3eWJyejduSVJLRDY4TjJqSHpMR3pIMmRuZ3YrMThZOUhZM2lSajV5Z0Z2L1l3YjFmb0E5aGdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxODg0MzA5CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC41LjVfeDY0LXNldHVwLm5zaXMuemlwCkZ6c3IveUdCNVV3MFZKUG1MVXpqUjRSTHVGbGVSWlJVS2JoVzl1a3c0SjNZcEM3K2lhOGJ0N1ptTk15OXFueVBRdUNsQVFXejhsMEpWc2ZUR25yYUNRPT0K",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.5.5/air-icon-launcher_0.5.5_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUmNEVVRHSENWVFB2cGRJWHFQWHpVSWJ1REh6eVplanhsbmh6ekZ1RjIrMHNDcmFJd3N3RGMrdGwyMkU4bFROOXJNc1FvTFdHSGVxb2FZc3VHclQrSlFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxODkwMDY1CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC41LjZfeDY0LXNldHVwLm5zaXMuemlwCmY5ZTh1eUFxSXJaMjN6Yjg2clBGMHhxYjVxN3NWUVlMYWMzY05RbjZLM2V3REZndVlCYy85MTdFZUZUdnZMWHVUeWYwU3R0enhlWWhkR0Z4dFVSYUR3PT0K",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.5.6/air-icon-launcher_0.5.6_x64-setup.nsis.zip"
     }
   }
 }
