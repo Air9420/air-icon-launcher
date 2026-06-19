@@ -1,11 +1,11 @@
 {
-  "version": "0.5.6",
-  "notes": "## v0.5.6\n\n### 修复\n- 修复 UpdateDialog 背景透明度和文字颜色\n- 统一 UpdateDialog 与 ConfirmDialog 样式\n- 统一 UpdateDialog 滚动条样式",
-  "pub_date": "2026-06-20T01:30:00Z",
+  "version": "0.5.7",
+  "notes": "## v0.5.7\n\n### 改进\n- 移除内存分析器模块，简化代码库",
+  "pub_date": "2026-06-20T12:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUmNEVVRHSENWVFB2cGRJWHFQWHpVSWJ1REh6eVplanhsbmh6ekZ1RjIrMHNDcmFJd3N3RGMrdGwyMkU4bFROOXJNc1FvTFdHSGVxb2FZc3VHclQrSlFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxODkwMDY1CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC41LjZfeDY0LXNldHVwLm5zaXMuemlwCmY5ZTh1eUFxSXJaMjN6Yjg2clBGMHhxYjVxN3NWUVlMYWMzY05RbjZLM2V3REZndVlCYy85MTdFZUZUdnZMWHVUeWYwU3R0enhlWWhkR0Z4dFVSYUR3PT0K",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.5.6/air-icon-launcher_0.5.6_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUmRrTSttTjh2elNuc1JKT2EzbDA5SGlLbk5aT1NaVXd4SnJ5elowZlh4U2loSVRrK2JXMFZpSzhLYUNwVTNpRytkSll0TEFNUVFyMjJmcDExd3VkbHdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxODk4NzU5CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC41LjdfeDY0LXNldHVwLm5zaXMuemlwCkZoa3lDWEVWcEE4eDJOMDNzcGJuOGlxQmxyTThvQkRiZ0FCSE1JU0VXNFhPM21sNlRZd2hhUlM3VVMyRGxyVm1hSlR3WFM1RzFuZEI5bTcvd3VDV0FRPT0K",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.5.7/air-icon-launcher_0.5.7_x64-setup.nsis.zip"
     }
   }
 }
