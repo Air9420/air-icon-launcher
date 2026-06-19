@@ -1,11 +1,11 @@
 {
-  "version": "0.5.2",
-  "notes": "## v0.5.2\n\n### 修复\n- Gitee 获取版本号最大的 release\n- 使用实际版本号而非硬编码",
-  "pub_date": "2026-06-20T01:00:00Z",
+  "version": "0.5.3",
+  "notes": "## v0.5.3\n\n### 修复\n- ICC 快捷键完整实现唤起、隐藏和全屏检测",
+  "pub_date": "2026-06-20T04:30:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUlFrMit4WGYzU25qTjhud2JESE8xTUk5cjQwVys4d2ZDV1RsTU43b3lsdnpPRGQ2QUhSbFF1V3FPU0JwS1JTeHJvVys4WlZzeFdudkhydlpQSmVlQlF3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxODY0NjM1CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC41LjJfeDY0LXNldHVwLm5zaXMuemlwClNHa1ZwOWFTQ3RocHE3U3dnMVN2MDh1T1pmNG9mdmc3OFo3UmtQb3h1K0dENU9OOEp6TVM0VEIwMlVOdXI3VEp5WUFib3pNMmNtc3AvdzBHRVpaVkFRPT0K",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.5.2/air-icon-launcher_0.5.2_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUmZ3c3RmRjdGL2grMFpNM0lSdTdVTDdzOExzNWNMU042RjNvWkVuUEVFSlJQbVg2NGdBZHlJdDNxOVlqeXFVRGhXRFlrVTVLZmtKb0VnMkRJOTQ0eWc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxODcyNTQwCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC41LjNfeDY0LXNldHVwLm5zaXMuemlwCkxFREZ3d0NpVXJkMUk2NUt4cTVVZUtQOFZZeHRDZmdhSlJNbitvN2dZWFhCWmlLNGE1WlEySWFlMER0MWJOWjlGL0dhaGM5L0JBWmNqQlpNTUk3T0N3PT0K",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.5.3/air-icon-launcher_0.5.3_x64-setup.nsis.zip"
     }
   }
 }
