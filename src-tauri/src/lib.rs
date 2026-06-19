@@ -35,108 +35,154 @@ struct TrayState {
 #[tauri::command]
 async fn check_update(app: tauri::AppHandle, window: tauri::Window) -> Result<serde_json::Value, String> {
     use tauri::Emitter;
-    use tauri_plugin_updater::UpdaterExt;
     
-    let log = |msg: &str| {
-        let _ = window.emit("update-log", msg);
+    let log = |msg: String| {
+        let _ = window.emit("update-log", &msg);
+        log::info!("{}", msg);
     };
     
-    log("开始检查更新...");
+    log("开始检查更新...".to_string());
     
-    // 并发检查 GitHub 和 Gitee
     let endpoints = vec![
-        "https://github.com/Air9420/air-icon-launcher/releases/latest/download/latest.json".to_string(),
-        "https://gitee.com/Air9420/air-icon-launcher/releases/latest/download/latest.json".to_string(),
+        ("GitHub", "https://github.com/Air9420/air-icon-launcher/releases/latest/download/latest.json"),
+        ("Gitee", "https://gitee.com/Air9420/air-icon-launcher/releases/latest/download/latest.json"),
     ];
     
-    log(&format!("配置了 {} 个更新源", endpoints.len()));
+    log(format!("并发检查 {} 个更新源: GitHub, Gitee", endpoints.len()));
     
-    // 并发检查所有 endpoints
+    // 并发请求所有 endpoints
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+    
     let mut handles = vec![];
-    for (i, endpoint_url) in endpoints.iter().enumerate() {
-        let endpoint = endpoint_url.clone();
-        let app_handle = app.clone();
+    for (name, url) in endpoints {
+        let client = client.clone();
+        let url = url.to_string();
+        let name = name.to_string();
         let window_clone = window.clone();
         
+        let name_for_task = name.clone();
         let handle = tokio::spawn(async move {
-            let log = |msg: &str| {
-                let _ = window_clone.emit("update-log", msg);
+            let log = |msg: String| {
+                let _ = window_clone.emit("update-log", &msg);
             };
             
-            log(&format!("正在检查源 {}: {}", i + 1, endpoint));
+            log(format!("[{}] 正在检查: {}", name_for_task, url));
+            let start = std::time::Instant::now();
             
-            let updater = match app_handle.updater_builder()
-                .endpoints(vec![endpoint.clone()])
-                .timeout(std::time::Duration::from_secs(15))
-                .build() {
-                    Ok(u) => u,
-                    Err(e) => {
-                        let err = format!("源 {} 构建更新器失败: {}", i + 1, e);
-                        log(&err);
-                        return Err(err);
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    let elapsed = start.elapsed().as_millis();
+                    let status = resp.status();
+                    if status.is_success() {
+                        match resp.json::<serde_json::Value>().await {
+                            Ok(json) => {
+                                log(format!("[{}] 成功 ({}ms)", name_for_task, elapsed));
+                                Ok(json)
+                            }
+                            Err(e) => {
+                                let err = format!("[{}] JSON 解析失败 ({}ms): {}", name_for_task, elapsed, e);
+                                log(err.clone());
+                                Err(err)
+                            }
+                        }
+                    } else {
+                        let err = format!("[{}] HTTP 错误 ({}ms): {} {}", name_for_task, elapsed, status.as_u16(), status.canonical_reason().unwrap_or("unknown"));
+                        log(err.clone());
+                        Err(err)
                     }
-                };
-            
-            match updater.check().await {
-                Ok(Some(update)) => {
-                    log(&format!("源 {} 发现新版本: {}", i + 1, update.version));
-                    Ok(Some(update))
-                }
-                Ok(None) => {
-                    log(&format!("源 {} 没有新版本", i + 1));
-                    Ok(None)
                 }
                 Err(e) => {
-                    let err = format!("源 {} 检查失败: {}", i + 1, e);
-                    log(&err);
+                    let elapsed = start.elapsed().as_millis();
+                    let err = if e.is_timeout() {
+                        format!("[{}] 连接超时 ({}ms)", name_for_task, elapsed)
+                    } else if e.is_connect() {
+                        format!("[{}] 连接失败 ({}ms): {}", name_for_task, elapsed, e)
+                    } else {
+                        format!("[{}] 请求失败 ({}ms): {}", name_for_task, elapsed, e)
+                    };
+                    log(err.clone());
                     Err(err)
                 }
             }
         });
         
-        handles.push(handle);
+        handles.push((name, handle));
     }
     
-    // 等待第一个成功的结果
-    let mut errors = vec![];
-    let mut found_update = false;
-    let mut result = serde_json::json!({"available": false});
+    // 收集结果：优先使用第一个成功的
+    let mut errors: Vec<String> = vec![];
+    let mut best_result: Option<serde_json::Value> = None;
     
-    for handle in handles {
+    for (name, handle) in handles {
         match handle.await {
-            Ok(Ok(Some(update))) => {
-                if !found_update {
-                    found_update = true;
-                    result = serde_json::json!({
-                        "available": true,
-                        "version": update.version,
-                        "notes": update.body,
-                        "pub_date": update.date.map(|d: chrono::DateTime<chrono::Utc>| d.to_string()),
-                        "url": update.download_url
-                    });
+            Ok(Ok(json)) => {
+                // 解析 latest.json
+                let version = json.get("version").and_then(|v| v.as_str()).unwrap_or("");
+                let notes = json.get("notes").and_then(|v| v.as_str()).unwrap_or("");
+                let pub_date = json.get("pub_date").and_then(|v| v.as_str()).unwrap_or("");
+                let platforms = json.get("platforms").and_then(|p| p.as_object());
+                
+                if version.is_empty() {
+                    errors.push(format!("[{}] 响应缺少 version 字段", name));
+                    continue;
+                }
+                
+                // 获取当前版本
+                let current_version = app.config().version.clone().unwrap_or_default();
+                
+                if version == current_version {
+                    log(format!("[{}] 版本相同 ({}), 无需更新", name, version));
+                    continue;
+                }
+                
+                log(format!("[{}] 发现新版本 {} (当前 {})", name, version, current_version));
+                
+                // 获取平台信息
+                if let Some(platforms) = platforms {
+                    if let Some(win_info) = platforms.get("windows-x86_64") {
+                        let signature = win_info.get("signature").and_then(|s| s.as_str()).unwrap_or("");
+                        let download_url = win_info.get("url").and_then(|u| u.as_str()).unwrap_or("");
+                        
+                        best_result = Some(serde_json::json!({
+                            "available": true,
+                            "version": version,
+                            "notes": notes,
+                            "pub_date": pub_date,
+                            "url": download_url,
+                            "signature": signature,
+                            "source": name
+                        }));
+                        
+                        log(format!("[{}] 使用此源的更新", name));
+                        break;
+                    } else {
+                        errors.push(format!("[{}] 响应缺少 windows-x86_64 平台信息", name));
+                    }
+                } else {
+                    errors.push(format!("[{}] 响应缺少 platforms 字段", name));
                 }
             }
-            Ok(Ok(None)) => {
-                // 没有更新，继续
-            }
             Ok(Err(e)) => {
-                errors.push(e);
+                errors.push(format!("[{}]", e));
             }
             Err(e) => {
-                errors.push(format!("任务执行失败: {}", e));
+                errors.push(format!("[{}] 任务异常: {}", name, e));
             }
         }
     }
     
-    if found_update {
-        log("检查完成，发现新版本");
+    if let Some(result) = best_result {
+        log("检查完成，发现新版本".to_string());
         Ok(result)
     } else if errors.is_empty() {
-        log("检查完成，已是最新版本");
+        log("检查完成，已是最新版本".to_string());
         Ok(serde_json::json!({"available": false}))
     } else {
         let err_msg = format!("所有更新源检查失败:\n{}", errors.join("\n"));
-        log(&err_msg);
+        log(err_msg.clone());
         Err(err_msg)
     }
 }
