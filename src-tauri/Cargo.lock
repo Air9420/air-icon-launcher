@@ -59,6 +59,7 @@ dependencies = [
  "tauri-plugin-mcp-bridge",
  "tauri-plugin-opener",
  "tauri-plugin-updater",
+ "time",
  "tokio",
  "windows 0.54.0",
  "windows-service",

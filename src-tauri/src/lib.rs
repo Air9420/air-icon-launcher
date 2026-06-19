@@ -50,7 +50,7 @@ async fn check_update(app: tauri::AppHandle, window: tauri::Window) -> Result<se
                 "available": true,
                 "version": update.version,
                 "notes": update.body.unwrap_or_default(),
-                "pub_date": update.date.map(|d| d.to_string()).unwrap_or_default(),
+                "pub_date": update.date.map(|d| d.format(&time::format_description::well_known::Rfc3339).unwrap_or_default()).unwrap_or_default(),
                 "url": update.download_url.to_string(),
                 "signature": update.signature
             }))
