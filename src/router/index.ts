@@ -1,4 +1,4 @@
-import { createMemoryHistory, createRouter } from 'vue-router'
+import { createMemoryHistory, createRouter, type RouteRecordRaw } from 'vue-router'
 
 const Categories = () => import('../views/categories.vue')
 const Category = () => import('../views/category.vue')
@@ -15,9 +15,25 @@ const SettingsData = () => import('../views/settings/Data.vue')
 const SettingsAbout = () => import('../views/settings/About.vue')
 const SettingsStats = () => import('../views/settings/Stats.vue')
 const SettingsDisplay = () => import('../views/settings/Display.vue')
-const SettingsMemoryProfiler = () => import('../views/settings/MemoryProfiler.vue')
 const ClipboardHistory = () => import('../components/ClipboardHistory.vue')
 const Plugins = () => import('../views/plugins.vue')
+
+// 设置页面子路由
+const settingsChildren: RouteRecordRaw[] = [
+    { path: 'appearance', name: 'settings-appearance', component: SettingsAppearance },
+    { path: 'shortcuts', name: 'settings-shortcuts', component: SettingsShortcuts },
+    { path: 'window', name: 'settings-window', component: SettingsWindow },
+    { path: 'clipboard', name: 'settings-clipboard', component: SettingsClipboard },
+    { path: 'features', name: 'settings-features', component: SettingsFeatures },
+    { path: 'data', name: 'settings-data', component: SettingsData },
+    { path: 'guide', name: 'settings-guide', component: Guide },
+    { path: 'about', name: 'settings-about', component: SettingsAbout },
+    { path: 'stats', name: 'settings-stats', component: SettingsStats },
+    { path: 'display', name: 'settings-display', component: SettingsDisplay },
+]
+
+// 通配符路由：将未匹配的子路由重定向到外观设置
+settingsChildren.push({ path: ':pathMatch(.*)*', redirect: '/settings/appearance' })
 
 const routes = [
     { path: '/', redirect: '/categories' },
@@ -32,19 +48,7 @@ const routes = [
         name: 'settings',
         component: Settings,
         redirect: '/settings/appearance',
-        children: [
-            { path: 'appearance', name: 'settings-appearance', component: SettingsAppearance },
-            { path: 'shortcuts', name: 'settings-shortcuts', component: SettingsShortcuts },
-            { path: 'window', name: 'settings-window', component: SettingsWindow },
-            { path: 'clipboard', name: 'settings-clipboard', component: SettingsClipboard },
-            { path: 'features', name: 'settings-features', component: SettingsFeatures },
-            { path: 'data', name: 'settings-data', component: SettingsData },
-            { path: 'guide', name: 'settings-guide', component: Guide },
-            { path: 'about', name: 'settings-about', component: SettingsAbout },
-            { path: 'stats', name: 'settings-stats', component: SettingsStats },
-            { path: 'display', name: 'settings-display', component: SettingsDisplay },
-            { path: 'memory', name: 'settings-memory', component: SettingsMemoryProfiler },
-        ]
+        children: settingsChildren
     },
     { path: '/clipboard', name: 'clipboard', component: ClipboardHistory },
     { path: '/plugins', name: 'plugins', component: Plugins },

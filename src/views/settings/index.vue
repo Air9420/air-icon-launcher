@@ -35,7 +35,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { computeActiveTabScrollLeft } from "./tabScroll";
 
@@ -45,19 +45,22 @@ const route = useRoute();
 const tabsWrapper = ref<HTMLElement | null>(null);
 const tabsContainer = ref<HTMLElement | null>(null);
 
-const tabs = [
-    { name: "外观", path: "/settings/appearance" },
-    { name: "快捷键", path: "/settings/shortcuts" },
-    { name: "窗口", path: "/settings/window" },
-    { name: "剪贴板", path: "/settings/clipboard" },
-    { name: "功能", path: "/settings/features" },
-    { name: "数据", path: "/settings/data" },
-    { name: "指南", path: "/settings/guide" },
-    { name: "关于", path: "/settings/about" },
-    { name: "统计", path: "/settings/stats" },
-    { name: "显示器", path: "/settings/display" },
-    { name: "内存", path: "/settings/memory" },
-];
+const tabs = computed(() => {
+    const baseTabs = [
+        { name: "外观", path: "/settings/appearance" },
+        { name: "快捷键", path: "/settings/shortcuts" },
+        { name: "窗口", path: "/settings/window" },
+        { name: "剪贴板", path: "/settings/clipboard" },
+        { name: "功能", path: "/settings/features" },
+        { name: "数据", path: "/settings/data" },
+        { name: "指南", path: "/settings/guide" },
+        { name: "关于", path: "/settings/about" },
+        { name: "统计", path: "/settings/stats" },
+        { name: "显示器", path: "/settings/display" },
+    ];
+
+    return baseTabs;
+});
 
 function onBack() {
     router.push("/categories");
