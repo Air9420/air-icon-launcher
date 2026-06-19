@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { marked } from 'marked'
 import { useUpdateStore } from '../stores/update'
+
+// 配置 marked
+marked.setOptions({
+  breaks: true,  // 换行符转换为 <br>
+  gfm: true      // GitHub 风格 Markdown
+})
 
 const updateStore = useUpdateStore()
 
@@ -10,6 +17,12 @@ const isUpdating = computed(() => updateStore.isUpdating)
 const progress = computed(() => updateStore.updateProgress?.percentage || 0)
 const error = computed(() => updateStore.error)
 const downloadComplete = computed(() => updateStore.downloadComplete)
+
+// 渲染 Markdown 内容
+const renderedNotes = computed(() => {
+  if (!updateInfo.value?.notes) return ''
+  return marked.parse(updateInfo.value.notes)
+})
 
 function handleSkip() {
   updateStore.skipUpdate()
@@ -39,7 +52,7 @@ function handleRestart() {
         
         <div v-if="!downloadComplete && updateInfo?.notes" class="release-notes">
           <h4>更新内容：</h4>
-          <div class="notes-content">{{ updateInfo.notes }}</div>
+          <div class="notes-content markdown-body" v-html="renderedNotes"></div>
         </div>
         
         <div v-if="downloadComplete" class="download-complete">
@@ -183,6 +196,95 @@ function handleRestart() {
     line-height: 1.5;
     max-height: 200px;
     overflow-y: auto;
+  }
+}
+
+// Markdown 样式
+.markdown-body {
+  :deep(h1),
+  :deep(h2),
+  :deep(h3),
+  :deep(h4) {
+    margin-top: 12px;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: #333;
+  }
+
+  :deep(h1) { font-size: 18px; }
+  :deep(h2) { font-size: 16px; }
+  :deep(h3) { font-size: 15px; }
+  :deep(h4) { font-size: 14px; }
+
+  :deep(p) {
+    margin: 8px 0;
+    line-height: 1.6;
+  }
+
+  :deep(ul),
+  :deep(ol) {
+    margin: 8px 0;
+    padding-left: 20px;
+  }
+
+  :deep(li) {
+    margin: 4px 0;
+    line-height: 1.5;
+  }
+
+  :deep(strong) {
+    font-weight: 600;
+    color: #333;
+  }
+
+  :deep(em) {
+    font-style: italic;
+  }
+
+  :deep(code) {
+    background: #e8e8e8;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: 'Consolas', 'Monaco', monospace;
+  }
+
+  :deep(pre) {
+    background: #2d2d2d;
+    color: #f8f8f2;
+    padding: 12px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 8px 0;
+
+    code {
+      background: none;
+      padding: 0;
+      color: inherit;
+    }
+  }
+
+  :deep(a) {
+    color: #667eea;
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  :deep(hr) {
+    border: none;
+    border-top: 1px solid #e0e0e0;
+    margin: 12px 0;
+  }
+
+  :deep(blockquote) {
+    border-left: 3px solid #667eea;
+    margin: 8px 0;
+    padding: 4px 12px;
+    color: #666;
+    background: #f9f9f9;
   }
 }
 
