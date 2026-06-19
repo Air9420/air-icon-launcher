@@ -51,7 +51,7 @@ export function setupUpdateCheck() {
   // 监听下载完成
   listenDownloadComplete()
 
-  window.addEventListener('load', async () => {
+  const doCheck = async () => {
     try {
       const result = await checkForUpdate()
 
@@ -72,7 +72,13 @@ export function setupUpdateCheck() {
     } catch (error) {
       console.error('自动检查更新失败:', error)
     }
-  })
+  }
+
+  if (document.readyState === 'complete') {
+    doCheck()
+  } else {
+    window.addEventListener('load', doCheck)
+  }
 }
 
 export function listenUpdateProgress() {
