@@ -35,6 +35,7 @@ struct TrayState {
 #[tauri::command]
 async fn check_update(app: tauri::AppHandle, window: tauri::Window) -> Result<serde_json::Value, String> {
     use tauri::Emitter;
+    use tauri_plugin_updater::UpdaterExt;
     
     let log = |msg: &str| {
         let _ = window.emit("update-log", msg);
@@ -42,22 +43,18 @@ async fn check_update(app: tauri::AppHandle, window: tauri::Window) -> Result<se
     
     log("开始检查更新...");
     
-    // 获取 endpoints 配置
-    let config = app.config();
-    let endpoints = config.plugins.updater.endpoints.clone().unwrap_or_default();
-    
-    if endpoints.is_empty() {
-        let err = "未配置更新端点";
-        log(err);
-        return Err(err.to_string());
-    }
+    // 并发检查 GitHub 和 Gitee
+    let endpoints = vec![
+        "https://github.com/Air9420/air-icon-launcher/releases/latest/download/latest.json".to_string(),
+        "https://gitee.com/Air9420/air-icon-launcher/releases/latest/download/latest.json".to_string(),
+    ];
     
     log(&format!("配置了 {} 个更新源", endpoints.len()));
     
     // 并发检查所有 endpoints
     let mut handles = vec![];
-    for (i, endpoint) in endpoints.iter().enumerate() {
-        let endpoint_url = endpoint.to_string();
+    for (i, endpoint_url) in endpoints.iter().enumerate() {
+        let endpoint = endpoint_url.clone();
         let app_handle = app.clone();
         let window_clone = window.clone();
         
@@ -66,10 +63,10 @@ async fn check_update(app: tauri::AppHandle, window: tauri::Window) -> Result<se
                 let _ = window_clone.emit("update-log", msg);
             };
             
-            log(&format!("正在检查源 {}: {}", i + 1, endpoint_url));
+            log(&format!("正在检查源 {}: {}", i + 1, endpoint));
             
             let updater = match app_handle.updater_builder()
-                .endpoints(vec![endpoint_url.clone()])
+                .endpoints(vec![endpoint.clone()])
                 .timeout(std::time::Duration::from_secs(15))
                 .build() {
                     Ok(u) => u,
@@ -90,7 +87,7 @@ async fn check_update(app: tauri::AppHandle, window: tauri::Window) -> Result<se
                     Ok(None)
                 }
                 Err(e) => {
-                    let err = format!("源 {} 检查失败: {} (类型: {:?})", i + 1, e, e);
+                    let err = format!("源 {} 检查失败: {}", i + 1, e);
                     log(&err);
                     Err(err)
                 }
@@ -114,7 +111,7 @@ async fn check_update(app: tauri::AppHandle, window: tauri::Window) -> Result<se
                         "available": true,
                         "version": update.version,
                         "notes": update.body,
-                        "pub_date": update.date.map(|d| d.to_string()),
+                        "pub_date": update.date.map(|d: chrono::DateTime<chrono::Utc>| d.to_string()),
                         "url": update.download_url
                     });
                 }
