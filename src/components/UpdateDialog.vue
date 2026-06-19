@@ -136,7 +136,7 @@ function handleRestart() {
 }
 
 .update-dialog {
-  background: rgba(var(--floating-panel-rgb), 0.86);
+  background: rgba(var(--floating-panel-rgb), 0.95);
   border-radius: 12px;
   width: 400px;
   max-width: 90vw;
@@ -226,6 +226,7 @@ function handleRestart() {
   :deep(p) {
     margin: 8px 0;
     line-height: 1.6;
+    color: var(--text-color);
   }
 
   :deep(ul),
@@ -237,6 +238,7 @@ function handleRestart() {
   :deep(li) {
     margin: 4px 0;
     line-height: 1.5;
+    color: var(--text-color);
   }
 
   :deep(strong) {
