@@ -30,18 +30,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          VERSION=${RELEASE_TAG#v}
           
           # 下载 latest.json
           curl -L -o latest.json "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/latest.json"
           
-          # 下载 exe 安装包
-          curl -L -o setup.exe "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/air-icon-launcher_${RELEASE_TAG#v}_x64-setup.exe"
+          # 下载 exe 安装包（保持原始文件名）
+          curl -L -o "air-icon-launcher_${VERSION}_x64-setup.exe" "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/air-icon-launcher_${VERSION}_x64-setup.exe"
           
-          # 下载更新包
-          curl -L -o update.nsis.zip "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/air-icon-launcher_${RELEASE_TAG#v}_x64-setup.nsis.zip"
+          # 下载更新包（保持原始文件名）
+          curl -L -o "air-icon-launcher_${VERSION}_x64-setup.nsis.zip" "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/air-icon-launcher_${VERSION}_x64-setup.nsis.zip"
           
-          # 下载签名文件
-          curl -L -o update.nsis.zip.sig "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/air-icon-launcher_${RELEASE_TAG#v}_x64-setup.nsis.zip.sig"
+          # 下载签名文件（保持原始文件名）
+          curl -L -o "air-icon-launcher_${VERSION}_x64-setup.nsis.zip.sig" "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/air-icon-launcher_${VERSION}_x64-setup.nsis.zip.sig"
 
       - name: Update latest.json for Gitee
         run: |
@@ -71,6 +72,8 @@ jobs:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           GITEE_REPO: ${{ secrets.GITEE_REPO }}
         run: |
+          VERSION=${RELEASE_TAG#v}
+          
           # 获取 release ID
           RELEASE_ID=$(curl -s "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases" \
             -H "Authorization: token ${GITEE_TOKEN}" | jq -r ".[] | select(.tag_name==\"${RELEASE_TAG}\") | .id")
@@ -83,14 +86,14 @@ jobs:
           # 上传 exe 安装包
           curl -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases/${RELEASE_ID}/attach_files" \
             -H "Authorization: token ${GITEE_TOKEN}" \
-            -F "file=@setup.exe"
+            -F "file=@air-icon-launcher_${VERSION}_x64-setup.exe"
           
           # 上传更新包
           curl -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases/${RELEASE_ID}/attach_files" \
             -H "Authorization: token ${GITEE_TOKEN}" \
-            -F "file=@update.nsis.zip"
+            -F "file=@air-icon-launcher_${VERSION}_x64-setup.nsis.zip"
           
           # 上传签名文件
           curl -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases/${RELEASE_ID}/attach_files" \
             -H "Authorization: token ${GITEE_TOKEN}" \
-            -F "file=@update.nsis.zip.sig"
+            -F "file=@air-icon-launcher_${VERSION}_x64-setup.nsis.zip.sig"
