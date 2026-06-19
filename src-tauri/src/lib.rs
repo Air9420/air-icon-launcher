@@ -36,188 +36,181 @@ struct TrayState {
 async fn check_update(app: tauri::AppHandle, window: tauri::Window) -> Result<serde_json::Value, String> {
     use tauri::Emitter;
     
-    let log = |msg: String| {
-        let _ = window.emit("update-log", &msg);
-        log::info!("{}", msg);
-    };
+    let _ = window.emit("update-log", "开始检查更新（并发双源）...");
+    log::info!("开始检查更新");
     
-    log("开始检查更新...".to_string());
-    
-    let endpoints = vec![
-        ("GitHub", "https://github.com/Air9420/air-icon-launcher/releases/latest/download/latest.json".to_string()),
-        ("Gitee", "gitee://air9420/air-icon-launcher".to_string()),
-    ];
-    
-    log(format!("并发检查 {} 个更新源: GitHub, Gitee", endpoints.len()));
-    
-    // 并发请求所有 endpoints
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
     
-    let mut handles = vec![];
-    let mut errors: Vec<String> = vec![];
-    for (name, url) in endpoints {
-        let client = client.clone();
-        let name = name.to_string();
-        let window_clone = window.clone();
-        
-        // Gitee 需要先获取最新 release 的 tag
-        let actual_url = if url.starts_with("gitee://") {
-            let repo_path = url.strip_prefix("gitee://").unwrap();
-            let api_url = format!("https://gitee.com/api/v5/repos/{}/releases", repo_path);
-            match client.get(&api_url).send().await {
-                Ok(resp) => {
-                    if let Ok(releases) = resp.json::<serde_json::Value>().await {
-                        if let Some(tag) = releases.as_array().and_then(|arr| arr.first()).and_then(|r| r.get("tag_name")).and_then(|t| t.as_str()) {
-                            format!("https://gitee.com/{}/releases/download/{}/latest.json", repo_path, tag)
-                        } else {
-                            let err = format!("[{}] 无法获取最新 release tag", name);
-                            let _ = window_clone.emit("update-log", &err);
-                            errors.push(err);
-                            continue;
-                        }
-                    } else {
-                        let err = format!("[{}] Gitee API 响应解析失败", name);
-                        let _ = window_clone.emit("update-log", &err);
-                        errors.push(err);
-                        continue;
-                    }
-                }
-                Err(e) => {
-                    let err = format!("[{}] Gitee API 请求失败: {}", name, e);
-                    let _ = window_clone.emit("update-log", &err);
-                    errors.push(err);
-                    continue;
+    let current_version = app.config().version.clone().unwrap_or_default();
+    
+    // GitHub 直接用 latest 路径
+    let github_url = "https://github.com/Air9420/air-icon-launcher/releases/latest/download/latest.json".to_string();
+    
+    // Gitee 需要先获取最新 release tag
+    let gitee_url = {
+        let api_url = "https://gitee.com/api/v5/repos/air9420/air-icon-launcher/releases";
+        match client.get(api_url).send().await {
+            Ok(resp) => {
+                if let Ok(releases) = resp.json::<serde_json::Value>().await {
+                    releases.as_array()
+                        .and_then(|arr| arr.first())
+                        .and_then(|r| r.get("tag_name"))
+                        .and_then(|t| t.as_str())
+                        .map(|tag| {
+                            let _ = window.emit("update-log", format!("[Gitee] 最新 release: {}", tag));
+                            format!("https://gitee.com/air9420/air-icon-launcher/releases/download/{}/latest.json", tag)
+                        })
+                } else {
+                    let _ = window.emit("update-log", "[Gitee] 无法解析 releases 响应");
+                    None
                 }
             }
-        } else {
-            url.clone()
-        };
-        
-        let name_for_task = name.clone();
-        let url_for_task = actual_url.clone();
-        let handle = tokio::spawn(async move {
-            let log = |msg: String| {
-                let _ = window_clone.emit("update-log", &msg);
-            };
-            
-            log(format!("[{}] 正在检查: {}", name_for_task, url_for_task));
-            let start = std::time::Instant::now();
-            
-            match client.get(&url_for_task).send().await {
-                Ok(resp) => {
-                    let elapsed = start.elapsed().as_millis();
-                    let status = resp.status();
-                    if status.is_success() {
-                        match resp.json::<serde_json::Value>().await {
-                            Ok(json) => {
-                                log(format!("[{}] 成功 ({}ms)", name_for_task, elapsed));
-                                Ok(json)
-                            }
-                            Err(e) => {
-                                let err = format!("[{}] JSON 解析失败 ({}ms): {}", name_for_task, elapsed, e);
-                                log(err.clone());
-                                Err(err)
-                            }
-                        }
-                    } else {
-                        let err = format!("[{}] HTTP 错误 ({}ms): {} {}", name_for_task, elapsed, status.as_u16(), status.canonical_reason().unwrap_or("unknown"));
+            Err(e) => {
+                let _ = window.emit("update-log", format!("[Gitee] API 请求失败: {}", e));
+                None
+            }
+        }
+    };
+    
+    // 并发请求
+    let client2 = client.clone();
+    let window2 = window.clone();
+    let window3 = window.clone();
+    let gitee_url2 = gitee_url.clone();
+    
+    let github_task = async move {
+        fetch_latest_json(&client2, &github_url, "GitHub", &window2).await
+    };
+    
+    let gitee_task = async move {
+        match gitee_url2 {
+            Some(url) => fetch_latest_json(&client, &url, "Gitee", &window3).await,
+            None => Err("[Gitee] 跳过（无法获取 release 信息）".to_string()),
+        }
+    };
+    
+    // select: 谁先完成用谁
+    let result;
+    tokio::select! {
+        r = github_task => {
+            result = r;
+        }
+        r = gitee_task => {
+            result = r;
+        }
+    }
+    
+    match result {
+        Ok((name, json)) => {
+            if let Some(update) = parse_update_json(&json, &current_version, &name, &window) {
+                let _ = window.emit("update-log", format!("检查完成，[{}] 发现新版本", name));
+                return Ok(update);
+            }
+            let _ = window.emit("update-log", "检查完成，已是最新版本");
+            Ok(serde_json::json!({"available": false}))
+        }
+        Err(e) => {
+            let err_msg = format!("检查更新失败: {}", e);
+            let _ = window.emit("update-log", &err_msg);
+            Err(err_msg)
+        }
+    }
+}
+
+async fn fetch_latest_json(
+    client: &reqwest::Client,
+    url: &str,
+    source_name: &str,
+    window: &tauri::Window,
+) -> Result<(String, serde_json::Value), String> {
+    use tauri::Emitter;
+    let log = |msg: String| { let _ = window.emit("update-log", &msg); };
+    
+    log(format!("[{}] 正在检查: {}", source_name, url));
+    let start = std::time::Instant::now();
+    
+    match client.get(url).send().await {
+        Ok(resp) => {
+            let elapsed = start.elapsed().as_millis();
+            if resp.status().is_success() {
+                match resp.json::<serde_json::Value>().await {
+                    Ok(json) => {
+                        log(format!("[{}] 成功 ({}ms)", source_name, elapsed));
+                        Ok((source_name.to_string(), json))
+                    }
+                    Err(e) => {
+                        let err = format!("[{}] JSON 解析失败 ({}ms): {}", source_name, elapsed, e);
                         log(err.clone());
                         Err(err)
                     }
                 }
-                Err(e) => {
-                    let elapsed = start.elapsed().as_millis();
-                    let err = if e.is_timeout() {
-                        format!("[{}] 连接超时 ({}ms)", name_for_task, elapsed)
-                    } else if e.is_connect() {
-                        format!("[{}] 连接失败 ({}ms): {}", name_for_task, elapsed, e)
-                    } else {
-                        format!("[{}] 请求失败 ({}ms): {}", name_for_task, elapsed, e)
-                    };
-                    log(err.clone());
-                    Err(err)
-                }
-            }
-        });
-        
-        handles.push((name, handle));
-    }
-    
-    // 收集结果：优先使用第一个成功的
-    let mut best_result: Option<serde_json::Value> = None;
-    
-    for (name, handle) in handles {
-        match handle.await {
-            Ok(Ok(json)) => {
-                // 解析 latest.json
-                let version = json.get("version").and_then(|v| v.as_str()).unwrap_or("");
-                let notes = json.get("notes").and_then(|v| v.as_str()).unwrap_or("");
-                let pub_date = json.get("pub_date").and_then(|v| v.as_str()).unwrap_or("");
-                let platforms = json.get("platforms").and_then(|p| p.as_object());
-                
-                if version.is_empty() {
-                    errors.push(format!("[{}] 响应缺少 version 字段", name));
-                    continue;
-                }
-                
-                // 获取当前版本
-                let current_version = app.config().version.clone().unwrap_or_default();
-                
-                if version == current_version {
-                    log(format!("[{}] 版本相同 ({}), 无需更新", name, version));
-                    continue;
-                }
-                
-                log(format!("[{}] 发现新版本 {} (当前 {})", name, version, current_version));
-                
-                // 获取平台信息
-                if let Some(platforms) = platforms {
-                    if let Some(win_info) = platforms.get("windows-x86_64") {
-                        let signature = win_info.get("signature").and_then(|s| s.as_str()).unwrap_or("");
-                        let download_url = win_info.get("url").and_then(|u| u.as_str()).unwrap_or("");
-                        
-                        best_result = Some(serde_json::json!({
-                            "available": true,
-                            "version": version,
-                            "notes": notes,
-                            "pub_date": pub_date,
-                            "url": download_url,
-                            "signature": signature,
-                            "source": name
-                        }));
-                        
-                        log(format!("[{}] 使用此源的更新", name));
-                        break;
-                    } else {
-                        errors.push(format!("[{}] 响应缺少 windows-x86_64 平台信息", name));
-                    }
-                } else {
-                    errors.push(format!("[{}] 响应缺少 platforms 字段", name));
-                }
-            }
-            Ok(Err(e)) => {
-                errors.push(format!("[{}]", e));
-            }
-            Err(e) => {
-                errors.push(format!("[{}] 任务异常: {}", name, e));
+            } else {
+                let err = format!("[{}] HTTP 错误 ({}ms): {}", source_name, elapsed, resp.status());
+                log(err.clone());
+                Err(err)
             }
         }
+        Err(e) => {
+            let elapsed = start.elapsed().as_millis();
+            let err = if e.is_timeout() {
+                format!("[{}] 超时 ({}ms)", source_name, elapsed)
+            } else {
+                format!("[{}] 连接失败 ({}ms): {}", source_name, elapsed, e)
+            };
+            log(err.clone());
+            Err(err)
+        }
+    }
+}
+
+fn parse_update_json(
+    json: &serde_json::Value,
+    current_version: &str,
+    source_name: &str,
+    window: &tauri::Window,
+) -> Option<serde_json::Value> {
+    use tauri::Emitter;
+    let log = |msg: String| { let _ = window.emit("update-log", &msg); };
+    
+    let version = json.get("version").and_then(|v| v.as_str()).unwrap_or("");
+    let notes = json.get("notes").and_then(|v| v.as_str()).unwrap_or("");
+    let pub_date = json.get("pub_date").and_then(|v| v.as_str()).unwrap_or("");
+    
+    if version.is_empty() {
+        log(format!("[{}] 响应缺少 version 字段", source_name));
+        return None;
     }
     
-    if let Some(result) = best_result {
-        log("检查完成，发现新版本".to_string());
-        Ok(result)
-    } else if errors.is_empty() {
-        log("检查完成，已是最新版本".to_string());
-        Ok(serde_json::json!({"available": false}))
-    } else {
-        let err_msg = format!("所有更新源检查失败:\n{}", errors.join("\n"));
-        log(err_msg.clone());
-        Err(err_msg)
+    if version == current_version {
+        log(format!("[{}] 版本相同 ({}), 无需更新", source_name, version));
+        return None;
     }
+    
+    log(format!("[{}] 发现新版本 {} (当前 {})", source_name, version, current_version));
+    
+    json.get("platforms")
+        .and_then(|p| p.get("windows-x86_64"))
+        .and_then(|win_info| {
+            let signature = win_info.get("signature").and_then(|s| s.as_str()).unwrap_or("");
+            let download_url = win_info.get("url").and_then(|u| u.as_str()).unwrap_or("");
+            if download_url.is_empty() {
+                log(format!("[{}] 响应缺少下载链接", source_name));
+                return None;
+            }
+            log(format!("[{}] 使用此源的更新", source_name));
+            Some(serde_json::json!({
+                "available": true,
+                "version": version,
+                "notes": notes,
+                "pub_date": pub_date,
+                "url": download_url,
+                "signature": signature,
+                "source": source_name
+            }))
+        })
 }
 
 #[tauri::command]
