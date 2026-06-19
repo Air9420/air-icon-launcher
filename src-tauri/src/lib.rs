@@ -376,9 +376,6 @@ pub fn run() {
             icc::select_icc_file,
             icc::get_system_icc_profiles,
             icc::warmup_wcs,
-            commands::memory::get_memory_stats,
-            commands::memory::force_memory_cleanup,
-            commands::memory::get_memory_recommendations,
             apply_and_restart,
             restart_application,
         ])
