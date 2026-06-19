@@ -1,1 +1,0 @@
-﻿{"tag_name":"v0.5.5","name":"v0.5.5","body":"## v0.5.5\n\n### 修复\n- 移除 ICC 快捷键后端多余的 show_main_window 调用，修复竞态条件\n- 改进更新检查时机，处理页面已加载完成的情况\n\n### 改进\n- 更新对话框支持 Markdown 渲染\n- 改进更新检查功能\n- marked 改为懒加载，减少初始包大小","draft":false,"prerelease":false,"target_commitish":"main"}
