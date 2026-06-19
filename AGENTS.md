@@ -92,5 +92,6 @@ This project is indexed by GitNexus as **air-icon-launcher** (6132 symbols, 1245
 | Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
 | Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+| 发布新版本到 GitHub + Gitee | `.claude/skills/release/SKILL.md` |
 
 <!-- gitnexus:end -->
