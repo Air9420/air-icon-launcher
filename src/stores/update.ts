@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { getVersion } from '@tauri-apps/api/app'
 import { downloadAndInstallUpdate, restartApplication } from '../utils/updater'
 
 export interface UpdateInfo {
@@ -31,7 +32,20 @@ export const useUpdateStore = defineStore('update', () => {
   const updateFilePath = ref<string | null>(null)
 
   const hasUpdate = computed(() => updateInfo.value !== null)
-  const currentVersion = ref('0.4.1')
+  const currentVersion = ref('...')
+
+  // 获取实际版本号
+  async function initVersion() {
+    try {
+      currentVersion.value = await getVersion()
+    } catch (e) {
+      console.error('获取版本号失败:', e)
+      currentVersion.value = 'unknown'
+    }
+  }
+
+  // 初始化版本号
+  initVersion()
 
   async function checkForUpdate() {
     isChecking.value = true
