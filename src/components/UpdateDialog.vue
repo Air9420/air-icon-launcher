@@ -1,15 +1,22 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { marked } from 'marked'
+import { computed, ref, watch } from 'vue'
 import { useUpdateStore } from '../stores/update'
 
-// 配置 marked
-marked.setOptions({
-  breaks: true,  // 换行符转换为 <br>
-  gfm: true      // GitHub 风格 Markdown
-})
-
 const updateStore = useUpdateStore()
+
+// 懒加载 marked
+const markedModule = ref<typeof import('marked') | null>(null)
+
+// 当更新对话框显示时才加载 marked
+watch(() => updateStore.showUpdateDialog, async (visible) => {
+  if (visible && !markedModule.value) {
+    markedModule.value = await import('marked')
+    markedModule.value.marked.setOptions({
+      breaks: true,
+      gfm: true
+    })
+  }
+}, { immediate: true })
 
 const isVisible = computed(() => updateStore.showUpdateDialog)
 const updateInfo = computed(() => updateStore.updateInfo)
@@ -20,8 +27,8 @@ const downloadComplete = computed(() => updateStore.downloadComplete)
 
 // 渲染 Markdown 内容
 const renderedNotes = computed(() => {
-  if (!updateInfo.value?.notes) return ''
-  return marked.parse(updateInfo.value.notes)
+  if (!updateInfo.value?.notes || !markedModule.value) return ''
+  return markedModule.value.marked.parse(updateInfo.value.notes)
 })
 
 function handleSkip() {
