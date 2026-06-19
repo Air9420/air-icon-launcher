@@ -618,13 +618,6 @@ pub fn register_icc_shortcut(app: &AppHandle, shortcut: &str) -> AppResult<()> {
                 }
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.emit("navigate-to-icc-settings", ());
-                    let (follow, anchor) = app
-                        .state::<AppSettingsState>()
-                        .inner
-                        .lock()
-                        .map(|g| (g.follow_mouse_on_show, g.follow_mouse_y_anchor))
-                        .unwrap_or((false, FollowMouseYAnchor::Center));
-                    show_main_window(app, follow, anchor);
                 }
             }
         })
