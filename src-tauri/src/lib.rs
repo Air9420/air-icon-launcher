@@ -12,7 +12,6 @@ mod drag;
 mod error;
 mod icc;
 mod keyboard_hook;
-mod memory_profiler;
 mod migration;
 mod migrations;
 mod pinyin;
