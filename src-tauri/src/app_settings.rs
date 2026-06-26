@@ -74,6 +74,11 @@ pub fn show_main_window(app: &AppHandle, follow_mouse_on_show: bool, anchor: Fol
         return;
     };
 
+    // 停止内存管理器
+    if let Some(state) = app.try_state::<crate::memory_manager::MemoryManagerState>() {
+        let _ = state.stop();
+    }
+
     if follow_mouse_on_show {
         if let Some((x, y)) = cursor_position() {
             let size = window.outer_size().ok();
@@ -264,6 +269,10 @@ pub fn toggle_main_window(app: &AppHandle, follow_mouse_on_show: bool, anchor: F
         if focused {
             let _ = window.hide();
             println!("[toggle_main_window] hiding window");
+            // 启动内存管理器
+            if let Some(state) = app.try_state::<crate::memory_manager::MemoryManagerState>() {
+                let _ = state.start();
+            }
         } else {
             show_main_window(app, follow_mouse_on_show, anchor);
         }

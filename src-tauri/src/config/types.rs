@@ -119,6 +119,8 @@ pub struct AppConfig {
     pub auto_hide_enabled: bool,
     #[serde(alias = "iccProfiles")]
     pub icc_profiles: Vec<IccProfile>,
+    #[serde(alias = "autoMemoryReleaseEnabled")]
+    pub auto_memory_release_enabled: bool,
 }
 
 fn deserialize_window_effect_type<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -177,6 +179,7 @@ impl Default for AppConfig {
             auto_hide_countdown_seconds: 30,
             auto_hide_enabled: true,
             icc_profiles: Vec::new(),
+            auto_memory_release_enabled: true,
         }
     }
 }
@@ -218,6 +221,8 @@ pub struct AppConfigPatch {
     pub auto_hide_enabled: Option<bool>,
     #[serde(alias = "iccProfiles")]
     pub icc_profiles: Option<Vec<IccProfile>>,
+    #[serde(alias = "autoMemoryReleaseEnabled")]
+    pub auto_memory_release_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

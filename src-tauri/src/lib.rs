@@ -12,6 +12,7 @@ mod drag;
 mod error;
 mod icc;
 mod keyboard_hook;
+mod memory_manager;
 mod migration;
 mod migrations;
 mod pinyin;
@@ -188,6 +189,11 @@ pub fn run() {
             let clipboard_state = std::sync::Arc::new(clipboard_state);
             app.manage(clipboard_state.clone());
 
+            // 初始化内存管理器
+            let memory_manager = memory_manager::MemoryManager::new();
+            memory_manager.set_enabled(app_config.auto_memory_release_enabled);
+            app.manage(memory_manager::MemoryManagerState::new(memory_manager));
+
             corner_hotspot::update_corner_hotspot_config(
                 &handle,
                 app_config.corner_hotspot_enabled,
@@ -202,6 +208,7 @@ pub fn run() {
             );
             process_monitor::start_process_monitor(handle.clone());
             display_monitor::start_display_monitor(handle.clone());
+            
             if autostart_service::is_autostart_launch() {
                 if let Some(window) = handle.get_webview_window("main") {
                     let _ = window.hide();
@@ -377,6 +384,8 @@ pub fn run() {
             icc::warmup_wcs,
             apply_and_restart,
             restart_application,
+            memory_manager::start_memory_release,
+            memory_manager::stop_memory_release,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
