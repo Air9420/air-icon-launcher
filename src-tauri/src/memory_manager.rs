@@ -265,4 +265,12 @@ mod tests {
         assert!(manager.cancel_sender.is_none());
     }
 
+    #[test]
+    fn test_memory_release_levels() {
+        // 测试内存释放函数不会 panic
+        MemoryManager::release_level_1();
+        MemoryManager::release_level_2();
+        MemoryManager::release_level_3();
+    }
+
 }

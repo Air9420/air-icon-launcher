@@ -177,7 +177,7 @@ fn show_with_win32_api(window: &tauri::WebviewWindow) -> bool {
         HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_RESTORE,
     };
 
-    let _ = window.show();
+    let show_result = window.show();
 
     if let Ok(hwnd) = window.hwnd() {
         let raw = HWND(hwnd.0 as isize);
@@ -217,12 +217,12 @@ fn show_with_win32_api(window: &tauri::WebviewWindow) -> bool {
             );
         }
         println!("[show_with_win32_api] done");
-        true
     } else {
         println!("[show_with_win32_api] hwnd failed, using set_focus");
         let _ = window.set_focus();
-        false
     }
+
+    show_result.is_ok()
 }
 
 #[cfg(not(windows))]
