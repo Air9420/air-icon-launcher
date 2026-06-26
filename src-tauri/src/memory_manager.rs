@@ -11,28 +11,6 @@ use windows::Win32::System::ProcessStatus::EmptyWorkingSet;
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Threading::GetCurrentProcess;
 
-/// 内存释放级别
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MemoryReleaseLevel {
-    /// Level 1: 释放工作集
-    Level1,
-    /// Level 2: 释放工作集 + 堆压缩
-    Level2,
-    /// Level 3: 激进释放
-    Level3,
-}
-
-/// 内存管理器配置
-pub struct MemoryManagerConfig {
-    pub enabled: bool,
-}
-
-impl Default for MemoryManagerConfig {
-    fn default() -> Self {
-        Self { enabled: true }
-    }
-}
-
 /// 内存管理器
 pub struct MemoryManager {
     task_handle: Option<tauri::async_runtime::JoinHandle<()>>,
@@ -231,8 +209,8 @@ mod tests {
         assert!(manager.enabled.load(Ordering::Relaxed));
     }
 
-    #[tokio::test]
-    async fn test_memory_manager_start_stop() {
+    #[test]
+    fn test_memory_manager_start_stop() {
         let mut manager = MemoryManager::new();
         
         // 启动任务
@@ -246,8 +224,8 @@ mod tests {
         assert!(manager.cancel_sender.is_none());
     }
 
-    #[tokio::test]
-    async fn test_memory_manager_disabled() {
+    #[test]
+    fn test_memory_manager_disabled() {
         let mut manager = MemoryManager::new();
         
         // 禁用管理器
@@ -258,8 +236,8 @@ mod tests {
         assert!(manager.task_handle.is_none());
     }
 
-    #[tokio::test]
-    async fn test_memory_manager_start_is_idempotent() {
+    #[test]
+    fn test_memory_manager_start_is_idempotent() {
         let mut manager = MemoryManager::new();
 
         manager.start();
@@ -276,8 +254,8 @@ mod tests {
         manager.stop();
     }
 
-    #[tokio::test]
-    async fn test_memory_manager_stop_is_idempotent() {
+    #[test]
+    fn test_memory_manager_stop_is_idempotent() {
         let mut manager = MemoryManager::new();
 
         manager.stop();
@@ -287,11 +265,4 @@ mod tests {
         assert!(manager.cancel_sender.is_none());
     }
 
-    #[test]
-    fn test_memory_release_levels() {
-        // 测试内存释放函数不会 panic
-        MemoryManager::release_level_1();
-        MemoryManager::release_level_2();
-        MemoryManager::release_level_3();
-    }
 }

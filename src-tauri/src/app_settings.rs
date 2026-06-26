@@ -74,11 +74,6 @@ pub fn show_main_window(app: &AppHandle, follow_mouse_on_show: bool, anchor: Fol
         return;
     };
 
-    // 停止内存管理器
-    if let Some(state) = app.try_state::<crate::memory_manager::MemoryManagerState>() {
-        let _ = state.stop();
-    }
-
     if follow_mouse_on_show {
         if let Some((x, y)) = cursor_position() {
             let size = window.outer_size().ok();
@@ -142,23 +137,37 @@ pub fn show_main_window(app: &AppHandle, follow_mouse_on_show: bool, anchor: Fol
             let show_result = window.show();
             let focus_result = window.set_focus();
             println!("[show_main_window] show={:?}, focus={:?}", show_result, focus_result);
+            if show_result.is_ok() {
+                if let Some(state) = app.try_state::<crate::memory_manager::MemoryManagerState>() {
+                    let _ = state.stop();
+                }
+            }
         }
         // 模式1: Win32 API (从 corner_hotspot 移植)
         1 => {
             println!("[show_main_window] mode=1: using Win32 API");
-            show_with_win32_api(&window);
+            if show_with_win32_api(&window) {
+                if let Some(state) = app.try_state::<crate::memory_manager::MemoryManagerState>() {
+                    let _ = state.stop();
+                }
+            }
         }
         _ => {
             println!("[show_main_window] unknown mode={}, fallback to mode=0", mode);
             let show_result = window.show();
             let focus_result = window.set_focus();
             println!("[show_main_window] show={:?}, focus={:?}", show_result, focus_result);
+            if show_result.is_ok() {
+                if let Some(state) = app.try_state::<crate::memory_manager::MemoryManagerState>() {
+                    let _ = state.stop();
+                }
+            }
         }
     }
 }
 
 #[cfg(windows)]
-fn show_with_win32_api(window: &tauri::WebviewWindow) {
+fn show_with_win32_api(window: &tauri::WebviewWindow) -> bool {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     use windows::Win32::UI::Input::KeyboardAndMouse::{SetActiveWindow, SetFocus};
@@ -208,17 +217,20 @@ fn show_with_win32_api(window: &tauri::WebviewWindow) {
             );
         }
         println!("[show_with_win32_api] done");
+        true
     } else {
         println!("[show_with_win32_api] hwnd failed, using set_focus");
         let _ = window.set_focus();
+        false
     }
 }
 
 #[cfg(not(windows))]
-fn show_with_win32_api(window: &tauri::WebviewWindow) {
+fn show_with_win32_api(window: &tauri::WebviewWindow) -> bool {
     println!("[show_with_win32_api] non-windows, using Tauri API");
     let _ = window.show();
     let _ = window.set_focus();
+    true
 }
 
 /// 切换显示模式
@@ -267,11 +279,12 @@ pub fn toggle_main_window(app: &AppHandle, follow_mouse_on_show: bool, anchor: F
     println!("[toggle_main_window] visible={}, focused={}", visible, focused);
     if visible {
         if focused {
-            let _ = window.hide();
-            println!("[toggle_main_window] hiding window");
-            // 启动内存管理器
-            if let Some(state) = app.try_state::<crate::memory_manager::MemoryManagerState>() {
-                let _ = state.start();
+            if window.hide().is_ok() {
+                println!("[toggle_main_window] hiding window");
+                // 启动内存管理器
+                if let Some(state) = app.try_state::<crate::memory_manager::MemoryManagerState>() {
+                    let _ = state.start();
+                }
             }
         } else {
             show_main_window(app, follow_mouse_on_show, anchor);
