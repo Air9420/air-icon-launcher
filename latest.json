@@ -1,11 +1,11 @@
 {
-  "version": "0.5.7",
-  "notes": "## v0.5.7\n\n### 改进\n- 移除内存分析器模块，简化代码库",
-  "pub_date": "2026-06-20T12:00:00Z",
+  "version": "0.5.8",
+  "notes": "## v0.5.8\n\n### 修复\n- 收敛窗口隐藏内存释放触发\n- 收敛内存释放门控\n- 修正内存释放窗口门控\n- backend-only memory manager boundary",
+  "pub_date": "2026-06-27T12:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUmRrTSttTjh2elNuc1JKT2EzbDA5SGlLbk5aT1NaVXd4SnJ5elowZlh4U2loSVRrK2JXMFZpSzhLYUNwVTNpRytkSll0TEFNUVFyMjJmcDExd3VkbHdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxODk4NzU5CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC41LjdfeDY0LXNldHVwLm5zaXMuemlwCkZoa3lDWEVWcEE4eDJOMDNzcGJuOGlxQmxyTThvQkRiZ0FCSE1JU0VXNFhPM21sNlRZd2hhUlM3VVMyRGxyVm1hSlR3WFM1RzFuZEI5bTcvd3VDV0FRPT0K",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.5.7/air-icon-launcher_0.5.7_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUmZVL3V4MUlxTjBqR2FCMWpEVUFKT3lMTFgvemw2OFpXM3FRTzQzYnBMZXZZV1NCTVZKTTJTakhIdlNXZ1A3dEZuUDJvNzR4d25WUlB1V2JROFBIOUFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyNTIxNjI5CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC41LjhfeDY0LXNldHVwLm5zaXMuemlwCktGZysvTDU4MUlrUzBvT1pBMVVrby9HbmczdzJ4MGIxd0RjbE9PNE15bVJkb3dTMy9CUDdCTFVFZi9ZK3RsQm5ZM1ZrSlhVWDdSQ0w0aHR4a3lJVkFBPT0K",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.5.8/air-icon-launcher_0.5.8_x64-setup.nsis.zip"
     }
   }
 }
