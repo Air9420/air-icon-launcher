@@ -10,7 +10,7 @@ if [ -z "$TAG" ]; then
 fi
 
 VERSION=${TAG#v}
-GITEE_TOKEN="31fd634eb6eff21e83b2b2d43c7acafa"
+GITEE_TOKEN="${GITEE_TOKEN:?环境变量 GITEE_TOKEN 未设置}"
 GITEE_REPO="air9420/air-icon-launcher"
 GITHUB_REPO="Air9420/air-icon-launcher"
 
