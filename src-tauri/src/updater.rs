@@ -79,60 +79,42 @@ impl UpdateSourceManager {
     }
 
     pub async fn check_update(&mut self) -> Result<serde_json::Value, String> {
-        let (primary_result, fallback_result) = tokio::join!(
-            self.try_source(&self.config.primary),
-            self.try_source(&self.config.fallback)
-        );
+        let primary_fut = self.try_source(&self.config.primary);
+        let fallback_fut = self.try_source(&self.config.fallback);
 
-        self.primary_status.last_check = Some(chrono::Utc::now());
-        self.fallback_status.last_check = Some(chrono::Utc::now());
-
-        match &primary_result {
-            Ok(result) => {
-                self.primary_status.success = true;
-                self.primary_status.error_message = None;
-                log::info!(
-                    "主更新源(GitHub)检查成功: {}",
-                    result
-                        .get("version")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or("unknown")
-                );
+        tokio::select! {
+            result = primary_fut => {
+                self.primary_status.last_check = Some(chrono::Utc::now());
+                match &result {
+                    Ok(_) => {
+                        self.primary_status.success = true;
+                        self.primary_status.error_message = None;
+                        log::info!("主更新源(GitHub)响应最快");
+                    }
+                    Err(e) => {
+                        self.primary_status.success = false;
+                        self.primary_status.error_message = Some(e.clone());
+                        log::warn!("主更新源检查失败: {}", e);
+                    }
+                }
+                result
             }
-            Err(error) => {
-                self.primary_status.success = false;
-                self.primary_status.error_message = Some(error.clone());
-                log::warn!("主更新源检查失败: {}", error);
+            result = fallback_fut => {
+                self.fallback_status.last_check = Some(chrono::Utc::now());
+                match &result {
+                    Ok(_) => {
+                        self.fallback_status.success = true;
+                        self.fallback_status.error_message = None;
+                        log::info!("从更新源(Gitee)响应最快");
+                    }
+                    Err(e) => {
+                        self.fallback_status.success = false;
+                        self.fallback_status.error_message = Some(e.clone());
+                        log::warn!("从更新源检查失败: {}", e);
+                    }
+                }
+                result
             }
-        }
-
-        match &fallback_result {
-            Ok(result) => {
-                self.fallback_status.success = true;
-                self.fallback_status.error_message = None;
-                log::info!(
-                    "从更新源(Gitee)检查成功: {}",
-                    result
-                        .get("version")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or("unknown")
-                );
-            }
-            Err(error) => {
-                self.fallback_status.success = false;
-                self.fallback_status.error_message = Some(error.clone());
-                log::warn!("从更新源检查失败: {}", error);
-            }
-        }
-
-        match (primary_result, fallback_result) {
-            (Ok(primary), Ok(fallback)) => Ok(select_higher_version_result(primary, fallback)),
-            (Ok(primary), Err(_)) => Ok(primary),
-            (Err(_), Ok(fallback)) => Ok(fallback),
-            (Err(primary_error), Err(fallback_error)) => Err(format!(
-                "主更新源和从更新源都失败了。GitHub: {}; Gitee: {}",
-                primary_error, fallback_error
-            )),
         }
     }
 
