@@ -63,7 +63,7 @@ async fn check_update(_app: tauri::AppHandle, window: tauri::Window) -> Result<s
     let has_update = if version.is_empty() || url.is_empty() {
         false
     } else {
-        version != current_version
+        crate::updater::has_newer_version(current_version, &result)
     };
     
     if has_update {
@@ -94,7 +94,26 @@ async fn apply_and_restart(app: tauri::AppHandle, window: tauri::Window) -> Resu
     let _ = window.emit("update-log", "开始检查更新...");
     log::info!("开始检查更新");
     
-    let updater = app.updater().map_err(|e| format!("获取更新器失败: {}", e))?;
+    let mut endpoint_strings = vec![crate::updater::GITHUB_LATEST_JSON_URL.to_string()];
+    match crate::updater::resolve_gitee_latest_json_url(std::time::Duration::from_secs(15)).await {
+        Ok(url) => endpoint_strings.push(url),
+        Err(error) => {
+            let _ = window.emit("update-log", format!("Gitee 更新源不可用，继续使用 GitHub: {}", error));
+            log::warn!("Gitee 更新源不可用，继续使用 GitHub: {}", error);
+        }
+    }
+
+    let endpoints = endpoint_strings
+        .into_iter()
+        .map(|url| tauri::Url::parse(&url).map_err(|e| format!("更新源 URL 无效: {}", e)))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let updater = app
+        .updater_builder()
+        .endpoints(endpoints)
+        .map_err(|e| format!("配置更新源失败: {}", e))?
+        .build()
+        .map_err(|e| format!("获取更新器失败: {}", e))?;
     
     let update = updater.check().await
         .map_err(|e| format!("检查更新失败: {}", e))?;
