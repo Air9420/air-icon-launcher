@@ -148,14 +148,19 @@ async fn apply_and_restart(app: tauri::AppHandle, window: tauri::Window) -> Resu
     Ok(())
 }
 
-#[tauri::command]
-async fn restart_application(app: tauri::AppHandle) -> Result<(), String> {
-    // 隐藏系统托盘图标，防止重启后残留
+const RESTART_TRAY_HIDE_DELAY_MS: u64 = 200;
+
+fn hide_tray_icon(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<crate::TrayState>() {
         let _ = state.tray.set_visible(false);
     }
+}
+
+#[tauri::command]
+async fn restart_application(app: tauri::AppHandle) -> Result<(), String> {
+    hide_tray_icon(&app);
+    tokio::time::sleep(std::time::Duration::from_millis(RESTART_TRAY_HIDE_DELAY_MS)).await;
     app.restart();
-    // unreachable, but needed for return type
     #[allow(unreachable_code)]
     Ok(())
 }
