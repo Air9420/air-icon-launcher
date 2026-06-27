@@ -15,7 +15,7 @@ pub struct UpdateSourceConfig {
 }
 
 impl UpdateSourceConfig {
-    pub fn new(_version: &str) -> Self {
+    pub fn new(version: &str) -> Self {
         Self {
             primary: UpdateSource {
                 url: "https://github.com/Air9420/air-icon-launcher/releases/latest/download/latest.json"
@@ -24,8 +24,7 @@ impl UpdateSourceConfig {
                 retries: 3,
             },
             fallback: UpdateSource {
-                url: "https://gitee.com/api/v5/repos/air9420/air-icon-launcher/releases/latest"
-                    .to_string(),
+                url: format!("https://gitee.com/Air9420/air-icon-launcher/releases/download/v{}/latest.json", version),
                 timeout: Duration::from_secs(15),
                 retries: 2,
             },
@@ -73,54 +72,41 @@ impl UpdateSourceManager {
     }
 
     pub async fn check_update(&mut self) -> Result<serde_json::Value, String> {
-        self.primary_status.last_check = Some(chrono::Utc::now());
-        match self.try_source(&self.config.primary).await {
-            Ok(result) => {
-                self.primary_status.success = true;
-                self.primary_status.error_message = None;
-                log::info!("主更新源(GitHub)检查成功");
-                return Ok(result);
-            }
-            Err(e) => {
-                self.primary_status.success = false;
-                self.primary_status.error_message = Some(e.clone());
-                log::warn!("主更新源检查失败: {}", e);
-            }
-        }
+        let primary_fut = self.try_source(&self.config.primary);
+        let fallback_fut = self.try_source(&self.config.fallback);
 
-        self.fallback_status.last_check = Some(chrono::Utc::now());
-        let fallback_url = match self.try_source(&self.config.fallback).await {
-            Ok(api_result) => {
-                let tag = api_result.get("tag_name").and_then(|v| v.as_str()).unwrap_or("");
-                if tag.is_empty() {
-                    return Err("无法获取最新版本标签".to_string());
+        tokio::select! {
+            result = primary_fut => {
+                self.primary_status.last_check = Some(chrono::Utc::now());
+                match &result {
+                    Ok(_) => {
+                        self.primary_status.success = true;
+                        self.primary_status.error_message = None;
+                        log::info!("主更新源(GitHub)响应最快");
+                    }
+                    Err(e) => {
+                        self.primary_status.success = false;
+                        self.primary_status.error_message = Some(e.clone());
+                        log::warn!("主更新源检查失败: {}", e);
+                    }
                 }
-                format!("https://gitee.com/Air9420/air-icon-launcher/releases/download/{}/latest.json", tag)
+                result
             }
-            Err(e) => {
-                self.fallback_status.success = false;
-                self.fallback_status.error_message = Some(e.clone());
-                log::warn!("从更新源获取最新版本信息失败: {}", e);
-                return Err(e);
-            }
-        };
-
-        match self.try_source(&UpdateSource {
-            url: fallback_url,
-            timeout: self.config.fallback.timeout,
-            retries: self.config.fallback.retries,
-        }).await {
-            Ok(result) => {
-                self.fallback_status.success = true;
-                self.fallback_status.error_message = None;
-                log::info!("从更新源(Gitee)检查成功");
-                Ok(result)
-            }
-            Err(e) => {
-                self.fallback_status.success = false;
-                self.fallback_status.error_message = Some(e.clone());
-                log::warn!("从更新源下载更新信息失败: {}", e);
-                Err(e)
+            result = fallback_fut => {
+                self.fallback_status.last_check = Some(chrono::Utc::now());
+                match &result {
+                    Ok(_) => {
+                        self.fallback_status.success = true;
+                        self.fallback_status.error_message = None;
+                        log::info!("从更新源(Gitee)响应最快");
+                    }
+                    Err(e) => {
+                        self.fallback_status.success = false;
+                        self.fallback_status.error_message = Some(e.clone());
+                        log::warn!("从更新源检查失败: {}", e);
+                    }
+                }
+                result
             }
         }
     }
