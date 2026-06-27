@@ -81,8 +81,11 @@ impl MemoryManager {
             return;
         }
 
-        // 如果已有任务在运行，先停止
-        self.stop();
+        // 已有任务在运行时直接返回，避免反复 stop/start 造成抖动和竞态
+        if self.task_handle.is_some() {
+            println!("[MemoryManager] 任务已在运行，跳过重复启动");
+            return;
+        }
 
         println!("[MemoryManager] 启动内存释放任务");
         let (cancel_sender, cancel_receiver) = watch::channel(false);
@@ -248,6 +251,22 @@ mod tests {
 
         assert!(first_handle);
         assert!(first_sender);
+        assert!(manager.task_handle.is_some());
+        assert!(manager.cancel_sender.is_some());
+
+        manager.stop();
+    }
+
+    #[test]
+    fn test_memory_manager_start_does_not_restart_running_task() {
+        let mut manager = MemoryManager::new();
+
+        manager.start();
+        assert!(manager.task_handle.is_some());
+        assert!(manager.cancel_sender.is_some());
+
+        manager.start();
+
         assert!(manager.task_handle.is_some());
         assert!(manager.cancel_sender.is_some());
 

@@ -37,6 +37,7 @@ import { ref, type Ref } from "vue";
 import { useRouter } from "vue-router";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invokeOrThrow as invoke } from "../utils/invoke-wrapper";
+import { hideWindowAndStartMemoryRelease } from "../utils/window-memory";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Store } from "../stores";
 import { useCategoryStore } from "../stores/categoryStore";
@@ -501,7 +502,9 @@ export function useMenuActions(options: UseMenuActionsOptions) {
      */
     async function onHideWindow() {
         try {
-            await getCurrentWindow().hide();
+            await hideWindowAndStartMemoryRelease(getCurrentWindow(), async () => {
+                await invoke("start_memory_release");
+            });
         } catch (e) {
             console.error(e);
         } finally {

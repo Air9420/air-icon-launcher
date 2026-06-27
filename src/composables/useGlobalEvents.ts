@@ -33,6 +33,8 @@
 
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useSettingsStore } from "../stores";
+import { safeInvoke } from "../utils/invoke-wrapper";
+import { hideWindowAndStartMemoryRelease } from "../utils/window-memory";
 
 /**
  * useGlobalEvents 配置选项
@@ -140,7 +142,9 @@ export function useGlobalEvents(options: UseGlobalEventsOptions) {
         const settingsStore = useSettingsStore();
         if (settingsStore.hideOnCtrlRightClick && event.ctrlKey && event.button === 2) {
             try {
-                await getCurrentWindow().hide();
+                await hideWindowAndStartMemoryRelease(getCurrentWindow(), async () => {
+                    await safeInvoke("start_memory_release");
+                });
             } catch (e) {
                 console.error(e);
             }

@@ -42,6 +42,7 @@ import { useSettingsStore } from "../stores";
 import { storeToRefs } from "pinia";
 import { showToast } from "./useGlobalToast";
 import { useStatsStore } from "../stores/statsStore";
+import { hideWindowAndStartMemoryRelease } from "../utils/window-memory";
 
 type SystemProcessLaunchedEvent = {
     name: string;
@@ -148,7 +149,9 @@ export function useTauriEvents() {
             if (currentRoute === "/categories" && isVisible && isFocused) {
                 console.log("[toggle-main] hiding window");
                 await saveWindowPosition();
-                await win.hide();
+                await hideWindowAndStartMemoryRelease(win, async () => {
+                    await safeInvoke("start_memory_release");
+                });
             } else {
                 // 先设为不可见，这样系统缓存的最后一帧也是透明的
                 const transitioning = (window as unknown as Record<string, unknown>).__appIsTransitioning as { value: boolean } | undefined;
@@ -217,7 +220,9 @@ export function useTauriEvents() {
             if (currentRoute === "/settings/display" && isVisible && isFocused) {
                 console.log("[navigate-to-icc-settings] hiding window");
                 await saveWindowPosition();
-                await win.hide();
+                await hideWindowAndStartMemoryRelease(win, async () => {
+                    await safeInvoke("start_memory_release");
+                });
             } else {
                 // 先设为不可见，这样系统缓存的最后一帧也是透明的
                 const transitioning = (window as unknown as Record<string, unknown>).__appIsTransitioning as { value: boolean } | undefined;

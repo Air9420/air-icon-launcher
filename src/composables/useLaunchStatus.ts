@@ -1,5 +1,7 @@
 import { shallowRef, triggerRef, type Ref, onScopeDispose } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { safeInvoke } from "../utils/invoke-wrapper";
+import { hideWindowAndStartMemoryRelease } from "../utils/window-memory";
 
 export type LaunchStatus = "launching" | "success";
 
@@ -32,7 +34,10 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
                 hideTimeout = null;
             }
             if (hasLaunchedWhileCtrlPressed && autoHideAfterLaunch?.value) {
-                getCurrentWindow().hide();
+                void hideWindowAndStartMemoryRelease(getCurrentWindow(), async () => {
+                    await safeInvoke("start_memory_release");
+                })
+                    .catch(console.error);
             }
             hasLaunchedWhileCtrlPressed = false;
         }
@@ -99,7 +104,10 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
                     }
                     hideTimeout = setTimeout(() => {
                         if (!isCtrlPressed && hasLaunchedWhileCtrlPressed) {
-                            getCurrentWindow().hide();
+                            void hideWindowAndStartMemoryRelease(getCurrentWindow(), async () => {
+                                await safeInvoke("start_memory_release");
+                            })
+                                .catch(console.error);
                         }
                         hideTimeout = null;
                     }, 500);
@@ -108,7 +116,10 @@ export function useLaunchStatus(options: UseLaunchStatusOptions = {}) {
                         clearTimeout(hideTimeout);
                         hideTimeout = null;
                     }
-                    getCurrentWindow().hide();
+                    void hideWindowAndStartMemoryRelease(getCurrentWindow(), async () => {
+                        await safeInvoke("start_memory_release");
+                    })
+                        .catch(console.error);
                 }
             }
             setTimeout(() => {

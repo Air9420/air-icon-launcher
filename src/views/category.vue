@@ -342,7 +342,10 @@ import { launchStoredItem } from "../utils/launcher-service";
 import { getLauncherItemBadgeText } from "../utils/scanned-app-launch";
 import { SEARCH_THROTTLE_MS } from "../utils/search-config";
 import { collectVisibleGridHydrationTargets } from "../utils/icon-hydration-window";
-import { shouldSkipVisibleHydration, type WindowVisibilityState } from "../utils/window-visibility";
+import {
+    shouldSkipVisibleHydration,
+    type WindowVisibilityState,
+} from "../utils/window-visibility";
 
 const props = defineProps<{
     categoryId: string;

@@ -1,5 +1,7 @@
 import { ref, watch, type Ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { safeInvoke } from "../utils/invoke-wrapper";
+import { hideWindowAndStartMemoryRelease } from "../utils/window-memory";
 
 const win = getCurrentWindow();
 
@@ -26,7 +28,9 @@ export function useAutoHideCountdown(options: AutoHideCountdownOptions) {
     const focused = await win.isFocused();
     stopCountdown();
     if (!focused) {
-      await win.hide();
+      await hideWindowAndStartMemoryRelease(win, async () => {
+        await safeInvoke("start_memory_release");
+      });
     }
   }
 
