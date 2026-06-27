@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useUpdateStore } from '../stores/update'
+import { getSmoothedProgressFrame } from '../utils/progress-animation'
 
 const updateStore = useUpdateStore()
 
@@ -21,9 +22,66 @@ watch(() => updateStore.showUpdateDialog, async (visible) => {
 const isVisible = computed(() => updateStore.showUpdateDialog)
 const updateInfo = computed(() => updateStore.updateInfo)
 const isUpdating = computed(() => updateStore.isUpdating)
-const progress = computed(() => updateStore.updateProgress?.percentage || 0)
 const error = computed(() => updateStore.error)
 const downloadComplete = computed(() => updateStore.downloadComplete)
+
+const realProgress = computed(() => updateStore.updateProgress?.percentage || 0)
+const displayProgress = ref(0)
+let progressRafId: number | null = null
+
+function stopProgressAnimation() {
+  if (progressRafId !== null) {
+    window.cancelAnimationFrame(progressRafId)
+    progressRafId = null
+  }
+}
+
+watch(realProgress, (target) => {
+  stopProgressAnimation()
+
+  const startValue = displayProgress.value
+  const startTime = performance.now()
+
+  if (target <= startValue) {
+    displayProgress.value = target
+    return
+  }
+
+  const tick = (now: number) => {
+    displayProgress.value = getSmoothedProgressFrame(startValue, target, now - startTime)
+
+    if (displayProgress.value < target) {
+      progressRafId = window.requestAnimationFrame(tick)
+    } else {
+      progressRafId = null
+    }
+  }
+
+  progressRafId = window.requestAnimationFrame(tick)
+}, { immediate: true })
+
+watch(() => updateStore.showUpdateDialog, (visible) => {
+  if (!visible) {
+    stopProgressAnimation()
+    displayProgress.value = 0
+  }
+})
+
+onBeforeUnmount(stopProgressAnimation)
+
+const progress = computed(() => displayProgress.value)
+
+const updateTitle = computed(() => {
+  if (updateStore.updatePhase === 'restarting') return `正在重启到 v${updateInfo.value?.version}`
+  if (downloadComplete.value) return `更新已安装 v${updateInfo.value?.version}`
+  return `发现新版本 v${updateInfo.value?.version}`
+})
+
+const primaryButtonText = computed(() => {
+  if (updateStore.updatePhase === 'restarting') return '正在重启...'
+  if (isUpdating.value) return '更新中...'
+  return '立即更新'
+})
 
 // 渲染 Markdown 内容
 const renderedNotes = computed(() => {
@@ -48,7 +106,7 @@ function handleRestart() {
   <div v-if="isVisible" class="update-overlay">
     <div class="update-dialog">
       <div class="update-header">
-        <h3>{{ downloadComplete ? '更新已下载' : '发现新版本' }} v{{ updateInfo?.version }}</h3>
+        <h3>{{ updateTitle }}</h3>
         <button class="close-btn" @click="handleSkip" :disabled="isUpdating">×</button>
       </div>
       
@@ -64,7 +122,7 @@ function handleRestart() {
         
         <div v-if="downloadComplete" class="download-complete">
           <div class="complete-icon">✓</div>
-          <p>更新包已下载完成，点击"立即重启"应用更新。</p>
+          <p>{{ updateStore.updatePhase === 'restarting' ? '更新已安装完成，应用即将自动重启。' : '更新已安装完成。' }}</p>
         </div>
       </div>
       
@@ -72,7 +130,7 @@ function handleRestart() {
         {{ error }}
       </div>
       
-      <div v-if="isUpdating" class="update-progress">
+      <div v-if="isUpdating || downloadComplete" class="update-progress">
         <div class="progress-bar">
           <div class="progress-fill" :style="{ width: `${progress}%` }"></div>
         </div>
@@ -99,10 +157,10 @@ function handleRestart() {
             @click="handleUpdate"
             :disabled="isUpdating"
           >
-            {{ isUpdating ? '下载中...' : '立即更新' }}
+            {{ primaryButtonText }}
           </button>
         </template>
-        <template v-else>
+        <template v-else-if="error">
           <button 
             class="btn btn-secondary" 
             @click="handleSkip"
@@ -113,7 +171,7 @@ function handleRestart() {
             class="btn btn-primary" 
             @click="handleRestart"
           >
-            立即重启
+            手动重启
           </button>
         </template>
       </div>
@@ -323,7 +381,7 @@ function handleRestart() {
     .progress-fill {
       height: 100%;
       background: var(--primary-color, #667eea);
-      transition: width 0.3s ease;
+      transition: none;
     }
   }
   
