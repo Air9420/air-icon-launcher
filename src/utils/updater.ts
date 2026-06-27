@@ -13,6 +13,10 @@ export interface UpdateCheckResult {
   source?: string
 }
 
+export interface UpdateDownloadCompletePayload {
+  version: string
+}
+
 export async function checkForUpdate(): Promise<UpdateCheckResult> {
   try {
     const result = await invokeOrThrow<UpdateCheckResult>('check_update')
@@ -95,10 +99,10 @@ export function listenUpdateLog() {
 }
 
 export function listenDownloadComplete() {
-  listen<{ file_path: string; version: string }>('update-download-complete', (event) => {
-    console.log('[更新] 下载完成:', event.payload)
+  listen<UpdateDownloadCompletePayload>('update-download-complete', (event) => {
+    console.log('[更新] 安装完成:', event.payload)
     const updateStore = useUpdateStore()
     updateStore.downloadComplete = true
-    updateStore.updateFilePath = event.payload.file_path
+    updateStore.updateFilePath = null
   })
 }
