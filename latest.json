@@ -1,10 +1,10 @@
 {
   "version": "0.5.9",
-  "notes": "## v0.5.9\n\n### 新增\n- 平滑显示更新进度\n- 更新完成后自动重启\n- 增加更新进度平滑工具\n\n### 修复\n- 重启前等待托盘图标隐藏\n- 修正更新完成事件类型\n- 对齐更新进度平滑接口\n- 调整内存释放生产延迟",
+  "notes": "## v0.5.9\n\n### 新增\n- 窗口可见性管理工具，优化窗口显示/隐藏逻辑\n- 分类视图页面，支持按分类浏览启动项\n- 窗口可见性单元测试\n\n### 修复\n- 收敛窗口隐藏内存释放触发\n- 收敛内存释放门控\n- 修正内存释放窗口门控\n- backend-only memory manager boundary\n\n### 改进\n- 重构内存释放模块，提升稳定性",
   "pub_date": "2026-06-28T12:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUlNuZ002YytOWDNFODJvVXNkSlB5eVR4TWJMZ2h4bXJmSXBuS0d2RjlqMkdwTVlncTlWalVxbi9LdjFZMXVsbHBnanIwc01qRFNTVks5YXpWQVc3OFFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyNTg5MzkxCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC41LjlfeDY0LXNldHVwLm5zaXMuemlwCkl5YW5EM0srdEdRNStHM2VsT1EvSWhXMG95N1kvT3pFaFBUQUxEZDhaY3RFN3luTDVleFp1K2xNNUFhdlduVWJNZ3FnSmNTczdEbGZ1YVZrM1ZDYkN3PT0K",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUlhZd2dFZXlocmo5VndiY09CTDRQbjRRM3JiOWRHMEFtZVpNNFcxRjNzS2Zwbk1jTDZFVlU5RnRnOUM0YmJoczE4V2srWWZaaGsybFBKKzgvWjY4UndVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyNjA3NjI5CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC41LjlfeDY0LXNldHVwLm5zaXMuemlwCnRFU1puTUlOSG9tR2doK3VNZnhlM3UrUUJUd3ArQ2g5TVE3ck9ibUsrK1VHdDlheVR3QTNsRnIvWjZyOGVFTmh5YjV2VnlESThCekRaR1FIVkdHZ0R3PT0K",
       "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.5.9/air-icon-launcher_0.5.9_x64-setup.nsis.zip"
     }
   }
