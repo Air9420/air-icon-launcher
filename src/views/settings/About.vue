@@ -133,6 +133,8 @@ async function onCheckUpdate() {
                 version: result.version!,
                 notes: result.notes || '',
                 pub_date: result.pub_date || new Date().toISOString(),
+                source: result.source,
+                latestJsonUrl: result.latest_json_url || '',
                 platforms: {
                     'windows-x86_64': {
                         signature: '',
@@ -158,6 +160,8 @@ function onTestUpdate() {
         version: version.value,
         notes: `## v${version.value}\n\n### 新增\n- 测试更新弹窗功能\n- 支持 Markdown 渲染\n\n### 修复\n- 修复了更新检查的并发问题\n- 优化错误日志输出\n\n**感谢使用 Air Launch！**`,
         pub_date: new Date().toISOString(),
+        source: 'github',
+        latestJsonUrl: '',
         platforms: {
             'windows-x86_64': {
                 signature: '',

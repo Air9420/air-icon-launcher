@@ -41,11 +41,12 @@ async fn check_update(_app: tauri::AppHandle, window: tauri::Window) -> Result<s
     
     let mut manager = crate::updater::UpdateSourceManager::new(crate::updater::UpdateSourceConfig::default());
     
-    let result = manager.check_update().await
+    let resolved = manager.check_update().await
         .map_err(|e| {
             log::error!("检查更新失败: {}", e);
             format!("检查更新失败: {}", e)
         })?;
+    let result = &resolved.payload;
     
     // 解析 latest.json 格式
     let version = result.get("version").and_then(|v| v.as_str()).unwrap_or("");
@@ -75,7 +76,9 @@ async fn check_update(_app: tauri::AppHandle, window: tauri::Window) -> Result<s
             "notes": notes,
             "pub_date": pub_date,
             "url": url,
-            "signature": signature
+            "signature": signature,
+            "source": resolved.source,
+            "latest_json_url": resolved.latest_json_url
         }))
     } else {
         let _ = window.emit("update-log", format!("没有可用更新 (当前版本: {})", current_version));
@@ -87,23 +90,14 @@ async fn check_update(_app: tauri::AppHandle, window: tauri::Window) -> Result<s
 }
 
 #[tauri::command]
-async fn apply_and_restart(app: tauri::AppHandle, window: tauri::Window) -> Result<(), String> {
+async fn apply_and_restart(app: tauri::AppHandle, window: tauri::Window, latest_json_url: String) -> Result<(), String> {
     use tauri::Emitter;
     use tauri_plugin_updater::UpdaterExt;
     
     let _ = window.emit("update-log", "开始检查更新...");
     log::info!("开始检查更新");
     
-    let mut endpoint_strings = vec![crate::updater::GITHUB_LATEST_JSON_URL.to_string()];
-    match crate::updater::resolve_gitee_latest_json_url(std::time::Duration::from_secs(15)).await {
-        Ok(url) => endpoint_strings.push(url),
-        Err(error) => {
-            let _ = window.emit("update-log", format!("Gitee 更新源不可用，继续使用 GitHub: {}", error));
-            log::warn!("Gitee 更新源不可用，继续使用 GitHub: {}", error);
-        }
-    }
-
-    let endpoints = endpoint_strings
+    let endpoints = vec![latest_json_url]
         .into_iter()
         .map(|url| tauri::Url::parse(&url).map_err(|e| format!("更新源 URL 无效: {}", e)))
         .collect::<Result<Vec<_>, _>>()?;

@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::cmp::Ordering;
 use std::time::Duration;
 
 pub const GITHUB_LATEST_JSON_URL: &str =
@@ -53,6 +52,13 @@ pub struct UpdateSourceStatus {
     pub error_message: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ResolvedUpdate {
+    pub payload: Value,
+    pub source: String,
+    pub latest_json_url: String,
+}
+
 pub struct UpdateSourceManager {
     config: UpdateSourceConfig,
     primary_status: UpdateSourceStatus,
@@ -78,7 +84,7 @@ impl UpdateSourceManager {
         }
     }
 
-    pub async fn check_update(&mut self) -> Result<serde_json::Value, String> {
+    pub async fn check_update(&mut self) -> Result<ResolvedUpdate, String> {
         let primary_fut = self.try_source(&self.config.primary);
         let fallback_fut = self.try_source(&self.config.fallback);
 
@@ -118,24 +124,37 @@ impl UpdateSourceManager {
         }
     }
 
-    async fn try_source(&self, source: &UpdateSource) -> Result<serde_json::Value, String> {
+    async fn try_source(&self, source: &UpdateSource) -> Result<ResolvedUpdate, String> {
         let client = reqwest::Client::builder()
             .timeout(source.timeout)
             .build()
             .map_err(|e| format!("创建HTTP客户端失败: {}", e))?;
 
         let mut last_error = String::new();
+        let source_name = if source.url == GITEE_LATEST_RELEASE_API_URL {
+            "gitee"
+        } else {
+            "github"
+        };
 
         for attempt in 1..=source.retries {
             log::info!("[更新源] 尝试请求: {} (第{}次)", source.url, attempt);
             let result = if source.url == GITEE_LATEST_RELEASE_API_URL {
                 self.try_gitee_latest_json(&client).await
             } else {
-                Self::fetch_json(&client, &source.url).await
+                let payload = Self::fetch_json(&client, &source.url).await?;
+                validate_latest_json(&payload)?;
+                Ok((payload, source.url.clone()))
             };
 
             match result {
-                Ok(payload) => return Ok(payload),
+                Ok((payload, latest_json_url)) => {
+                    return Ok(ResolvedUpdate {
+                        payload,
+                        source: source_name.to_string(),
+                        latest_json_url,
+                    })
+                }
                 Err(error) => {
                     last_error = format!("{} - URL: {}", error, source.url);
                     log::warn!("[更新源] 请求失败: {} -> {}", source.url, error);
@@ -150,12 +169,14 @@ impl UpdateSourceManager {
         Err(last_error)
     }
 
-    async fn try_gitee_latest_json(&self, client: &reqwest::Client) -> Result<Value, String> {
+    async fn try_gitee_latest_json(&self, client: &reqwest::Client) -> Result<(Value, String), String> {
         let latest_release = Self::fetch_json(client, GITEE_LATEST_RELEASE_API_URL).await?;
         let latest_json_url = extract_gitee_latest_json_url(&latest_release)
             .ok_or_else(|| "Gitee 最新 release 缺少有效的 tag_name".to_string())?;
+        let payload = Self::fetch_json(client, &latest_json_url).await?;
+        validate_latest_json(&payload)?;
 
-        Self::fetch_json(client, &latest_json_url).await
+        Ok((payload, latest_json_url))
     }
 
     async fn fetch_json(client: &reqwest::Client, url: &str) -> Result<Value, String> {
@@ -209,13 +230,6 @@ pub async fn resolve_gitee_latest_json_url(timeout: Duration) -> Result<String, 
         .ok_or_else(|| "Gitee 最新 release 缺少有效的 tag_name".to_string())
 }
 
-pub fn select_best_update_result(current_version: &str, results: Vec<Value>) -> Option<Value> {
-    results
-        .into_iter()
-        .filter(|result| has_newer_version(current_version, result))
-        .max_by(|left, right| compare_result_versions(left, right))
-}
-
 pub fn has_newer_version(current_version: &str, result: &Value) -> bool {
     extract_update_version(result)
         .and_then(parse_version)
@@ -223,27 +237,36 @@ pub fn has_newer_version(current_version: &str, result: &Value) -> bool {
         .is_some_and(|(remote, current)| remote > current)
 }
 
-fn select_higher_version_result(left: Value, right: Value) -> Value {
-    match compare_result_versions(&left, &right) {
-        Ordering::Less => right,
-        Ordering::Equal | Ordering::Greater => left,
-    }
-}
-
-fn compare_result_versions(left: &Value, right: &Value) -> Ordering {
-    match (
-        extract_update_version(left).and_then(parse_version),
-        extract_update_version(right).and_then(parse_version),
-    ) {
-        (Some(left_version), Some(right_version)) => left_version.cmp(&right_version),
-        (Some(_), None) => Ordering::Greater,
-        (None, Some(_)) => Ordering::Less,
-        (None, None) => Ordering::Equal,
-    }
-}
-
 fn extract_update_version(result: &Value) -> Option<&str> {
     result.get("version").and_then(|value| value.as_str())
+}
+
+fn validate_latest_json(result: &Value) -> Result<(), String> {
+    let platform = result
+        .get("platforms")
+        .and_then(|value| value.get("windows-x86_64"))
+        .ok_or_else(|| "latest.json 缺少 windows-x86_64 平台信息".to_string())?;
+
+    let version = extract_update_version(result).unwrap_or_default();
+    let url = platform.get("url").and_then(|value| value.as_str()).unwrap_or_default();
+    let signature = platform
+        .get("signature")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+
+    if version.is_empty() || parse_version(version).is_none() {
+        return Err("latest.json 缺少有效版本号".to_string());
+    }
+
+    if url.is_empty() {
+        return Err("latest.json 缺少下载地址".to_string());
+    }
+
+    if signature.is_empty() {
+        return Err("latest.json 缺少签名".to_string());
+    }
+
+    Ok(())
 }
 
 fn parse_version(version: &str) -> Option<Vec<u64>> {
@@ -284,9 +307,23 @@ mod tests {
     }
 
     #[test]
-    fn select_best_update_prefers_higher_version() {
-        let current_version = "0.5.8";
-        let primary = serde_json::json!({
+    fn validate_latest_json_accepts_complete_payload() {
+        let payload = serde_json::json!({
+            "version": "0.5.9",
+            "platforms": {
+                "windows-x86_64": {
+                    "url": "https://example.com/0.5.9.zip",
+                    "signature": "sig"
+                }
+            }
+        });
+
+        assert!(validate_latest_json(&payload).is_ok());
+    }
+
+    #[test]
+    fn validate_latest_json_rejects_missing_signature() {
+        let payload = serde_json::json!({
             "version": "0.5.9",
             "platforms": {
                 "windows-x86_64": {
@@ -294,35 +331,21 @@ mod tests {
                 }
             }
         });
-        let fallback = serde_json::json!({
-            "version": "0.5.8",
-            "platforms": {
-                "windows-x86_64": {
-                    "url": "https://example.com/0.5.8.zip"
-                }
-            }
-        });
 
-        let selected = select_best_update_result(current_version, vec![primary.clone(), fallback])
-            .expect("should select newer version");
-
-        assert_eq!(selected, primary);
+        assert!(validate_latest_json(&payload).is_err());
     }
 
     #[test]
-    fn select_best_update_rejects_older_versions() {
-        let current_version = "0.5.8";
-        let older = serde_json::json!({
-            "version": "0.5.1",
+    fn validate_latest_json_rejects_missing_url() {
+        let payload = serde_json::json!({
+            "version": "0.5.9",
             "platforms": {
                 "windows-x86_64": {
-                    "url": "https://example.com/0.5.1.zip"
+                    "signature": "sig"
                 }
             }
         });
 
-        let selected = select_best_update_result(current_version, vec![older]);
-
-        assert!(selected.is_none());
+        assert!(validate_latest_json(&payload).is_err());
     }
 }

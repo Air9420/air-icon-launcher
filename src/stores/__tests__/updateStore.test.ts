@@ -39,6 +39,7 @@ describe("update store", () => {
       version: "0.5.9",
       notes: "更新内容",
       pub_date: "2026-06-28T00:00:00.000Z",
+      latestJsonUrl: "https://example.com/latest.json",
       platforms: {
         "windows-x86_64": {
           signature: "sig",
@@ -67,6 +68,7 @@ describe("update store", () => {
       version: "0.5.9",
       notes: "更新内容",
       pub_date: "2026-06-28T00:00:00.000Z",
+      latestJsonUrl: "https://example.com/latest.json",
       platforms: {
         "windows-x86_64": {
           signature: "sig",

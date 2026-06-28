@@ -15,6 +15,8 @@ export interface UpdateInfo {
   version: string
   notes: string
   pub_date: string
+  source?: string
+  latestJsonUrl: string
   platforms: {
     [key: string]: {
       signature: string
@@ -81,7 +83,7 @@ export const useUpdateStore = defineStore('update', () => {
     updatePhase.value = 'downloading'
     
     try {
-      await downloadAndInstallUpdate()
+      await downloadAndInstallUpdate(updateInfo.value.latestJsonUrl)
       downloadComplete.value = true
       updatePhase.value = 'restarting'
       await wait(AUTO_RESTART_DELAY_MS)

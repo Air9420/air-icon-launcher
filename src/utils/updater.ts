@@ -11,6 +11,7 @@ export interface UpdateCheckResult {
   url?: string
   signature?: string
   source?: string
+  latest_json_url?: string
 }
 
 export interface UpdateDownloadCompletePayload {
@@ -27,9 +28,9 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
   }
 }
 
-export async function downloadAndInstallUpdate(): Promise<void> {
+export async function downloadAndInstallUpdate(latestJsonUrl: string): Promise<void> {
   try {
-    await invokeOrThrow('apply_and_restart')
+    await invokeOrThrow('apply_and_restart', { latestJsonUrl })
   } catch (error) {
     console.error('下载更新失败:', error)
     throw error
@@ -69,7 +70,9 @@ export function setupUpdateCheck() {
               signature: result.signature || '',
               url: result.url || ''
             }
-          }
+          },
+          source: result.source,
+          latestJsonUrl: result.latest_json_url || ''
         }
         updateStore.showUpdateDialog = true
       }
