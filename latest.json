@@ -1,11 +1,11 @@
 {
-  "version": "0.5.9",
-  "notes": "## v0.5.9\n\n### 新增\n- 窗口可见性管理工具，优化窗口显示/隐藏逻辑\n- 分类视图页面，支持按分类浏览启动项\n- 窗口可见性单元测试\n\n### 修复\n- 收敛窗口隐藏内存释放触发\n- 收敛内存释放门控\n- 修正内存释放窗口门控\n- backend-only memory manager boundary\n\n### 改进\n- 重构内存释放模块，提升稳定性",
-  "pub_date": "2026-06-28T12:00:00Z",
+  "version": "0.5.10",
+  "notes": "## v0.5.10\n\n### 修复\n- 全屏应用运行时不再占用全局快捷键，游戏等全屏程序按键恢复正常\n- 退出全屏后自动恢复主窗口 / 剪贴板 / 投影切换 / ICC 快捷键",
+  "pub_date": "2026-09-17T06:20:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUlhZd2dFZXlocmo5VndiY09CTDRQbjRRM3JiOWRHMEFtZVpNNFcxRjNzS2Zwbk1jTDZFVlU5RnRnOUM0YmJoczE4V2srWWZaaGsybFBKKzgvWjY4UndVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyNjA3NjI5CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC41LjlfeDY0LXNldHVwLm5zaXMuemlwCnRFU1puTUlOSG9tR2doK3VNZnhlM3UrUUJUd3ArQ2g5TVE3ck9ibUsrK1VHdDlheVR3QTNsRnIvWjZyOGVFTmh5YjV2VnlESThCekRaR1FIVkdHZ0R3PT0K",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.5.9/air-icon-launcher_0.5.9_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUlYwY2RBVFp2TERxQ1VZS1grajBIQlBoYWI4SWhkTzlaMVZRMmtBQmVkeWlidkRXV2lnem5OczBCUWV4VW9haGgra2hvK3VsQjZQa2ZpdUVNZDBmRndvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NjI4Mjk1CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC41LjEwX3g2NC1zZXR1cC5uc2lzLnppcApwQkFXNEY5U3hhTmtOeXRlM3A3RVdXU1VMWHhrTEszVGpJV1ZSbUpVeUoxQ1g3YlN0bk9KV3ZpdUNqalArSFFGOGhMZnZyQ0tuRFVvSEZiQzhOSHNBZz09Cg==",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.5.10/air-icon-launcher_0.5.10_x64-setup.nsis.zip"
     }
   }
 }
