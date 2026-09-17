@@ -274,6 +274,9 @@ pub fn run() {
                 keyboard_hook::set_app_handle(handle.clone());
                 keyboard_hook::start_keyboard_hook();
             }
+
+            // 全屏应用（游戏等）运行时注销全局快捷键，避免占用按键。
+            app_settings::start_fullscreen_shortcut_monitor(handle.clone());
             Ok(())
         });
 

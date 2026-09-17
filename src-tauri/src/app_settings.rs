@@ -1,8 +1,13 @@
 use crate::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
+
+/// 全屏应用运行时，全局快捷键被注销，避免占用游戏等全屏程序的按键。
+static FULLSCREEN_SHORTCUTS_SUSPENDED: AtomicBool = AtomicBool::new(false);
+static FULLSCREEN_MONITOR_RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// 显示逻辑模式
 /// 0 = Tauri API (window.show + window.set_focus)
@@ -339,9 +344,126 @@ pub fn set_follow_mouse_y_anchor(
     Ok(())
 }
 
+/// 全屏时是否已因全屏保护而注销全局快捷键。
+fn should_skip_global_shortcut_register() -> bool {
+    FULLSCREEN_SHORTCUTS_SUSPENDED.load(Ordering::Relaxed)
+        || crate::corner_hotspot::is_fullscreen_app_running()
+}
+
+/// 注销全部全局快捷键，释放按键给全屏应用。
+pub fn suspend_all_global_shortcuts(app: &AppHandle) {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let shortcuts = app
+        .state::<AppSettingsState>()
+        .inner
+        .lock()
+        .map(|g| {
+            (
+                g.toggle_shortcut.clone(),
+                g.clipboard_shortcut.clone(),
+                g.display_shortcut.clone(),
+                g.icc_shortcut.clone(),
+            )
+        })
+        .unwrap_or_default();
+
+    for shortcut in [shortcuts.0, shortcuts.1, shortcuts.2, shortcuts.3] {
+        if !shortcut.is_empty() {
+            let _ = app.global_shortcut().unregister(shortcut.as_str());
+        }
+    }
+
+    FULLSCREEN_SHORTCUTS_SUSPENDED.store(true, Ordering::Relaxed);
+    println!("[global_shortcut] suspended all shortcuts (fullscreen app running)");
+}
+
+/// 退出全屏后恢复全部全局快捷键。
+pub fn resume_all_global_shortcuts(app: &AppHandle) {
+    if !FULLSCREEN_SHORTCUTS_SUSPENDED.swap(false, Ordering::Relaxed) {
+        return;
+    }
+
+    if crate::corner_hotspot::is_fullscreen_app_running() {
+        FULLSCREEN_SHORTCUTS_SUSPENDED.store(true, Ordering::Relaxed);
+        return;
+    }
+
+    let shortcuts = app
+        .state::<AppSettingsState>()
+        .inner
+        .lock()
+        .map(|g| {
+            (
+                g.toggle_shortcut.clone(),
+                g.clipboard_shortcut.clone(),
+                g.display_shortcut.clone(),
+                g.icc_shortcut.clone(),
+            )
+        })
+        .unwrap_or_default();
+
+    if !shortcuts.0.is_empty() {
+        let _ = register_toggle_shortcut(app, shortcuts.0.as_str());
+    }
+    if !shortcuts.1.is_empty() {
+        let _ = register_clipboard_shortcut(app, shortcuts.1.as_str());
+    }
+    if !shortcuts.2.is_empty() {
+        let _ = register_display_shortcut(app, shortcuts.2.as_str());
+    }
+    if !shortcuts.3.is_empty() {
+        let _ = register_icc_shortcut(app, shortcuts.3.as_str());
+    }
+
+    if let Some(config) = crate::keyboard_hook::parse_hotkey(shortcuts.0.as_str()) {
+        crate::keyboard_hook::register_hotkey(config);
+    }
+
+    println!("[global_shortcut] resumed all shortcuts (fullscreen app closed)");
+}
+
+/// 轮询全屏状态：进入全屏注销快捷键，退出后恢复，避免占用游戏按键。
+pub fn start_fullscreen_shortcut_monitor(app: AppHandle) {
+    if FULLSCREEN_MONITOR_RUNNING.swap(true, Ordering::Relaxed) {
+        return;
+    }
+
+    // 启动时若已在全屏，立刻释放按键。
+    if crate::corner_hotspot::is_fullscreen_app_running() {
+        suspend_all_global_shortcuts(&app);
+    }
+
+    std::thread::spawn(move || {
+        let mut last_fullscreen = crate::corner_hotspot::is_fullscreen_app_running();
+        loop {
+            if !FULLSCREEN_MONITOR_RUNNING.load(Ordering::Relaxed) {
+                break;
+            }
+
+            let fullscreen = crate::corner_hotspot::is_fullscreen_app_running();
+            if fullscreen != last_fullscreen {
+                if fullscreen {
+                    suspend_all_global_shortcuts(&app);
+                } else {
+                    resume_all_global_shortcuts(&app);
+                }
+                last_fullscreen = fullscreen;
+            }
+
+            std::thread::sleep(Duration::from_millis(400));
+        }
+    });
+}
+
 pub fn register_toggle_shortcut(app: &AppHandle, shortcut: &str) -> AppResult<()> {
     use std::str::FromStr;
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+
+    if should_skip_global_shortcut_register() {
+        println!("[global_shortcut] fullscreen active, skip register toggle");
+        return Ok(());
+    }
+
     let shortcut = Shortcut::from_str(shortcut)
         .map_err(|e| AppError::invalid_input(format!("Invalid toggle shortcut: {}", e)))?;
 
@@ -368,6 +490,12 @@ pub fn register_toggle_shortcut(app: &AppHandle, shortcut: &str) -> AppResult<()
 pub fn register_clipboard_shortcut(app: &AppHandle, shortcut: &str) -> AppResult<()> {
     use std::str::FromStr;
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+
+    if should_skip_global_shortcut_register() {
+        println!("[global_shortcut] fullscreen active, skip register clipboard");
+        return Ok(());
+    }
+
     let shortcut = Shortcut::from_str(shortcut)
         .map_err(|e| AppError::invalid_input(format!("Invalid clipboard shortcut: {}", e)))?;
 
@@ -532,6 +660,12 @@ pub fn show_window_with_follow_mouse(
 pub fn register_display_shortcut(app: &AppHandle, shortcut: &str) -> AppResult<()> {
     use std::str::FromStr;
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+
+    if should_skip_global_shortcut_register() {
+        println!("[global_shortcut] fullscreen active, skip register display");
+        return Ok(());
+    }
+
     let shortcut = Shortcut::from_str(shortcut)
         .map_err(|e| AppError::invalid_input(format!("Invalid display shortcut: {}", e)))?;
 
@@ -539,6 +673,10 @@ pub fn register_display_shortcut(app: &AppHandle, shortcut: &str) -> AppResult<(
         .on_shortcut(shortcut, move |app, _shortcut, event| {
             use tauri_plugin_global_shortcut::ShortcutState;
             if event.state == ShortcutState::Pressed {
+                if crate::corner_hotspot::is_fullscreen_app_running() {
+                    println!("[global_shortcut] display shortcut: fullscreen app running, skipping");
+                    return;
+                }
                 match crate::display::get_display_count_internal() {
                     Ok(count) if count < 2 => {
                         let _ = app.emit("display-no-external-monitor", ());
@@ -627,6 +765,12 @@ pub fn resume_display_shortcut(app: AppHandle, shortcut: String) -> AppResult<()
 pub fn register_icc_shortcut(app: &AppHandle, shortcut: &str) -> AppResult<()> {
     use std::str::FromStr;
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+
+    if should_skip_global_shortcut_register() {
+        println!("[global_shortcut] fullscreen active, skip register icc");
+        return Ok(());
+    }
+
     let shortcut = Shortcut::from_str(shortcut)
         .map_err(|e| AppError::invalid_input(format!("Invalid ICC shortcut: {}", e)))?;
 
