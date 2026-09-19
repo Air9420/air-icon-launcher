@@ -198,6 +198,8 @@ impl UpdateSourceManager {
         }
     }
 
+    /// 预留：更新源诊断；当前命令面未暴露。
+    #[allow(dead_code)]
     pub fn get_status(&self) -> (UpdateSourceStatus, UpdateSourceStatus) {
         (self.primary_status.clone(), self.fallback_status.clone())
     }
@@ -218,6 +220,8 @@ pub fn build_gitee_latest_json_url(tag: &str) -> String {
     )
 }
 
+/// 预留：解析 Gitee latest release API；当前更新走多源 manager 时未直接调用。
+#[allow(dead_code)]
 pub async fn resolve_gitee_latest_json_url(timeout: Duration) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .timeout(timeout)

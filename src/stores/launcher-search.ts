@@ -1,5 +1,9 @@
 import type { Category } from "./categoryStore";
-import type { GlobalSearchMergedResult, LauncherItem, RustSearchResult } from "./launcherStore";
+import type {
+    GlobalSearchMergedResult,
+    LauncherItem,
+    RustSearchResult,
+} from "./launcher/types";
 
 export function normalizeLauncherItemKey(item: Pick<LauncherItem, "path" | "name">): string | null {
     const normalizedPath = item.path?.trim().replace(/\\/g, "/").toLowerCase();

@@ -1,27 +1,81 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { ref, type Ref } from "vue";
 import { invokeOrThrow } from "../utils/invoke-wrapper";
 import { getAppConfig, saveAppConfigPatch, type AppConfigSnapshot } from "../utils/config-sync";
 import { createVersionedPersistConfig } from "../utils/versioned-persist";
 import { useUIStore } from "./uiStore";
 import { useClipboardStore } from "./clipboardStore";
+import type { KernelContext } from "../kernel/types";
+import type { SettingsService } from "../kernel/services/settings-service";
+import type {
+    ThemeService,
+    ThemeMode,
+    WindowEffectType as ThemeWindowEffectType,
+    WindowEffectSupportInfo,
+    WindowEffectCompatibilityResult,
+} from "../kernel/services/theme-service";
 
-export type ThemeMode = "light" | "dark" | "system" | "transparent";
+export type { ThemeMode };
+export type WindowEffectType = ThemeWindowEffectType;
+export type { WindowEffectSupportInfo, WindowEffectCompatibilityResult };
+
+function getKernel(): KernelContext | undefined {
+    if (typeof window === "undefined") return undefined;
+    return window.__AIR_CTX__ as KernelContext | undefined;
+}
+
+function getSettingsService(): SettingsService | undefined {
+    return getKernel()?.settings;
+}
+
+function getThemeService(): ThemeService | undefined {
+    return getKernel()?.theme;
+}
+
+/** patch_config via ctx.settings when available; config-sync fallback otherwise. */
+async function patchAppConfig(partial: Partial<AppConfigSnapshot>): Promise<AppConfigSnapshot> {
+    const settings = getSettingsService();
+    if (settings) {
+        const result = await settings.patch(partial);
+        if (!result.ok) throw result.error;
+        return result.value;
+    }
+    return saveAppConfigPatch(partial);
+}
+
+/**
+ * Unified store write: optional runtime IPC → patch_config → assign ref.
+ * Prefers SettingsService.applyTo; falls back to invoke-wrapper + config-sync.
+ */
+async function applySetting<T>(
+    localRef: Ref<T>,
+    value: T,
+    configPatch: Partial<AppConfigSnapshot>,
+    runtime?: () => Promise<void>,
+): Promise<void> {
+    const settings = getSettingsService();
+    if (settings) {
+        await settings.applyTo(localRef, value, configPatch, { runtime });
+        return;
+    }
+    try {
+        if (runtime) await runtime();
+        await patchAppConfig(configPatch);
+        localRef.value = value;
+    } catch (e) {
+        console.error(e);
+        throw e;
+    }
+}
+
 export type CornerHotspotPosition =
     | "top-left"
     | "top-right"
     | "bottom-left"
     | "bottom-right";
 export type CornerHotspotSensitivity = "low" | "medium" | "high";
-
 export type AutostartType = "Service" | "Registry" | "TaskScheduler";
-
-export type AutostartStatus = {
-    enabled: boolean;
-    method: AutostartType | null;
-};
-
+export type AutostartStatus = { enabled: boolean; method: AutostartType | null };
 export type WindowPosition = {
     x: number;
     y: number;
@@ -30,36 +84,7 @@ export type WindowPosition = {
     savedAt: number;
 };
 
-export type WindowEffectType = "blur" | "acrylic";
-
-export type WindowEffectSupportInfo = {
-    supported: boolean;
-    blurSupported: boolean;
-    acrylicSupported: boolean;
-    fallbackEffectType: WindowEffectType | null;
-    message: string | null;
-    productName: string | null;
-    displayVersion: string | null;
-    buildNumber: number | null;
-};
-
-export type WindowEffectCompatibilityAction =
-    | "unchanged"
-    | "switched-effect"
-    | "enabled-performance"
-    | "performance-mode";
-
-export type WindowEffectCompatibilityResult = {
-    changed: boolean;
-    action: WindowEffectCompatibilityAction;
-    message?: string;
-    resolvedEffectType: WindowEffectType | null;
-    support: WindowEffectSupportInfo | null;
-};
-
-type SetWindowEffectTypeOptions = {
-    applyRuntime?: boolean;
-};
+type SetWindowEffectTypeOptions = { applyRuntime?: boolean };
 
 function normalizeThemeMode(theme: string | null | undefined): ThemeMode {
     return theme === "light" || theme === "dark" || theme === "transparent"
@@ -103,8 +128,17 @@ function normalizeCornerHotspotSensitivity(
 export const useSettingsStore = defineStore(
     "settings",
     () => {
-        const theme = ref<ThemeMode>("system");
-        const windowEffectsEnabled = ref<boolean>(true);
+        // Share ThemeService refs when kernel is present (single source of truth).
+        const themeService = getThemeService();
+        const theme = themeService?.mode ?? ref<ThemeMode>("system");
+        const windowEffectsEnabled =
+            themeService?.windowEffectsEnabled ?? ref<boolean>(true);
+        const performanceMode = themeService?.performanceMode ?? ref<boolean>(false);
+        const windowEffectType =
+            themeService?.windowEffectType ?? ref<WindowEffectType>("blur");
+        const windowEffectSupport =
+            themeService?.windowEffectSupport ?? ref<WindowEffectSupportInfo | null>(null);
+
         const ctrlDragEnabled = ref<boolean>(true);
         const autoHideAfterLaunch = ref<boolean>(false);
         const showGuideOnStartup = ref<boolean>(true);
@@ -123,19 +157,31 @@ export const useSettingsStore = defineStore(
         const autostartError = ref<string>("");
         const hideOnCtrlRightClick = ref<boolean>(false);
         const windowPosition = ref<WindowPosition | null>(null);
-        const performanceMode = ref<boolean>(false);
-        const windowEffectType = ref<WindowEffectType>("blur");
-        const windowEffectSupport = ref<WindowEffectSupportInfo | null>(null);
         const strongShortcutMode = ref<boolean>(true);
         const autoHideCountdownSeconds = ref<number>(30);
         const autoHideEnabled = ref<boolean>(true);
 
-        async function persistWindowEffectPreferences() {
-            await saveAppConfigPatch({
-                theme: theme.value,
-                performance_mode: performanceMode.value,
-                window_effect_type: windowEffectType.value,
-            });
+        async function setTheme(newTheme: ThemeMode) {
+            const themeSvc = getThemeService();
+            if (themeSvc) {
+                const result = await themeSvc.setMode(newTheme);
+                if (!result.ok) throw result.error;
+                return;
+            }
+            theme.value = newTheme;
+            await saveAppConfigPatch({ theme: newTheme });
+        }
+
+        async function setCtrlDragEnabled(enabled: boolean) {
+            await applySetting(ctrlDragEnabled, enabled, { ctrl_drag_enabled: enabled });
+        }
+
+        async function setAutoHideAfterLaunch(enabled: boolean) {
+            await applySetting(autoHideAfterLaunch, enabled, { auto_hide_after_launch: enabled });
+        }
+
+        async function setShowGuideOnStartup(show: boolean) {
+            await applySetting(showGuideOnStartup, show, { show_guide_on_startup: show });
         }
 
         async function pushCornerHotspotRuntime(
@@ -152,131 +198,93 @@ export const useSettingsStore = defineStore(
             });
         }
 
-        async function setTheme(newTheme: ThemeMode) {
-            theme.value = newTheme;
-            await saveAppConfigPatch({ theme: newTheme });
-        }
-
-        async function setCtrlDragEnabled(enabled: boolean) {
-            await saveAppConfigPatch({ ctrl_drag_enabled: enabled });
-            ctrlDragEnabled.value = enabled;
-        }
-
-        async function setAutoHideAfterLaunch(enabled: boolean) {
-            await saveAppConfigPatch({ auto_hide_after_launch: enabled });
-            autoHideAfterLaunch.value = enabled;
-        }
-
-        async function setShowGuideOnStartup(show: boolean) {
-            await saveAppConfigPatch({ show_guide_on_startup: show });
-            showGuideOnStartup.value = show;
-        }
-
         async function setCornerHotspotEnabled(enabled: boolean) {
-            try {
-                await pushCornerHotspotRuntime({ enabled });
-                await saveAppConfigPatch({ corner_hotspot_enabled: enabled });
-                cornerHotspotEnabled.value = enabled;
-            } catch (e) {
-                console.error(e);
-                throw e;
-            }
+            await applySetting(
+                cornerHotspotEnabled,
+                enabled,
+                { corner_hotspot_enabled: enabled },
+                () => pushCornerHotspotRuntime({ enabled }),
+            );
         }
 
         async function setCornerHotspotPosition(position: CornerHotspotPosition) {
-            try {
-                await pushCornerHotspotRuntime({ position });
-                await saveAppConfigPatch({ corner_hotspot_position: position });
-                cornerHotspotPosition.value = position;
-            } catch (e) {
-                console.error(e);
-                throw e;
-            }
+            await applySetting(
+                cornerHotspotPosition,
+                position,
+                { corner_hotspot_position: position },
+                () => pushCornerHotspotRuntime({ position }),
+            );
         }
 
         async function setCornerHotspotSensitivity(sensitivity: CornerHotspotSensitivity) {
-            try {
-                await pushCornerHotspotRuntime({ sensitivity });
-                await saveAppConfigPatch({ corner_hotspot_sensitivity: sensitivity });
-                cornerHotspotSensitivity.value = sensitivity;
-            } catch (e) {
-                console.error(e);
-                throw e;
-            }
+            await applySetting(
+                cornerHotspotSensitivity,
+                sensitivity,
+                { corner_hotspot_sensitivity: sensitivity },
+                () => pushCornerHotspotRuntime({ sensitivity }),
+            );
         }
 
         async function setToggleShortcut(shortcut: string) {
             const next = shortcut.trim();
             if (!next) return;
-            try {
-                await invokeOrThrow("set_toggle_shortcut", { shortcut: next });
-                await saveAppConfigPatch({ toggle_shortcut: next });
-                toggleShortcut.value = next;
-            } catch (e) {
-                console.error(e);
-                throw e;
-            }
+            await applySetting(
+                toggleShortcut,
+                next,
+                { toggle_shortcut: next },
+                () => invokeOrThrow("set_toggle_shortcut", { shortcut: next }),
+            );
         }
 
         async function setClipboardShortcut(shortcut: string) {
             const next = shortcut.trim();
             if (!next) return;
-            try {
-                await invokeOrThrow("set_clipboard_shortcut", { shortcut: next });
-                await saveAppConfigPatch({ clipboard_shortcut: next });
-                clipboardShortcut.value = next;
-            } catch (e) {
-                console.error(e);
-                throw e;
-            }
+            await applySetting(
+                clipboardShortcut,
+                next,
+                { clipboard_shortcut: next },
+                () => invokeOrThrow("set_clipboard_shortcut", { shortcut: next }),
+            );
         }
 
         async function setDisplayShortcut(shortcut: string) {
             const next = shortcut.trim();
             if (!next) return;
-            try {
-                await invokeOrThrow("set_display_shortcut", { shortcut: next });
-                await saveAppConfigPatch({ display_shortcut: next });
-                displayShortcut.value = next;
-            } catch (e) {
-                console.error(e);
-                throw e;
-            }
+            await applySetting(
+                displayShortcut,
+                next,
+                { display_shortcut: next },
+                () => invokeOrThrow("set_display_shortcut", { shortcut: next }),
+            );
         }
 
         async function setIccShortcut(shortcut: string) {
             const next = shortcut.trim();
             if (!next) return;
-            try {
-                await invokeOrThrow("set_icc_shortcut", { shortcut: next });
-                await saveAppConfigPatch({ icc_shortcut: next });
-                iccShortcut.value = next;
-            } catch (e) {
-                console.error(e);
-                throw e;
-            }
+            await applySetting(
+                iccShortcut,
+                next,
+                { icc_shortcut: next },
+                () => invokeOrThrow("set_icc_shortcut", { shortcut: next }),
+            );
         }
 
         async function setFollowMouseOnShow(enabled: boolean) {
-            try {
-                await invokeOrThrow("set_follow_mouse_on_show", { enabled });
-                await saveAppConfigPatch({ follow_mouse_on_show: enabled });
-                followMouseOnShow.value = enabled;
-            } catch (e) {
-                console.error(e);
-                throw e;
-            }
+            await applySetting(
+                followMouseOnShow,
+                enabled,
+                { follow_mouse_on_show: enabled },
+                () => invokeOrThrow("set_follow_mouse_on_show", { enabled }),
+            );
         }
 
         async function setFollowMouseYAnchor(anchor: "top" | "center" | "bottom") {
-            try {
-                await invokeOrThrow("set_follow_mouse_y_anchor", { anchor });
-                await saveAppConfigPatch({ follow_mouse_y_anchor: anchor });
-                followMouseYAnchor.value = anchor;
-            } catch (e) {
-                console.error(e);
-                throw e;
-            }
+            await applySetting(
+                followMouseYAnchor,
+                anchor,
+                { follow_mouse_y_anchor: anchor },
+                () => invokeOrThrow("set_follow_mouse_y_anchor", { anchor }),
+            );
         }
 
         function applyPersistedConfig(config: AppConfigSnapshot) {
@@ -308,6 +316,9 @@ export const useSettingsStore = defineStore(
             autoHideCountdownSeconds.value = config.auto_hide_countdown_seconds ?? 30;
             autoHideEnabled.value = config.auto_hide_enabled ?? true;
 
+            getThemeService()?.syncFromConfig(config);
+            getSettingsService()?.applyLocal(config);
+
             uiStore.setCategoryCols(config.category_cols, { persist: false });
             uiStore.setLauncherCols(config.launcher_cols, { persist: false });
             uiStore.setHomeSectionLayouts(config.home_section_layouts, { persist: false });
@@ -316,7 +327,15 @@ export const useSettingsStore = defineStore(
 
         async function hydratePersistedConfig() {
             try {
-                const config = await getAppConfig();
+                const settings = getSettingsService();
+                let config: AppConfigSnapshot;
+                if (settings) {
+                    const result = await settings.hydrate();
+                    if (!result.ok) throw result.error;
+                    config = result.value;
+                } else {
+                    config = await getAppConfig();
+                }
                 applyPersistedConfig(config);
             } catch (e) {
                 console.error(e);
@@ -326,7 +345,7 @@ export const useSettingsStore = defineStore(
         async function refreshAutostartStatus() {
             autostartError.value = "";
             try {
-                const status = await invoke<AutostartStatus>("get_autostart_status");
+                const status = await invokeOrThrow<AutostartStatus>("get_autostart_status");
                 autostartEnabled.value = status?.enabled ?? false;
                 autostartMethod.value = status?.method ?? null;
             } catch (e) {
@@ -357,215 +376,101 @@ export const useSettingsStore = defineStore(
         }
 
         async function setHideOnCtrlRightClick(enabled: boolean) {
-            await saveAppConfigPatch({ hide_on_ctrl_right_click: enabled });
-            hideOnCtrlRightClick.value = enabled;
+            await applySetting(hideOnCtrlRightClick, enabled, {
+                hide_on_ctrl_right_click: enabled,
+            });
         }
 
         function setWindowPosition(position: WindowPosition | null) {
             windowPosition.value = position;
         }
 
+        // Window-effect matrix lives on ThemeService; store is a thin adapter.
         async function refreshWindowEffectSupport(): Promise<WindowEffectSupportInfo | null> {
-            try {
-                const support = await invokeOrThrow<WindowEffectSupportInfo>(
-                    "get_window_effect_support_info"
-                );
-                windowEffectSupport.value = support;
-                return support;
-            } catch (e) {
-                console.error(e);
-                return null;
-            }
-        }
-
-        function normalizeFallbackEffectType(type: string | null): WindowEffectType | null {
-            return type === "blur" || type === "acrylic" ? type : null;
-        }
-
-        function getWindowEffectLabel(type: WindowEffectType) {
-            return type === "acrylic" ? "Acrylic" : "Blur";
-        }
-
-        function buildCompatibilityMessage(
-            support: WindowEffectSupportInfo | null,
-            preferredType: WindowEffectType,
-            resolvedEffectType: WindowEffectType | null
-        ) {
-            if (support?.message?.trim()) {
-                return support.message.trim();
-            }
-
-            if (resolvedEffectType) {
-                return `当前系统不建议启用 ${getWindowEffectLabel(preferredType)}，已自动切换为 ${getWindowEffectLabel(resolvedEffectType)}。`;
-            }
-
-            return "当前系统对窗口特效兼容性较差，已自动切换到性能模式。建议升级到较新的 Windows 10 / 11。";
-        }
-
-        async function disableWindowEffectsInternal() {
-            const previousTheme = theme.value;
-            const previousPerformanceMode = performanceMode.value;
-            const nextTheme = previousTheme === "transparent" ? "system" : previousTheme;
-            const shouldPersist =
-                nextTheme !== previousTheme || previousPerformanceMode !== true;
-
-            theme.value = nextTheme;
-            await invokeOrThrow("set_window_effects", { enabled: false });
-            windowEffectsEnabled.value = false;
-            performanceMode.value = true;
-
-            if (shouldPersist) {
-                await persistWindowEffectPreferences();
-            }
-        }
-
-        async function applyResolvedWindowEffect(
-            preferredType: WindowEffectType
-        ): Promise<WindowEffectCompatibilityResult> {
-            const support = await refreshWindowEffectSupport();
-            const preferredSupported =
-                preferredType === "blur"
-                    ? support?.blurSupported ?? true
-                    : support?.acrylicSupported ?? true;
-
-            if (preferredSupported) {
-                const shouldPersist =
-                    performanceMode.value || windowEffectType.value !== preferredType;
-                await invokeOrThrow("set_window_effect_type", { effectType: preferredType });
-                windowEffectsEnabled.value = true;
-                performanceMode.value = false;
-                windowEffectType.value = preferredType;
-                if (shouldPersist) {
-                    await persistWindowEffectPreferences();
-                }
-                return {
-                    changed: false,
-                    action: "unchanged",
-                    resolvedEffectType: preferredType,
-                    support,
-                };
-            }
-
-            const fallbackType = normalizeFallbackEffectType(support?.fallbackEffectType ?? null);
-            if (fallbackType) {
-                const shouldPersist =
-                    performanceMode.value || windowEffectType.value !== preferredType;
-                await invokeOrThrow("set_window_effect_type", { effectType: fallbackType });
-                windowEffectsEnabled.value = true;
-                performanceMode.value = false;
-                // Keep the stored preference as the user's chosen effect type.
-                // The runtime may temporarily fall back to a safer effect, but export/import
-                // should preserve the original preference instead of rewriting it.
-                windowEffectType.value = preferredType;
-                if (shouldPersist) {
-                    await persistWindowEffectPreferences();
-                }
-                return {
-                    changed: true,
-                    action: "switched-effect",
-                    message: buildCompatibilityMessage(support, preferredType, fallbackType),
-                    resolvedEffectType: fallbackType,
-                    support,
-                };
-            }
-
-            await disableWindowEffectsInternal();
-            return {
-                changed: true,
-                action: "enabled-performance",
-                message: buildCompatibilityMessage(support, preferredType, null),
-                resolvedEffectType: null,
-                support,
-            };
+            return getThemeService()?.refreshWindowEffectSupport() ?? null;
         }
 
         async function applyCurrentWindowEffectState(): Promise<WindowEffectCompatibilityResult> {
-            const support = await refreshWindowEffectSupport();
-
-            if (performanceMode.value) {
-                await disableWindowEffectsInternal();
+            const themeSvc = getThemeService();
+            if (!themeSvc) {
                 return {
                     changed: false,
-                    action: "performance-mode",
-                    resolvedEffectType: null,
-                    support,
+                    action: "unchanged",
+                    resolvedEffectType: performanceMode.value ? null : windowEffectType.value,
+                    support: windowEffectSupport.value,
                 };
             }
-
-            return applyResolvedWindowEffect(windowEffectType.value);
+            return themeSvc.applyCurrentWindowEffectState();
         }
 
         async function setPerformanceMode(
             enabled: boolean
         ): Promise<WindowEffectCompatibilityResult> {
-            try {
-                if (enabled) {
-                    const changed = !performanceMode.value || windowEffectsEnabled.value;
-                    await disableWindowEffectsInternal();
-                    return {
-                        changed,
-                        action: "enabled-performance",
-                        resolvedEffectType: null,
-                        support: windowEffectSupport.value,
-                    };
-                }
-
-                return await applyResolvedWindowEffect(windowEffectType.value);
-            } catch (e) {
-                console.error(e);
-                throw e;
+            const themeSvc = getThemeService();
+            if (!themeSvc) {
+                performanceMode.value = enabled;
+                windowEffectsEnabled.value = !enabled;
+                await patchAppConfig({
+                    theme: theme.value,
+                    performance_mode: enabled,
+                    window_effect_type: windowEffectType.value,
+                });
+                return {
+                    changed: true,
+                    action: enabled ? "enabled-performance" : "unchanged",
+                    resolvedEffectType: enabled ? null : windowEffectType.value,
+                    support: windowEffectSupport.value,
+                };
             }
+            return themeSvc.setPerformanceMode(enabled);
         }
 
         async function setWindowEffectType(
             type: WindowEffectType,
             options: SetWindowEffectTypeOptions = {}
         ): Promise<WindowEffectCompatibilityResult> {
-            try {
+            const themeSvc = getThemeService();
+            if (!themeSvc) {
                 if (options.applyRuntime === false) {
-                    const shouldPersist = windowEffectType.value !== type;
                     windowEffectType.value = type;
-                    if (shouldPersist) {
-                        await persistWindowEffectPreferences();
-                    }
-                    return {
-                        changed: false,
-                        action: "unchanged",
-                        resolvedEffectType: performanceMode.value ? null : type,
-                        support: windowEffectSupport.value,
-                    };
+                    await patchAppConfig({
+                        theme: theme.value,
+                        performance_mode: performanceMode.value,
+                        window_effect_type: type,
+                    });
                 }
-                return await applyResolvedWindowEffect(type);
-            } catch (e) {
-                console.error(e);
-                throw e;
+                return {
+                    changed: false,
+                    action: "unchanged",
+                    resolvedEffectType: performanceMode.value ? null : type,
+                    support: windowEffectSupport.value,
+                };
             }
+            return themeSvc.setWindowEffectType(type, options);
         }
 
         async function setStrongShortcutMode(enabled: boolean) {
-            try {
-                await invokeOrThrow("set_strong_shortcut_mode", { enabled });
-                await saveAppConfigPatch({ strong_shortcut_mode: enabled });
-                strongShortcutMode.value = enabled;
-            } catch (e) {
-                console.error(e);
-                throw e;
-            }
+            await applySetting(
+                strongShortcutMode,
+                enabled,
+                { strong_shortcut_mode: enabled },
+                () => invokeOrThrow("set_strong_shortcut_mode", { enabled }),
+            );
         }
 
         async function setAutoHideCountdownSeconds(seconds: number) {
-            autoHideCountdownSeconds.value = seconds;
-            await saveAppConfigPatch({ auto_hide_countdown_seconds: seconds });
+            await applySetting(autoHideCountdownSeconds, seconds, {
+                auto_hide_countdown_seconds: seconds,
+            });
         }
 
         async function setAutoHideEnabled(enabled: boolean) {
-            autoHideEnabled.value = enabled;
-            await saveAppConfigPatch({ auto_hide_enabled: enabled });
+            await applySetting(autoHideEnabled, enabled, { auto_hide_enabled: enabled });
         }
 
         async function setClipboardHistoryEnabled(enabled: boolean) {
             const clipboardStore = useClipboardStore();
-            await saveAppConfigPatch({ clipboard_history_enabled: enabled });
+            await patchAppConfig({ clipboard_history_enabled: enabled });
             clipboardStore.clipboardHistoryEnabled = enabled;
         }
 

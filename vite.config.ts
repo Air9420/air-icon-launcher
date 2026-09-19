@@ -6,6 +6,10 @@ import path from "path";
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
+function normalizeId(id: string): string {
+  return id.replace(/\\/g, "/");
+}
+
 export default defineConfig({
   plugins: [vue()],
 
@@ -48,10 +52,26 @@ export default defineConfig({
     sourcemap: false,
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ["vue", "vue-router", "pinia"],
-          tauri: ["@tauri-apps/api/core", "@tauri-apps/api/event"],
-          utils: ["@vueuse/core"],
+        // PERF-A: keep icons / cordis / marked out of the main index chunk.
+        // Icons are also side-effect-free re-exports (see src/icons/*).
+        manualChunks(id: string) {
+          const n = normalizeId(id);
+          if (n.includes("/src/icons/") || n.includes("src/icons/")) return "icons";
+          if (n.includes("node_modules/cordis") || n.includes("/cordis/")) return "cordis";
+          if (n.includes("node_modules/marked") || n.includes("/marked/")) return "marked";
+          if (n.includes("@solar-icons")) return "icons";
+          if (n.includes("@tauri-apps/api/core") || n.includes("@tauri-apps/api/event")) {
+            return "tauri";
+          }
+          if (
+            n.includes("node_modules/vue/") ||
+            n.includes("node_modules/vue-router/") ||
+            n.includes("node_modules/pinia/")
+          ) {
+            return "vendor";
+          }
+          if (n.includes("@vueuse/core")) return "utils";
+          return undefined;
         },
       },
     },
@@ -61,6 +81,6 @@ export default defineConfig({
 
   // 依赖优化
   optimizeDeps: {
-    include: ["vue", "vue-router", "pinia", "@vueuse/core"],
+    include: ["vue", "vue-router", "pinia", "@vueuse/core", "cordis"],
   },
 });

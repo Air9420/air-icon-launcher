@@ -191,33 +191,22 @@
 
             <section class="guide-section">
                 <h3>
-                    <PlugCircle size="18" weight="Bold" /> 插件系统
+                    <PlugCircle size="18" weight="Bold" /> 扩展插件（Rust）
                 </h3>
-                <p>支持通过插件扩展功能，可在「设置 → 功能 → 插件管理」中管理插件。</p>
+                <p>支持通过 Rust 能力插件扩展功能，可在「设置 → 功能 → 插件管理」中管理。</p>
                 <ul>
-                    <li><strong>安装插件：</strong>点击「从文件夹安装」，选择包含 manifest.json 的插件文件夹</li>
+                    <li><strong>安装插件：</strong>在插件页选择包含 manifest.json（v2 + runtime=rust）的插件文件夹</li>
                     <li><strong>启用/禁用：</strong>点击插件卡片上的开关切换状态</li>
                     <li><strong>卸载插件：</strong>点击插件卡片底部的「卸载」按钮</li>
-                    <li><strong>沙箱隔离：</strong>在「安全设置」中可开启沙箱隔离模式，插件将在隔离环境中运行</li>
+                    <li><strong>能力门禁：</strong>未在 manifest 声明的 capability 无法调用宿主敏感 API</li>
                 </ul>
 
                 <h4>
-                    <ClipboardText size="16" weight="Bold" /> 权限说明
+                    <ClipboardText size="16" weight="Bold" /> 说明
                 </h4>
-                <p>插件会声明所需的权限，安装高风险权限插件时会显示确认对话框。</p>
-                <ul>
-                    <li><span class="perm-low">
-                            <CheckCircle size="16" weight="Bold" /> 低风险
-                        </span> - 自动授予：存储、通知、事件订阅/发送</li>
-                    <li><span class="perm-medium">
-                            <QuestionCircle size="16" weight="Bold" /> 中风险
-                        </span> - 提示确认：启动应用、右键菜单扩展</li>
-                    <li><span class="perm-high">
-                            <DangerTriangle size="16" weight="Bold" /> 高风险
-                        </span> - 需强确认：读取/写入剪贴板内容</li>
-                </ul>
+                <p>插件以 cdylib 形式加载；目录 <code>plugins/</code>，配置在应用数据目录 <code>plugin-host/</code>。</p>
                 <p class="tip">
-                    <DangerTriangle size="14" weight="Bold" /> 请勿安装来源不明的插件，即使在沙箱模式下也无法完全阻止恶意代码
+                    <DangerTriangle size="14" weight="Bold" /> 旧 iframe JS 插件系统已下线；请使用 Rust 插件或 ctx.menus 扩展点
                 </p>
             </section>
 
@@ -266,8 +255,6 @@ import {
     PlugCircle,
     ShieldCheck,
     DangerTriangle,
-    CheckCircle,
-    QuestionCircle,
 } from "@solar-icons/vue";
 
 const router = useRouter();

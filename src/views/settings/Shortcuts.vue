@@ -68,7 +68,6 @@
 <script setup lang="ts">
 import { storeToRefs } from "pinia";
 import { onBeforeUnmount, ref, watchEffect } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import { invokeOrThrow } from "../../utils/invoke-wrapper";
 import { useSettingsStore } from "../../stores";
 import { Infinite } from "@solar-icons/vue";
@@ -109,7 +108,7 @@ function startRecording(target: "main" | "clipboard" | "display" | "icc") {
     recordingTarget.value = target;
     shortcutError.value = "";
     if (target === "main") {
-        invoke<string>("suspend_toggle_shortcut")
+        invokeOrThrow<string>("suspend_toggle_shortcut")
             .then((s) => {
                 suspendedMainShortcut.value = s || "";
             })

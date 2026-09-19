@@ -1,7 +1,11 @@
-import { ref, watch, type Ref } from "vue";
+import { watch, type Ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { safeInvoke } from "../utils/invoke-wrapper";
 import { hideWindowAndStartMemoryRelease } from "../utils/window-memory";
+import {
+  autoHideIsCountingDown,
+  stopAutoHideCountdown,
+} from "../kernel/runtime/ui-shell-state";
 
 const win = getCurrentWindow();
 
@@ -10,13 +14,18 @@ interface AutoHideCountdownOptions {
   countdownSeconds: Ref<number>;
 }
 
+/**
+ * Auto-hide countdown UI adapter.
+ *
+ * `isCountingDown` is shared with kernel ui-shell-runtime (focus listener).
+ * App.vue binds the ring; plugin owns focus/window-shown listeners (P7).
+ */
 export function useAutoHideCountdown(options: AutoHideCountdownOptions) {
   const { autoHideEnabled, countdownSeconds } = options;
-  const isCountingDown = ref(false);
-  let unlistenFocus: (() => void) | null = null;
+  const isCountingDown = autoHideIsCountingDown;
 
   function stopCountdown() {
-    isCountingDown.value = false;
+    stopAutoHideCountdown();
   }
 
   async function handleCountdownComplete() {
@@ -41,26 +50,11 @@ export function useAutoHideCountdown(options: AutoHideCountdownOptions) {
   });
 
   async function setupFocusListener() {
-    cleanupFocusListener();
-    stopCountdown();
-    unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
-      if (!autoHideEnabled.value) {
-        stopCountdown();
-        return;
-      }
-      if (focused) {
-        stopCountdown();
-      } else {
-        isCountingDown.value = true;
-      }
-    });
+    // no-op: owned by kernel ui-shell-runtime plugin (P7)
   }
 
   function cleanupFocusListener() {
-    if (unlistenFocus) {
-      unlistenFocus();
-      unlistenFocus = null;
-    }
+    // no-op: owned by kernel ui-shell-runtime plugin (P7)
   }
 
   return {
@@ -72,3 +66,5 @@ export function useAutoHideCountdown(options: AutoHideCountdownOptions) {
     cleanupFocusListener,
   };
 }
+
+export type AutoHideCountdownComposable = ReturnType<typeof useAutoHideCountdown>;

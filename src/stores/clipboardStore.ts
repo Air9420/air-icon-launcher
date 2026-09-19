@@ -63,13 +63,41 @@ export const useClipboardStore = defineStore("clipboard", () => {
     const currentFilter = ref<string>("all");
     const PAGE_SIZE = 30;
 
+    function findRecordIndex(record: { id?: string; hash: string }): number {
+        return clipboardHistory.value.findIndex(
+            (r) => r.hash === record.hash || (record.id != null && r.id === record.id)
+        );
+    }
+
     function addClipboardRecord(record: ClipboardRecord) {
-        // 新记录直接 unshift，不检查重复（数据库已去重）
+        const index = findRecordIndex(record);
+        if (index !== -1) {
+            clipboardHistory.value.splice(index, 1);
+        }
         clipboardHistory.value.unshift(record);
+    }
+
+    /** 再次复制已有历史项时，保留原字段（如收藏状态）并置顶。 */
+    function promoteClipboardRecord(record: ClipboardRecord) {
+        const now = Date.now();
+        const index = findRecordIndex(record);
+        if (index === -1) {
+            clipboardHistory.value.unshift({ ...record, timestamp: now });
+            return;
+        }
+        const existing = clipboardHistory.value[index];
+        const promoted: ClipboardRecord = { ...existing, timestamp: now };
+        clipboardHistory.value.splice(index, 1);
+        clipboardHistory.value.unshift(promoted);
     }
 
     function setCurrentClipboardHash(hash: string | null) {
         currentClipboardHash.value = hash;
+    }
+
+    function applyClipboardRecord(record: ClipboardRecord) {
+        addClipboardRecord(record);
+        setCurrentClipboardHash(record.hash);
     }
 
     function removeClipboardRecord(id: string) {
@@ -172,6 +200,8 @@ export const useClipboardStore = defineStore("clipboard", () => {
         isLoadingMore,
         currentFilter,
         addClipboardRecord,
+        promoteClipboardRecord,
+        applyClipboardRecord,
         removeClipboardRecord,
         clearClipboardHistory,
         toggleFavorite,

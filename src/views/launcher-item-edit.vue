@@ -213,7 +213,7 @@
 import { computed, ref, watch, watchEffect } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { open } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../utils/invoke-wrapper";
 import { Store, useCategoryStore } from "../stores";
 import type { LaunchDependency, LauncherItem } from "../stores";
 import { showToast } from "../composables/useGlobalToast";
@@ -521,15 +521,13 @@ async function createLauncherItem() {
 }
 
 function fetchFaviconAsync(categoryId: string, itemId: string, currentUrl: string) {
-    invoke<string | null>("fetch_favicon_from_url", { url: currentUrl })
-        .then((iconBase64) => {
-            if (iconBase64) {
-                store.updateLauncherItemIcon(categoryId, itemId, iconBase64);
-            }
-        })
-        .catch((e) => {
-            console.warn("Failed to fetch favicon:", e);
-        });
+    void invoke<string | null>("fetch_favicon_from_url", { url: currentUrl }).then((result) => {
+        if (result.ok && result.value) {
+            store.updateLauncherItemIcon(categoryId, itemId, result.value);
+        } else if (!result.ok) {
+            console.warn("Failed to fetch favicon:", result.error);
+        }
+    });
 }
 
 /**

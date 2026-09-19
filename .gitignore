@@ -57,3 +57,5 @@ CLAUDE.md
 .artifacts
 .claude
 .codex
+
+plugins/example-rust-plugin/target/

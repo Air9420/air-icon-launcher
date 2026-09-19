@@ -3,50 +3,22 @@ const path = require('path');
 
 const PROJECT = 'Z:\\VScodeProject\\air-icon-launcher';
 const WEATHER_PATH = path.join(PROJECT, 'node_modules', '@solar-icons', 'vue', 'dist', 'weather-6jMEEQQA.mjs');
-const CONTEXT_PATH = path.join(PROJECT, 'node_modules', '@solar-icons', 'vue', 'dist', 'context-DFs-kdLH.mjs');
-const CHUNK_PATH = path.join(PROJECT, 'node_modules', '@solar-icons', 'vue', 'dist', 'chunk-km9CeSFt.mjs');
-const INDEX_PATH = path.join(PROJECT, 'node_modules', '@solar-icons', 'vue', 'dist', 'index.mjs');
-const OUTPUT_PATH = path.join(PROJECT, 'src', 'icons', 'solar-icons.ts');
+const OUTPUT_DIR = path.join(PROJECT, 'src', 'icons');
+const DATA_DIR = path.join(OUTPUT_DIR, 'data');
+const RUNTIME_PATH = path.join(OUTPUT_DIR, 'runtime.ts');
+const BARREL_PATH = path.join(OUTPUT_DIR, 'solar-icons.ts');
 
 const weatherContent = fs.readFileSync(WEATHER_PATH, 'utf8');
-const contextContent = fs.readFileSync(CONTEXT_PATH, 'utf8');
-const chunkContent = fs.readFileSync(CHUNK_PATH, 'utf8');
-const indexContent = fs.readFileSync(INDEX_PATH, 'utf8');
 
-// === Step 1: Build icon name mappings ===
+/**
+ * PERF-A: only emit weights actually used in the project.
+ * Linear = default fallback; Bold = Guide/SearchResults/Window/Shortcuts;
+ * LineDuotone = Stats. Unused BoldDuotone/Broken/Outline are dropped
+ * (~50%+ of SVG node payload).
+ */
+const KEEP_WEIGHTS = new Set(['Linear', 'Bold', 'LineDuotone']);
 
-// index.mjs export map: PascalCase name -> imported name from weather
-const indexExportMap = {};
-const indexExportMatch = indexContent.match(/export\{([^}]+)\}/);
-if (indexExportMatch) {
-  for (const entry of indexExportMatch[1].split(',')) {
-    const parts = entry.split(' as ').map(s => s.trim());
-    if (parts.length === 2) indexExportMap[parts[1]] = parts[0];
-  }
-}
-
-// index.mjs import map: local import name -> weather chunk export name
-const indexImportMap = {};
-const indexImportMatch = indexContent.match(/import\{([^}]+)\}from"\.\/weather/);
-if (indexImportMatch) {
-  for (const entry of indexImportMatch[1].split(',')) {
-    const parts = entry.split(' as ').map(s => s.trim());
-    if (parts.length === 2) indexImportMap[parts[1]] = parts[0];
-  }
-}
-
-// weather chunk export map: weather export name -> local variable
-const weatherExportMap = {};
-const weatherExportMatch = weatherContent.match(/export\{([^}]+)\}/);
-if (weatherExportMatch) {
-  for (const entry of weatherExportMatch[1].split(',')) {
-    const parts = entry.split(' as ').map(s => s.trim());
-    if (parts.length === 2) weatherExportMap[parts[1]] = parts[0];
-  }
-}
-
-// === Step 2: Find needed icon kebab names ===
-
+/** Icons actually imported by src views/components. Unused names omitted. */
 const ICON_MAP = {
   'ClipboardText': 'clipboard-text',
   'Earth': 'earth',
@@ -70,8 +42,6 @@ const ICON_MAP = {
   'PlugCircle': 'plug-circle',
   'ShieldCheck': 'shield-check',
   'DangerTriangle': 'danger-triangle',
-  'CheckCircle': 'check-circle',
-  'QuestionCircle': 'question-circle',
   'AddFolder': 'add-folder',
   'Lightbulb': 'lightbulb',
   'Pin': 'pin',
@@ -81,8 +51,6 @@ const ICON_MAP = {
   'MagicStick': 'magic-stick',
   'Palette': 'palette',
 };
-
-// === Step 3: Extract icon data from weather chunk ===
 
 function extractIconData(content, iconName) {
   const marker = '`' + iconName + '`,{';
@@ -133,6 +101,7 @@ function extractWeightData(callStr) {
   const weightNames = ['Bold', 'BoldDuotone', 'Broken', 'LineDuotone', 'Linear', 'Outline'];
 
   for (const weight of weightNames) {
+    if (!KEEP_WEIGHTS.has(weight)) continue;
     const marker = weight + ':[[';
     const start = callStr.indexOf(marker);
     if (start === -1) continue;
@@ -157,68 +126,25 @@ function extractWeightData(callStr) {
   return weights;
 }
 
-// === Step 4: Extract rendering infrastructure ===
-
-// Extract SvgNodeRenderer
-const svgNodeMatch = weatherContent.match(/var\s+\w+=a\(\{name:`SvgNodeRenderer`[\s\S]*?\}\)\}/);
-const svgNodeCode = svgNodeMatch ? svgNodeMatch[0] : '';
-
-// Extract SolarIcon
-const solarIconMatch = weatherContent.match(/var\s+\w+=a\(\{__name:`SolarIcon`[\s\S]*?\}\)\}/);
-const solarIconCode = solarIconMatch ? solarIconMatch[0] : '';
-
-// Extract l() factory function
-const factoryMatch = weatherContent.match(/const\s+\w+=\([\w,]+\)=>\(\{[\s\S]*?\}\)\}/);
-const factoryCode = factoryMatch ? factoryMatch[0] : '';
-
-// === Step 5: Generate the output module ===
-
-console.log('Extracting icons...');
-const iconEntries = [];
-
-for (const [pascalName, kebabName] of Object.entries(ICON_MAP)) {
-  const call = extractIconData(weatherContent, kebabName);
-  if (!call) {
-    console.log(`  SKIP ${pascalName} (${kebabName}): not found`);
-    continue;
-  }
-
-  const weights = extractWeightData(call);
-  const weightEntries = [];
-  for (const [weight, data] of Object.entries(weights)) {
-    // Convert backtick strings to template literal syntax for the output
-    weightEntries.push(`${weight}: ${data}`);
-  }
-
-  iconEntries.push({ pascalName, kebabName, weightEntries });
-  console.log(`  OK ${pascalName} (${kebabName}): ${Object.keys(weights).length} weights`);
-}
-
-// Generate the TypeScript file
-// We'll use Vue's defineComponent directly instead of the library's factory
-
-const output = `// Auto-generated by scripts/generate-solar-icons.cjs
-// Only includes icons actually used in the project
-// DO NOT EDIT MANUALLY
+const RUNTIME_SOURCE = `// Auto-generated by scripts/generate-solar-icons.cjs
+// Shared solar-icons runtime (no icon SVG data). DO NOT EDIT MANUALLY.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { defineComponent, computed, h, inject, provide, reactive, Fragment, type Component } from 'vue';
 
-// === Config system (from @solar-icons/vue context) ===
-const DEFAULT_CONTEXT = { color: 'currentColor', size: '24', weight: 'Linear', mirrored: false } as const;
-const SOLAR_ICONS_CONFIG_KEY = Symbol.for('solar-icons-config');
+export const DEFAULT_CONTEXT = { color: 'currentColor', size: '24', weight: 'Linear', mirrored: false } as const;
+export const SOLAR_ICONS_CONFIG_KEY = Symbol.for('solar-icons-config');
 const DEFAULT_SOLAR = { config: DEFAULT_CONTEXT, setConfig: () => {}, setWeight: () => {}, setSize: () => {}, setColor: () => {} };
 
-function useSolar() {
+export function useSolar() {
   return inject(SOLAR_ICONS_CONFIG_KEY, DEFAULT_SOLAR) as typeof DEFAULT_SOLAR;
 }
 
-function provideSolarIconsContext(ctx: any) {
+export function provideSolarIconsContext(ctx: any) {
   provide(SOLAR_ICONS_CONFIG_KEY, ctx);
 }
 
-// === SVG Node Renderer ===
-const SvgNodeRenderer: Component = defineComponent({
+export const SvgNodeRenderer: Component = defineComponent({
   name: 'SvgNodeRenderer',
   props: { node: { type: Array, required: true } },
   setup(props) {
@@ -234,8 +160,7 @@ const SvgNodeRenderer: Component = defineComponent({
   }
 }) as any;
 
-// === Solar Icon base component ===
-const SolarIcon: Component = defineComponent({
+export const SolarIcon: Component = defineComponent({
   name: 'SolarIcon',
   props: {
     iconNodes: { default: () => [] as any[] },
@@ -268,8 +193,7 @@ const SolarIcon: Component = defineComponent({
   }
 }) as any;
 
-// === Icon factory ===
-function createIcon(name: string, weights: Record<string, any[]>): Component {
+export function createIcon(name: string, weights: Record<string, any[]>): Component {
   return defineComponent({
     props: { weight: {} },
     setup(props, { attrs, slots }) {
@@ -281,15 +205,6 @@ function createIcon(name: string, weights: Record<string, any[]>): Component {
   }) as any;
 }
 
-// === Icon definitions ===
-${iconEntries.map(({ pascalName, kebabName, weightEntries }) => {
-  return `export const ${pascalName} = createIcon('${kebabName}', {\n  ${weightEntries.join(',\n  ')}\n});`;
-}).join('\n\n')}
-
-// === Re-exports for compatibility ===
-export { useSolar, provideSolarIconsContext, SolarIcon, SvgNodeRenderer };
-
-// SolarProvider component
 export const SolarProvider = defineComponent({
   name: 'SolarProvider',
   props: {
@@ -306,7 +221,6 @@ export const SolarProvider = defineComponent({
       mirrored: props.mirrored,
     });
     provideSolarIconsContext(ctx);
-    // Watch for prop changes
     computed(() => {
       ctx.color = props.color;
       ctx.size = props.size;
@@ -318,6 +232,55 @@ export const SolarProvider = defineComponent({
 });
 `;
 
-fs.writeFileSync(OUTPUT_PATH, output, 'utf8');
-console.log(`\nGenerated ${OUTPUT_PATH}`);
+console.log('Extracting icons (weights:', [...KEEP_WEIGHTS].join(', '), ')...');
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const iconEntries = [];
+const barrelLines = [
+  '// Auto-generated by scripts/generate-solar-icons.cjs',
+  '// Barrel re-export: only used icons + kept weights. DO NOT EDIT MANUALLY.',
+  '/* eslint-disable @typescript-eslint/no-explicit-any */',
+  '',
+  "export * from './runtime';",
+  '',
+];
+
+for (const [pascalName, kebabName] of Object.entries(ICON_MAP)) {
+  const call = extractIconData(weatherContent, kebabName);
+  if (!call) {
+    console.log(`  SKIP ${pascalName} (${kebabName}): not found`);
+    continue;
+  }
+
+  const weights = extractWeightData(call);
+  const weightEntries = Object.entries(weights).map(
+    ([weight, data]) => `  ${weight}: ${data}`,
+  );
+
+  const moduleSource = `// Auto-generated by scripts/generate-solar-icons.cjs
+// Icon: ${pascalName} (${kebabName}) · weights: ${Object.keys(weights).join(', ') || 'none'}
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { createIcon } from '../runtime';
+
+export const ${pascalName} = /*#__PURE__*/ createIcon('${kebabName}', {
+${weightEntries.join(',\n')}
+});
+`;
+
+  fs.writeFileSync(path.join(DATA_DIR, `${pascalName}.ts`), moduleSource, 'utf8');
+  barrelLines.push(`export { ${pascalName} } from './data/${pascalName}';`);
+  iconEntries.push({ pascalName, kebabName, weights: Object.keys(weights) });
+  console.log(`  OK ${pascalName} (${kebabName}): ${Object.keys(weights).length} weights`);
+}
+
+barrelLines.push('');
+barrelLines.push("export { useSolar, provideSolarIconsContext, SolarIcon, SvgNodeRenderer, SolarProvider, createIcon } from './runtime';");
+barrelLines.push('');
+
+fs.writeFileSync(RUNTIME_PATH, RUNTIME_SOURCE, 'utf8');
+fs.writeFileSync(BARREL_PATH, barrelLines.join('\n'), 'utf8');
+
+console.log(`\nGenerated ${RUNTIME_PATH}`);
+console.log(`Generated ${BARREL_PATH}`);
+console.log(`Generated ${iconEntries.length} icon modules in ${DATA_DIR}`);
 console.log(`Total icons: ${iconEntries.length}`);

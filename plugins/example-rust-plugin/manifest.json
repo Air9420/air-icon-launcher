@@ -1,0 +1,20 @@
+{
+  "manifest_version": 2,
+  "id": "com.air.example.rust",
+  "name": "Rust示例插件",
+  "version": "0.1.0",
+  "runtime": "rust",
+  "entry": "air_example_rust.dll",
+  "description": "演示 cdylib ABI v1、capability 声明与 host_invoke 的示例 Rust 插件。",
+  "author": "Air",
+  "capabilities": ["log", "launcher.read", "events.emit"],
+  "contributes": {
+    "commands": [
+      {
+        "id": "example.hello",
+        "title": "Hello from Rust"
+      }
+    ],
+    "menus": []
+  }
+}

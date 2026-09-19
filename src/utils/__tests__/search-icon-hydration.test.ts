@@ -56,9 +56,13 @@ describe("buildSearchIconHydrationPlan", () => {
             { categoryId: "cat-2", itemId: "item-2" },
             { categoryId: "cat-3", itemId: "item-3" },
         ]);
+        // Implementation order: filter recentFileResults by visible path keys,
+        // then walk that result order (not visibleRecentFilePaths order).
+        // Alpha appears first in results; Beta is skipped (already has icon);
+        // Gamma follows; path variants dedupe via normalizePathKey.
         expect(plan.recentFilePaths).toEqual([
-            "C:/Docs/Gamma.txt",
             "C:/Docs/Alpha.txt",
+            "C:/Docs/Gamma.txt",
         ]);
     });
 

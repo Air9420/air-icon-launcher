@@ -460,6 +460,22 @@ impl ClipboardDatabase {
         Ok(count > 0)
     }
 
+    /// 再次复制历史内容时，刷新时间戳使其可按最新顺序置顶。
+    pub fn touch_by_hash(
+        &self,
+        hash: &str,
+        timestamp: i64,
+    ) -> SqliteResult<Option<ClipboardRecordDb>> {
+        {
+            let conn = self.write_conn.lock().unwrap();
+            conn.execute(
+                "UPDATE clipboard_records SET timestamp = ?1 WHERE hash = ?2",
+                params![timestamp, hash],
+            )?;
+        }
+        self.get_by_hash(hash)
+    }
+
     pub fn clear(&self) -> SqliteResult<Vec<String>> {
         let conn = self.write_conn.lock().unwrap();
         let mut stmt =
@@ -765,6 +781,24 @@ mod tests {
         db.insert(&make_record("1", "text", Some("a"), "h1", 1000))
             .unwrap();
         assert!(db.hash_exists("h1").unwrap());
+    }
+
+    #[test]
+    fn test_touch_by_hash_promotes_timestamp() {
+        let db = open_mem_db();
+        db.insert(&make_record("1", "text", Some("3"), "h3", 1000))
+            .unwrap();
+        db.insert(&make_record("2", "text", Some("1"), "h1", 2000))
+            .unwrap();
+
+        let updated = db.touch_by_hash("h3", 3000).unwrap().expect("record exists");
+        assert_eq!(updated.id, "1");
+        assert_eq!(updated.timestamp, 3000);
+
+        let all = db.get_all_paged(10, 0).unwrap();
+        assert_eq!(all[0].hash, "h3");
+        assert_eq!(all[0].timestamp, 3000);
+        assert_eq!(all[1].hash, "h1");
     }
 
     #[test]

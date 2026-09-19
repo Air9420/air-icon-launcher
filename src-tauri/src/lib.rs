@@ -16,7 +16,7 @@ mod memory_manager;
 mod migration;
 mod migrations;
 mod pinyin;
-mod plugins;
+mod plugin_host;
 mod process_monitor;
 mod search;
 mod system;
@@ -224,6 +224,9 @@ pub fn run() {
                 &clipboard_state,
                 &app_config,
             );
+
+            // Rust Plugin Host (P2)：注册 State（iframe plugins.rs 已删除）
+            plugin_host::init_plugin_host(&handle);
             process_monitor::start_process_monitor(handle.clone());
             display_monitor::start_display_monitor(handle.clone());
             
@@ -335,14 +338,18 @@ pub fn run() {
             clipboard::set_clipboard_storage_path,
             clipboard::get_clipboard_storage_path,
             clipboard::reset_clipboard_storage_path,
-            plugins::get_plugin_directory,
-            plugins::get_plugin_path,
-            plugins::scan_plugins,
-            plugins::read_plugin_manifest,
-            plugins::read_plugin_file,
-            plugins::install_plugin,
-            plugins::uninstall_plugin,
-            plugins::launch_item,
+            // IR: old iframe plugin commands removed (plugins::*).
+            // Rust Plugin Host commands below remain the only plugin surface.
+            plugin_host::commands::plugin_host_scan,
+            plugin_host::commands::plugin_host_list,
+            plugin_host::commands::plugin_host_load,
+            plugin_host::commands::plugin_host_unload,
+            plugin_host::commands::plugin_host_invoke,
+            plugin_host::commands::plugin_host_set_enabled,
+            plugin_host::commands::plugin_host_install,
+            plugin_host::commands::plugin_host_uninstall,
+            plugin_host::commands::plugin_host_get_log,
+            plugin_host::commands::plugin_host_emit_event,
             config::get_config,
             config::get_config_paths,
             config::read_raw_config_json,

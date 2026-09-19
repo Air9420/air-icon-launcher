@@ -234,13 +234,16 @@ describe("statsStore - 智能排序 & 统计", () => {
       recordUsage("cat-work", qualified.id, 3, 0, currentHour);
       recordUsage("cat-work", qualified.id, 2, 1, differentSlotHour);
 
+      // Below minSlotLaunches for total < 10 (threshold minSlot = 2).
       const lowSlotCount = ensureItem("cat-work", "C:\\low-slot.exe");
-      recordUsage("cat-work", lowSlotCount.id, 2, 0, currentHour);
-      recordUsage("cat-work", lowSlotCount.id, 3, 1, differentSlotHour);
+      recordUsage("cat-work", lowSlotCount.id, 1, 0, currentHour);
+      recordUsage("cat-work", lowSlotCount.id, 4, 1, differentSlotHour);
 
+      // Below sample-size floor minTotalLaunches = 3 for total < 3.
       const lowTotal = ensureItem("cat-work", "C:\\low-total.exe");
-      recordUsage("cat-work", lowTotal.id, 4, 0, currentHour);
+      recordUsage("cat-work", lowTotal.id, 2, 0, currentHour);
 
+      // Enough launches overall but current-slot share < minSlotShare.
       const lowShare = ensureItem("cat-work", "C:\\low-share.exe");
       recordUsage("cat-work", lowShare.id, 3, 0, currentHour);
       recordUsage("cat-work", lowShare.id, 8, 1, differentSlotHour);

@@ -94,7 +94,6 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import { invokeOrThrow } from "../../utils/invoke-wrapper";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useClipboardStore } from "../../stores/clipboardStore";
@@ -142,7 +141,7 @@ async function loadClipboardConfig() {
     }
 
     try {
-        const path = await invoke<string>("get_clipboard_storage_path");
+        const path = await invokeOrThrow<string>("get_clipboard_storage_path");
         if (path) {
             clipboardStoragePath.value = path;
         }
@@ -256,7 +255,7 @@ async function onResetStoragePath() {
         await new Promise(resolve => setTimeout(resolve, 100));
         migrationProgress.value = 30;
 
-        const defaultPath = await invoke<string>("reset_clipboard_storage_path");
+        const defaultPath = await invokeOrThrow<string>("reset_clipboard_storage_path");
 
         migrationProgress.value = 80;
         await new Promise(resolve => setTimeout(resolve, 100));

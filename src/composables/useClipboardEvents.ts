@@ -37,12 +37,7 @@ export async function initGlobalClipboardListeners() {
             globalSkipNextClipboardChanged = false;
             return;
         }
-        const currentHash = clipboardStore.currentClipboardHash;
-        if (currentHash && event.payload.hash === currentHash) {
-            return;
-        }
-        clipboardStore.addClipboardRecord(event.payload);
-        clipboardStore.setCurrentClipboardHash(event.payload.hash);
+        clipboardStore.applyClipboardRecord(event.payload);
     });
     console.log(`[clipboard-events] ✓ clipboard-changed listener (${(performance.now() - startTime).toFixed(1)}ms)`);
 
@@ -81,6 +76,7 @@ export function useClipboardEvents() {
             } else {
                 await invokeOrThrow("set_clipboard_content", { content: item.text_content, isImage: false });
             }
+            clipboardStore.promoteClipboardRecord(item);
             clipboardStore.setCurrentClipboardHash(item.hash);
             updateCurrentTime();
             showToast("已复制");

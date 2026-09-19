@@ -1,6 +1,6 @@
 [package]
 name = "air-icon-launcher"
-version = "0.5.10"
+version = "0.6.0"
 description = "A Windows desktop launcher for organizing and launching apps"
 authors = ["Air"]
 license = "MIT"
@@ -81,13 +81,9 @@ rayon = "1.10"
 quick-xml = "0.38"
 rfd = "0.15"
 lcms2 = "6.1.1"
+libloading = "0.8"
 
 [profile.dev]
-incremental = true # 以较小的步骤编译您的二进制文件。
-
+incremental = true # 浠ヨ緝灏忕殑姝ラ缂栬瘧鎮ㄧ殑浜岃繘鍒舵枃浠躲€?
 [profile.release]
-codegen-units = 1 # 允许 LLVM 执行更好的优化。
-lto = true        # 启用链接时优化。
-opt-level = 3     # 优先考虑小的二进制文件大小。如果您更喜欢速度，请使用 `3`。
-panic = "abort"   # 通过禁用 panic 处理程序来提高性能。
-strip = true      # 确保移除调试符号。
+codegen-units = 1 # 鍏佽 LLVM 鎵ц鏇村ソ鐨勪紭鍖栥€?lto = true        # 鍚敤閾炬帴鏃朵紭鍖栥€?opt-level = 3     # 浼樺厛鑰冭檻灏忕殑浜岃繘鍒舵枃浠跺ぇ灏忋€傚鏋滄偍鏇村枩娆㈤€熷害锛岃浣跨敤 `3`銆?panic = "abort"   # 閫氳繃绂佺敤 panic 澶勭悊绋嬪簭鏉ユ彁楂樻€ц兘銆?strip = true      # 纭繚绉婚櫎璋冭瘯绗﹀彿銆?

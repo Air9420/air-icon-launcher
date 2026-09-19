@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../utils/invoke-wrapper";
 import { itemEventBus } from "../events/itemEvents";
 import { useItemsStore } from "../stores/itemsStore";
 
@@ -36,8 +36,13 @@ export async function extractIcons(paths: string[]): Promise<Map<string, string>
             paths,
             maxEdge: 128,
         });
+        if (!response.ok) {
+            console.error("Failed to extract icons:", response.error);
+            return result;
+        }
+        const icons = response.value;
         for (let i = 0; i < paths.length; i++) {
-            const icon = response[i];
+            const icon = icons[i];
             if (icon) {
                 result.set(paths[i], icon);
                 cacheIcon(paths[i], icon);
@@ -52,7 +57,7 @@ export async function extractIcons(paths: string[]): Promise<Map<string, string>
 
 export async function fetchFavicon(url: string): Promise<string | null> {
     try {
-        const result = await invoke<{ ok: boolean; value?: string }>("fetch_favicon_from_url", { url });
+        const result = await invoke<string | null>("fetch_favicon_from_url", { url });
         if (result.ok && result.value) {
             return result.value;
         }
@@ -80,11 +85,10 @@ export function initIconCache() {
         }
     });
 
-    for (const items of Object.values(itemsStore.launcherItemsByCategoryId)) {
-        for (const item of items) {
-            if (item.iconBase64 && item.itemType === 'file') {
-                cacheOriginalIcon(item.path, item.iconBase64);
-            }
+    // Prefer getter (AppsService-aware) over raw local ref.
+    for (const item of itemsStore.getAllItems()) {
+        if (item.iconBase64 && item.itemType === 'file') {
+            cacheOriginalIcon(item.path, item.iconBase64);
         }
     }
 }

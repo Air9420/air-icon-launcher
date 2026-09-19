@@ -17,14 +17,41 @@ import {
     saveAppConfig,
     type AppConfigSnapshot,
 } from "../utils/config-sync";
-import { getPluginManager } from "../plugins";
+import { getKernelContext } from "../kernel/context-access";
+import type { AppsService } from "../kernel/services/apps-service";
+import type { PersistedAppsLauncherData } from "../kernel/services/apps-service";
+
+function getAppsService(): AppsService | undefined {
+    return getKernelContext()?.apps;
+}
+
+/** Backend launcher_data read (no ref apply) — AppsService first. */
+async function fetchPersistedLauncherData(): Promise<PersistedAppsLauncherData> {
+    const apps = getAppsService();
+    if (apps) {
+        const result = await apps.readBackend();
+        if (!result.ok) throw result.error;
+        return result.value;
+    }
+    return invokeOrThrow<PersistedAppsLauncherData>("get_launcher_data");
+}
+
+/** Backend launcher_data write — AppsService is the unified write entry. */
+async function persistLauncherData(data: PersistedAppsLauncherData): Promise<void> {
+    const apps = getAppsService();
+    if (apps) {
+        const result = await apps.savePersisted(data);
+        if (!result.ok) throw result.error;
+        return;
+    }
+    await invokeOrThrow("save_launcher_data", { data });
+}
 
 export type DataExportFormat = "json" | "zip";
 
 export type DataExportOptions = {
     includeLauncherData: boolean;
     includeSettings: boolean;
-    includePlugins: boolean;
     format: DataExportFormat;
 };
 
@@ -88,7 +115,7 @@ type ImportedSettings = {
     performance_mode?: boolean;
     window_effect_type?: "blur" | "acrylic";
     strong_shortcut_mode?: boolean;
-    plugin_sandbox_enabled?: boolean;
+    // plugin_sandbox_enabled removed — legacy JSON key is ignored on import.
     clipboard_history_enabled?: boolean;
     home_section_layouts?: unknown;
     clipboard_max_records?: number;
@@ -151,7 +178,6 @@ type FrontendImportSnapshot = {
         performanceMode: boolean;
         windowEffectType: "blur" | "acrylic";
         strongShortcutMode: boolean;
-        pluginSandboxEnabled: boolean;
         clipboardHistoryEnabled: boolean;
     };
     categories: Category[];
@@ -545,12 +571,19 @@ function resolveImportedHasCustomIcon(item: ImportedLauncherItem): boolean {
         return item.has_custom_icon;
     }
 
-    const originalIcon = normalizeImportedIconBase64(item.original_icon_base64 ?? null);
-    if (originalIcon === null) {
+    // Legacy derived-icon cache: custom only when a non-null icon differs from original.
+    const iconBase64 = normalizeImportedIconBase64(item.icon_base64 ?? null);
+    if (iconBase64 === null) {
         return false;
     }
 
-    return normalizeImportedIconBase64(item.icon_base64 ?? null) !== originalIcon;
+    const originalIcon = normalizeImportedIconBase64(item.original_icon_base64 ?? null);
+    if (originalIcon === null) {
+        // Explicit icon with no original cache → treat as custom.
+        return true;
+    }
+
+    return iconBase64 !== originalIcon;
 }
 
 function compactImportedLauncherItems(
@@ -567,14 +600,16 @@ function compactImportedLauncherItems(
                 return {
                     ...item,
                     icon_base64: null,
-                    has_custom_icon: undefined,
+                    // Pin false so mapImportedLauncherItems re-resolve stays false
+                    // after icon_base64 is nulled (legacy original_icon path).
+                    has_custom_icon: false,
                 };
             }
 
             return {
                 ...item,
                 icon_base64: iconBase64,
-                has_custom_icon: hasCustomIcon ? true : undefined,
+                has_custom_icon: hasCustomIcon ? true : false,
             };
         }),
     }));
@@ -685,7 +720,6 @@ export function useDataManagement() {
     }
 
     async function snapshotFrontendState(): Promise<FrontendImportSnapshot> {
-        const pluginManager = getPluginManager();
         return {
             settings: {
                 theme: settingsStore.theme,
@@ -706,7 +740,6 @@ export function useDataManagement() {
                 performanceMode: settingsStore.performanceMode,
                 windowEffectType: settingsStore.windowEffectType,
                 strongShortcutMode: settingsStore.strongShortcutMode,
-                pluginSandboxEnabled: await pluginManager.loadSandboxMode(),
                 clipboardHistoryEnabled: clipboardStore.clipboardHistoryEnabled,
             },
             categories: cloneData(categoryStore.categories),
@@ -720,7 +753,7 @@ export function useDataManagement() {
             // full launcher payload again doubles peak memory during import /
             // restore when many custom icons are present.
             settings: await getAppConfig(),
-            launcherData: await invokeOrThrow<PersistedLauncherData>("get_launcher_data"),
+            launcherData: await fetchPersistedLauncherData(),
         };
     }
 
@@ -768,7 +801,6 @@ export function useDataManagement() {
         snapshot: FrontendImportSnapshot
     ): Promise<ImportExecutionResult> {
         const notices = new Set<string>();
-        const pluginManager = getPluginManager();
 
         await settingsStore.setTheme(snapshot.settings.theme);
         uiStore.setCategoryCols(snapshot.settings.categoryCols, { persist: false });
@@ -793,7 +825,7 @@ export function useDataManagement() {
             notices
         );
         await settingsStore.setStrongShortcutMode(snapshot.settings.strongShortcutMode);
-        await pluginManager.setSandboxMode(snapshot.settings.pluginSandboxEnabled);
+        // IR: iframe plugin sandbox removed — Rust Host uses capability gate.
         await settingsStore.setClipboardHistoryEnabled(snapshot.settings.clipboardHistoryEnabled);
         categoryStore.importCategories(snapshot.categories);
         categoryStore.setCurrentCategory(snapshot.currentCategoryId);
@@ -802,7 +834,7 @@ export function useDataManagement() {
         // iconBase64-heavy data. Read from Rust backend instead (rollbackToSnapshot
         // already saved the old data to backend before calling this).
         try {
-            const persisted = await invokeOrThrow<PersistedLauncherData>("get_launcher_data");
+            const persisted = await fetchPersistedLauncherData();
             const { itemIds, itemRefs } = buildImportedItemReferenceIndex(persisted.categories);
             const pinnedIds = persisted.favorite_item_ids || [];
             const recentUsedItems = filterImportedRecentUsedItems(
@@ -839,9 +871,7 @@ export function useDataManagement() {
         }
 
         try {
-            await invokeOrThrow("save_launcher_data", {
-                data: snapshot.backend.launcherData,
-            });
+            await persistLauncherData(snapshot.backend.launcherData);
         } catch (error) {
             rollbackErrors.push(`恢复 launcher_data 失败: ${toErrorMessage(error)}`);
         }
@@ -859,7 +889,6 @@ export function useDataManagement() {
 
     async function applyImportedData(result: ImportedDataPayload): Promise<ImportExecutionResult> {
         const notices = new Set<string>();
-        const pluginManager = getPluginManager();
 
         if (result.settings) {
             const config = result.settings;
@@ -911,9 +940,6 @@ export function useDataManagement() {
             await applyImportedWindowEffectSettings(config, notices);
             if (typeof config.strong_shortcut_mode === "boolean") {
                 await settingsStore.setStrongShortcutMode(config.strong_shortcut_mode);
-            }
-            if (typeof config.plugin_sandbox_enabled === "boolean") {
-                await pluginManager.setSandboxMode(config.plugin_sandbox_enabled);
             }
             if (typeof config.clipboard_history_enabled === "boolean") {
                 await settingsStore.setClipboardHistoryEnabled(config.clipboard_history_enabled);
@@ -1006,10 +1032,8 @@ export function useDataManagement() {
             };
         }
 
-        if (options.includePlugins) {
-            payload.plugins = [];
-        }
-
+        // IR: iframe plugins offline. Rust plugins live under plugins/ + app_data/plugin-host/
+        // and are not part of the app-config export payload.
         return payload;
     }
 

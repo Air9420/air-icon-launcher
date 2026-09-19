@@ -272,6 +272,12 @@ fn process_clipboard_change(
             if should_process {
                 if let Some(db) = database.lock().unwrap().as_ref() {
                     if db.hash_exists(&hash).unwrap_or(false) {
+                        let ts = get_timestamp() as i64;
+                        if let Ok(Some(updated)) = db.touch_by_hash(&hash, ts) {
+                            let record: ClipboardRecord = updated.into();
+                            let _ = app_handle.emit("clipboard-changed", record.clone());
+                            return Some(record);
+                        }
                         return None;
                     }
                 }
@@ -321,6 +327,12 @@ fn process_clipboard_change(
             if should_process {
                 if let Some(db) = database.lock().unwrap().as_ref() {
                     if db.hash_exists(&hash).unwrap_or(false) {
+                        let ts = get_timestamp() as i64;
+                        if let Ok(Some(updated)) = db.touch_by_hash(&hash, ts) {
+                            let record: ClipboardRecord = updated.into();
+                            let _ = app_handle.emit("clipboard-changed", record.clone());
+                            return Some(record);
+                        }
                         return None;
                     }
                 }

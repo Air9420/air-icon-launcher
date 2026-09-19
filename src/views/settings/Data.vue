@@ -14,10 +14,6 @@
                         <span>应用设置</span>
                     </label>
                     <label class="option-item">
-                        <input v-model="exportOptions.includePlugins" type="checkbox">
-                        <span>插件清单</span>
-                    </label>
-                    <label class="option-item">
                         <span>导出格式</span>
                         <select v-model="exportOptions.format" class="option-select">
                             <option value="json">JSON</option>
@@ -32,6 +28,9 @@
                         <input v-model="importMergeMode" type="checkbox">
                         <span>合并导入而不是完全覆盖</span>
                     </label>
+                    <div class="option-item hint-text">
+                        Rust 插件不在导出范围内：目录 plugins/，配置 app_data/plugin-host/。
+                    </div>
                 </div>
 
                 <div class="dm-row">
@@ -67,7 +66,6 @@ const importMergeMode = ref<boolean>(false);
 const exportOptions = ref({
     includeLauncherData: true,
     includeSettings: true,
-    includePlugins: false,
     format: "json" as "json" | "zip",
 });
 const dataManagement = useDataManagement();

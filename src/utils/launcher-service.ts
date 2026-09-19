@@ -9,7 +9,14 @@ import {
 import { openPathWithSystem, openUrlWithSystem } from "./system-commands";
 
 export interface LaunchStoredItemOptions {
+    /** Pinia adapter fallback when getItem/onRecordUsage are not provided. */
     store?: ReturnType<typeof Store>;
+    /**
+     * Preferred lookups for Cordis AppsService — avoids kernel → pinia import.
+     * When set, `store` is unused for these operations.
+     */
+    getItem?: (categoryId: string, itemId: string) => ExecutableLauncherItem | null;
+    onRecordUsage?: (categoryId: string, itemId: string) => void;
     notifyError?: boolean;
     recordUsage?: boolean;
     launchItem?: (item: ExecutableLauncherItem, ref: LauncherItemRef) => Promise<void>;
@@ -51,10 +58,23 @@ export async function launchStoredItem(
     ref: LauncherItemRef,
     options: LaunchStoredItemOptions = {}
 ): Promise<ExecuteLauncherItemResult> {
-    const store = options.store ?? Store();
     const notifyError = options.notifyError ?? false;
     const recordUsage = options.recordUsage ?? true;
     const launchItem = options.launchItem ?? ((item) => launchWithSystemOpener(item));
+
+    // Prefer explicit callbacks (AppsService); fall back to pinia store adapter.
+    const getItem =
+        options.getItem ??
+        ((categoryId: string, itemId: string) => {
+            const store = options.store ?? Store();
+            return store.getLauncherItemById(categoryId, itemId);
+        });
+    const onRecordUsage =
+        options.onRecordUsage ??
+        ((categoryId: string, itemId: string) => {
+            const store = options.store ?? Store();
+            store.recordItemUsage(categoryId, itemId);
+        });
 
     const getExecutablePath = (item: ExecutableLauncherItem): string | null => {
         if (item.itemType === "url") return null;
@@ -64,14 +84,14 @@ export async function launchStoredItem(
     try {
         const result = await executeLauncherItemWithDependencies({
             target: ref,
-            getItem: (categoryId, itemId) => store.getLauncherItemById(categoryId, itemId),
+            getItem,
             launchItem,
             getExecutablePath,
             wait: options.wait,
         });
 
         if (recordUsage) {
-            store.recordItemUsage(ref.categoryId, ref.itemId);
+            onRecordUsage(ref.categoryId, ref.itemId);
         }
 
         return result;

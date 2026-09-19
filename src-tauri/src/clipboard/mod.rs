@@ -266,6 +266,16 @@ mod tests {
 
 use types::simple_hash;
 
+fn touch_history_timestamp(state: &Arc<ClipboardState>, hash: &str) {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    if let Some(db) = state.database.lock().unwrap().as_ref() {
+        let _ = db.touch_by_hash(hash, ts);
+    }
+}
+
 #[tauri::command]
 pub fn get_clipboard_content() -> Result<String, String> {
     get_clipboard_text().ok_or_else(|| "Failed to get clipboard content".to_string())
@@ -291,7 +301,9 @@ pub fn set_clipboard_content(
             if set_clipboard_image_from_png(&png_data) {
                 let hash = simple_hash(&png_data);
                 let mut last_hash = state.last_content_hash.lock().unwrap();
-                *last_hash = hash;
+                *last_hash = hash.clone();
+                drop(last_hash);
+                touch_history_timestamp(state.inner(), &hash);
                 let _ = app_handle.emit("clipboard-set-from-history", true);
                 return Ok(());
             }
@@ -301,7 +313,9 @@ pub fn set_clipboard_content(
         let hash = simple_hash(content.as_bytes());
         if set_clipboard_text(&content) {
             let mut last_hash = state.last_content_hash.lock().unwrap();
-            *last_hash = hash;
+            *last_hash = hash.clone();
+            drop(last_hash);
+            touch_history_timestamp(state.inner(), &hash);
             let _ = app_handle.emit("clipboard-set-from-history", true);
             Ok(())
         } else {

@@ -1,12 +1,26 @@
 import { defineStore } from "pinia";
-import { computed, ref } from "vue";
+import { computed, ref, type Ref } from "vue";
 import { createVersionedPersistConfig } from "../utils/versioned-persist";
+import { getKernelContext } from "../kernel/context-access";
+import type { AppsService } from "../kernel/services/apps-service";
 
 export type Category = {
     id: string;
     name: string;
     customIconBase64: string | null;
 };
+
+function getAppsService(): AppsService | undefined {
+    return getKernelContext()?.apps;
+}
+
+const FALLBACK_CATEGORIES: Category[] = [
+    { id: "cat-0", name: "Air", customIconBase64: null },
+    { id: "cat-1", name: "游戏", customIconBase64: null },
+    { id: "cat-2", name: "工具", customIconBase64: null },
+    { id: "cat-3", name: "系统", customIconBase64: null },
+    { id: "cat-4", name: "其他", customIconBase64: null },
+];
 
 export const useCategoryStore = defineStore(
     "category",
@@ -18,13 +32,11 @@ export const useCategoryStore = defineStore(
         const isNewCategory = ref<boolean>(false);
         const pendingNewCategory = ref<Category | null>(null);
 
-        const categories = ref<Category[]>([
-            { id: "cat-0", name: "Air", customIconBase64: null },
-            { id: "cat-1", name: "游戏", customIconBase64: null },
-            { id: "cat-2", name: "工具", customIconBase64: null },
-            { id: "cat-3", name: "系统", customIconBase64: null },
-            { id: "cat-4", name: "其他", customIconBase64: null },
-        ]);
+        // P5: share AppsService categories truth when kernel is present.
+        const appsService = getAppsService();
+        const categories =
+            (appsService?.categories as Ref<Category[]> | undefined) ??
+            ref<Category[]>(FALLBACK_CATEGORIES.map((c) => ({ ...c })));
 
         const displayCategories = computed<Category[]>(() => {
             if (pendingNewCategory.value) {

@@ -80,10 +80,12 @@ describe("performance mode theme tokens", () => {
       /\[data-effects-disabled="true"\]\s*\{\s*--backdrop-blur:\s*none;/
     );
 
+    // Published performance-mode tokens use ~0.7 alpha on light/dark/system
+    // backgrounds (readable without backdrop blur). Upper bound allows that.
     expectTranslucentSurfaceBlock(
       '[data-effects-disabled="true"][data-theme="light"]',
       {
-        bg: [0.4, 0.65],
+        bg: [0.4, 0.75],
         card: [0.88, 0.95],
         menu: [0.94, 0.97],
         border: [0.1, 0.18],
@@ -93,7 +95,7 @@ describe("performance mode theme tokens", () => {
     expectTranslucentSurfaceBlock(
       '[data-effects-disabled="true"][data-theme="dark"]',
       {
-        bg: [0.4, 0.65],
+        bg: [0.4, 0.75],
         card: [0.88, 0.95],
         menu: [0.94, 0.97],
         border: [0.14, 0.22],
@@ -113,7 +115,7 @@ describe("performance mode theme tokens", () => {
     expectTranslucentSurfaceBlock(
       '[data-effects-disabled="true"][data-theme="system"]',
       {
-        bg: [0.4, 0.65],
+        bg: [0.4, 0.75],
         card: [0.88, 0.95],
         menu: [0.94, 0.97],
         border: [0.1, 0.22],

@@ -1,14 +1,21 @@
 import { enumContextMenuType } from "./contextMenuTypes";
 import { HOME_LAYOUT_PRESETS } from "../stores";
 import type { ScenarioKey } from "../stores/launcherStore";
-import { getContextMenuContributions } from "../plugins/contextMenuRegistry";
+import { getContextMenuContributions } from "./contextMenuRegistry";
 import type { MenuContext, MenuItem } from "./contextMenuTypes";
 import { evaluateCondition } from "./conditions";
 
 export const SCENARIO_KEYS: readonly ScenarioKey[] = ["work", "dev", "play"];
 
 /**
- * 构建当前右键上下文下的菜单模型（内置 + 插件贡献项）。
+ * 构建当前右键上下文下的菜单模型（内置 + 扩展贡献项）。
+ *
+ * 贡献来源（单列表，勿双注册）：
+ * - 扩展贡献（ctx.menus / 宿主）：`contextMenuRegistry.registerContextMenuItems`
+ *   或 `ctx.menus.register`（同一 registry backend）
+ *
+ * 排序：内置 order 0–999；贡献项转换时 order+1000；再按 order→id 稳定排序，
+ * 最后应用 before/after 锚点；cleanupSeparators 去掉首尾/连续分隔符。
  */
 export function buildContextMenuModel(ctx: MenuContext): MenuItem[] {
   const builtin = buildBuiltinMenuModel();

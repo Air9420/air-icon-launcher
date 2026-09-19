@@ -174,12 +174,9 @@ fn preserve_missing_imported_config_fields(
         &["auto_hide_enabled", "autoHideEnabled"],
         current.auto_hide_enabled,
     )?;
-    insert_config_value_if_missing(
-        config,
-        "plugin_sandbox_enabled",
-        &["plugin_sandbox_enabled", "pluginSandboxEnabled"],
-        current.plugin_sandbox_enabled,
-    )?;
+
+    // plugin_sandbox_enabled removed (iframe sandbox offline). Legacy disk/backup
+    // keys are ignored by serde (no deny_unknown_fields); never re-export the field.
 
     Ok(())
 }
@@ -302,9 +299,6 @@ fn apply_app_config_patch(config: &mut AppConfig, patch: AppConfigPatch) {
     }
     if let Some(value) = patch.auto_hide_enabled {
         config.auto_hide_enabled = value;
-    }
-    if let Some(value) = patch.plugin_sandbox_enabled {
-        config.plugin_sandbox_enabled = value;
     }
     if let Some(value) = patch.clipboard_history_enabled {
         config.clipboard_history_enabled = value;

@@ -1,12 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, defineAsyncComponent, ref } from "vue";
+import { computed, defineAsyncComponent } from "vue";
 import { storeToRefs } from "pinia";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { safeInvoke, setPageUnloading } from "./utils/invoke-wrapper";
-import { useRouter } from "vue-router";
-import { showToast } from "./composables/useGlobalToast";
-
 
 import ContextMenu from "./components/contextMenu.vue";
 import ConfirmDialog from "./components/common/ConfirmDialog.vue";
@@ -15,70 +9,34 @@ import GlobalToast from "./components/common/GlobalToast.vue";
 import FocusIndicator from "./components/common/FocusIndicator.vue";
 import CountdownRing from "./components/common/CountdownRing.vue";
 const OnboardingGuide = defineAsyncComponent(() => import("./components/OnboardingGuide.vue"));
-import { Store, useCategoryStore, useSettingsStore, useGuideStore } from "./stores";
+// PERF-A: UpdateDialog is not needed for first paint; marked loads inside it on open.
+const UpdateDialog = defineAsyncComponent(() => import("./components/UpdateDialog.vue"));
+
+import { Store, useCategoryStore, useSettingsStore } from "./stores";
 import { useUIStore } from "./stores/uiStore";
-import { useStatsStore } from "./stores/statsStore";
-import { useClipboardStore } from "./stores/clipboardStore";
-import { initOverrideLookupFromStore } from "./utils/classification/pipeline";
 
 import { useContextMenu } from "./composables/useContextMenu";
 import { useMenuActions } from "./composables/useMenuActions";
 import { useDragDrop } from "./composables/useDragDrop";
-import { useTauriEvents } from "./composables/useTauriEvents";
-import { useSearchStore } from "./stores";
-import { useGlobalEvents } from "./composables/useGlobalEvents";
-import { useTheme } from "./composables/useTheme";
-import { useWindowDrag } from "./composables/useWindowDrag";
 import { useConfirmDialog } from "./composables/useConfirmDialog";
 import { useInputDialog } from "./composables/useInputDialog";
-import { useWindowPosition } from "./composables/useWindowPosition";
 import { useAutoHideCountdown } from "./composables/useAutoHideCountdown";
-import { getPluginManager } from "./plugins";
-import { initGlobalClipboardListeners, cleanupGlobalClipboardListeners } from "./composables/useClipboardEvents";
-import { setupUpdateCheck, listenUpdateProgress } from "./utils/updater";
-import UpdateDialog from "./components/UpdateDialog.vue";
+import { appIsTransitioning } from "./kernel/runtime/ui-shell-state";
 
 import "./styles/themes.scss";
-
-const WINDOW_EFFECT_BOOT_MARK_KEY = "__air_window_effect_boot_mark__";
-
-function shouldSkipWindowEffectApplyOnThisBoot(): boolean {
-    if (typeof window === "undefined" || typeof sessionStorage === "undefined") {
-        return false;
-    }
-    try {
-        if (sessionStorage.getItem(WINDOW_EFFECT_BOOT_MARK_KEY) === "1") {
-            return true;
-        }
-        sessionStorage.setItem(WINDOW_EFFECT_BOOT_MARK_KEY, "1");
-        return false;
-    } catch {
-        return false;
-    }
-}
 
 const store = Store();
 const categoryStore = useCategoryStore();
 const settingsStore = useSettingsStore();
 const uiStore = useUIStore();
-const statsStore = useStatsStore();
-const guideStore = useGuideStore();
-const searchStore = useSearchStore();
-const clipboardStore = useClipboardStore();
-const router = useRouter();
 const isDev = import.meta.env.DEV;
-const isTransitioning = ref(false);
 
-// 暴露到全局，供事件处理使用
-(window as unknown as Record<string, unknown>).__appIsTransitioning = isTransitioning;
+const isTransitioning = appIsTransitioning;
 
 const {
-    theme,
-    windowEffectsEnabled,
     performanceMode,
-    showGuideOnStartup,
-    autoHideEnabled,
     autoHideCountdownSeconds,
+    autoHideEnabled,
 } = storeToRefs(settingsStore);
 
 const {
@@ -97,12 +55,9 @@ const {
     currentHomeSection,
     openContextMenu,
     closeContextMenu,
-    getDropTargetInfoAtPoint,
 } = useContextMenu();
 
-const { initializeDragDrop, lastDrop, processedDropIds } = useDragDrop({
-    getDropTargetInfoAtPoint,
-});
+const { lastDrop, processedDropIds } = useDragDrop();
 
 const { state: confirmState, confirm, handleConfirm, handleCancel, handleDismiss } = useConfirmDialog();
 const { state: inputState, input, handleConfirm: handleInputConfirm, handleCancel: handleInputCancel } = useInputDialog();
@@ -121,34 +76,9 @@ const { onMenuAction } = useMenuActions({
     inputDialog: input,
 });
 
-const { initializeTauriEvents, cleanupTauriEvents } = useTauriEvents();
-
-const { initializeGlobalEvents, cleanupGlobalEvents } = useGlobalEvents({
-    closeContextMenu,
-});
-
-const {
-    applyTheme,
-    applyEffectsDisabled,
-    watchThemeChanges,
-    cleanupThemeWatcher,
-} = useTheme();
-
-const { initializeWindowDrag, cleanupWindowDrag } = useWindowDrag();
-
-const {
-    saveWindowPosition,
-    restoreWindowPosition,
-    initializePositionTracking,
-    cleanupPositionTracking,
-} = useWindowPosition();
-
 const {
     isCountingDown,
-    stopCountdown,
     handleCountdownComplete,
-    setupFocusListener,
-    cleanupFocusListener,
 } = useAutoHideCountdown({
     autoHideEnabled,
     countdownSeconds: autoHideCountdownSeconds,
@@ -184,99 +114,6 @@ const hasCurrentItemCustomIcon = computed(() => {
 const hasCurrentCategoryCustomIcon = computed(() => {
     if (!currentCategoryId.value) return false;
     return !!categoryStore.getCategoryById(currentCategoryId.value)?.customIconBase64;
-});
-
-const hasLauncherItems = computed(() =>
-    Object.values(store.launcherItemsByCategoryId).some((items) => items.length > 0)
-);
-
-let unlistenWindowShown: (() => void) | null = null;
-
-onMounted(async () => {
-    setPageUnloading(false);
-    initOverrideLookupFromStore();
-    statsStore.sanitizeExternalRecentLaunchHistory();
-
-    await settingsStore.hydratePersistedConfig();
-    await settingsStore.refreshAutostartStatus();
-
-    // 预加载剪贴板历史数据（不阻塞其他初始化）
-    console.log("[App] starting clipboard preload...");
-    void clipboardStore.preloadHistory().then(() => {
-        console.log("[App] ✓ clipboard preload complete");
-    }).catch(() => {});
-
-    // 预加载剪贴板历史组件（消除懒加载延迟）
-    void import("./components/ClipboardHistory.vue").then(() => {
-        console.log("[App] ✓ ClipboardHistory component preloaded");
-    }).catch(() => {});
-
-    // 初始化全局剪贴板事件监听器（只注册一次）
-    void initGlobalClipboardListeners().catch(() => {});
-
-    const pluginManager = getPluginManager();
-    await pluginManager.refreshPlugins();
-
-    const skipEffectApplyForReloadBoot = shouldSkipWindowEffectApplyOnThisBoot();
-    if (!skipEffectApplyForReloadBoot) {
-        const windowEffectResult = await settingsStore.applyCurrentWindowEffectState();
-        if (windowEffectResult.changed && windowEffectResult.message) {
-            showToast(windowEffectResult.message, { type: "info", duration: 5000 });
-        }
-    }
-
-    if (showGuideOnStartup.value && !guideStore.hasSeenOnboarding && !hasLauncherItems.value) {
-        await router.replace("/ai-organizer");
-    } else if (showGuideOnStartup.value && !guideStore.hasSeenOnboarding) {
-        guideStore.startOnboarding();
-    }
-
-    initializeGlobalEvents();
-    initializeDragDrop();
-    await initializeTauriEvents();
-    initializeWindowDrag();
-    await initializePositionTracking();
-    await setupFocusListener();
-    unlistenWindowShown = await listen("window-shown", () => {
-        stopCountdown();
-    });
-    searchStore.startListening();
-
-    applyTheme(theme.value);
-    applyEffectsDisabled(!windowEffectsEnabled.value);
-    watchThemeChanges();
-
-    setupUpdateCheck();
-    listenUpdateProgress();
-
-    void store.syncSearchIndex().catch(() => {});
-
-    const isAutostart = await invoke<boolean>("check_is_autostart_launch");
-    console.log("[App] onMounted", { isAutostart });
-    if (!isAutostart) {
-        try {
-            // 重启时始终恢复上次保存的位置，不受 follow_mouse_on_show 影响
-            const restored = await restoreWindowPosition();
-            console.log("[App] calling show_launcher", { restored });
-            await safeInvoke("show_launcher", restored ? { forceNoFollow: true } : {});
-        } catch (e) {
-            console.error("[App] Failed to show window:", e);
-        }
-    }
-});
-
-onBeforeUnmount(async () => {
-    setPageUnloading(true);
-    await saveWindowPosition();
-    if (unlistenWindowShown) unlistenWindowShown();
-    cleanupFocusListener();
-    cleanupPositionTracking();
-    cleanupGlobalEvents();
-    cleanupTauriEvents();
-    cleanupWindowDrag();
-    cleanupThemeWatcher();
-    cleanupGlobalClipboardListeners();
-    searchStore.stopListening();
 });
 </script>
 

@@ -7,7 +7,7 @@
                     AI 整理向导
                 </button>
                 <button class="action-btn" type="button" @click="onOpenPlugins">
-                    插件管理
+                    扩展插件（Rust）
                 </button>
                 <button class="action-btn danger" type="button" @click="onClearRecentUsed">
                     清除最近使用记录

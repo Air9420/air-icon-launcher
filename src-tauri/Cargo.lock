@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "air-icon-launcher"
-version = "0.5.10"
+version = "0.6.0"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -40,6 +40,7 @@ dependencies = [
  "fuzzy-matcher",
  "image",
  "lcms2",
+ "libloading 0.8.9",
  "log",
  "once_cell",
  "pinyin",

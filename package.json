@@ -1,6 +1,6 @@
 {
   "name": "air-icon-launcher",
-  "version": "0.5.10",
+  "version": "0.6.0",
   "type": "module",
   "description": "A Windows desktop launcher for organizing and launching apps with categories, search, and plugin support",
   "author": "Air",
@@ -42,6 +42,7 @@
     "@tauri-apps/plugin-fs": "^2.5.1",
     "@tauri-apps/plugin-opener": "^2",
     "@vueuse/core": "^14.2.1",
+    "cordis": "^4.0.0-rc.10",
     "marked": "^18.0.5",
     "pinia": "^3.0.4",
     "pinia-plugin-persistedstate": "^4.7.1",

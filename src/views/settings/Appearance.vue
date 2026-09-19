@@ -168,6 +168,14 @@ import { storeToRefs } from "pinia";
 import { useSettingsStore } from "../../stores";
 import { useUIStore, HOME_LAYOUT_PRESETS, CATEGORY_COLS_PRESETS, LAUNCHER_COLS_PRESETS, HomeLayoutPresetKey } from "../../stores/uiStore";
 import { showToast } from "../../composables/useGlobalToast";
+import { useCordis } from "../../kernel";
+import type { ThemeMode } from "../../kernel/services/theme-service";
+
+// Cordis domain services (P4). Prefer ctx.theme / ctx.settings for theme writes.
+// settingsStore remains the adapter for performanceMode / window-effect matrix.
+const cordis = useCordis();
+const themeService = cordis.theme;
+const settingsService = cordis.settings;
 
 const settingsStore = useSettingsStore();
 const uiStore = useUIStore();
@@ -177,12 +185,15 @@ const {
     homeSectionLayouts,
 } = storeToRefs(uiStore);
 const {
-    theme,
     windowEffectsEnabled,
     performanceMode,
     windowEffectType,
     windowEffectSupport,
 } = storeToRefs(settingsStore);
+
+// ThemeService.mode is the shared source when kernel is present
+// (settingsStore binds the same ref). Fallback keeps tests/no-kernel safe.
+const theme = themeService?.mode ?? storeToRefs(settingsStore).theme;
 
 const performanceModeDraft = ref<boolean>(false);
 const homeLayoutPresetOptions = HOME_LAYOUT_PRESETS.map((x) => x.preset);
@@ -221,8 +232,16 @@ function onSetHomeSectionLayoutPreset(
     uiStore.setHomeSectionLayoutPreset(section, preset);
 }
 
-async function onSetTheme(newTheme: "light" | "dark" | "transparent" | "system") {
+async function onSetTheme(newTheme: ThemeMode) {
     if (newTheme === "transparent" && !windowEffectsEnabled.value) {
+        return;
+    }
+    // Primary write path: ctx.theme.setMode → ctx.settings.patch (patch_config).
+    if (themeService && settingsService) {
+        const result = await themeService.setMode(newTheme);
+        if (!result.ok) {
+            throw result.error;
+        }
         return;
     }
     await settingsStore.setTheme(newTheme);
@@ -231,6 +250,8 @@ async function onSetTheme(newTheme: "light" | "dark" | "transparent" | "system")
 async function onPerformanceModeChange() {
     const enabled = performanceModeDraft.value;
     try {
+        // Window-effect compatibility matrix stays in settingsStore for P4.
+        // Shared refs + ThemeService watchers keep DOM in sync.
         const result = await settingsStore.setPerformanceMode(enabled);
         if (result.message) {
             showToast(result.message, { type: "info", duration: 5000 });

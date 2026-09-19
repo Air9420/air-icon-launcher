@@ -5,6 +5,23 @@ import { createPinia, setActivePinia } from "pinia";
 import ClipboardHistory from "../ClipboardHistory.vue";
 import { useClipboardStore } from "../../stores/clipboardStore";
 
+// jsdom does not implement IntersectionObserver; ClipboardHistory.vue uses it
+// for lazy image hydration. Provide a no-op stub for mount tests.
+class IntersectionObserverStub {
+    readonly root = null;
+    readonly rootMargin = "";
+    readonly thresholds: ReadonlyArray<number> = [];
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+    takeRecords(): IntersectionObserverEntry[] {
+        return [];
+    }
+}
+
+globalThis.IntersectionObserver =
+    IntersectionObserverStub as unknown as typeof IntersectionObserver;
+
 const { invokeMock } = vi.hoisted(() => ({
     invokeMock: vi.fn().mockResolvedValue([]),
 }));
