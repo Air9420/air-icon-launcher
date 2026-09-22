@@ -37,6 +37,14 @@ export class PluginHostService extends Service {
       });
       const offBus = ctx.ipc.on<PluginHostEventPayload>("plugin_host_bus", (event) => {
         this.pushHostEvent(event.payload);
+        // 后端启动扫描/自动 load 完成后刷新列表（loaded 徽章）
+        if (
+          event.payload &&
+          typeof event.payload === "object" &&
+          (event.payload as { event?: string }).event === "enabled_plugins_loaded"
+        ) {
+          void this.syncList();
+        }
       });
       return () => {
         offEvent();
@@ -65,6 +73,16 @@ export class PluginHostService extends Service {
       this.busyCount -= 1;
       this.loading.value = this.busyCount > 0;
     }
+  }
+
+  /**
+   * 不翻转全局 loading 的 IPC（invoke / 日志等轻量操作）。
+   * 避免列表因 loading 重绘造成闪烁。
+   */
+  private async runQuiet<T>(fn: () => Promise<InvokeResult<T>>): Promise<InvokeResult<T>> {
+    const result = await fn();
+    this.lastError.value = result.ok ? null : result.error;
+    return result;
   }
 
   /** Refresh reactive list from Host without toggling loading around callers. */
@@ -122,7 +140,7 @@ export class PluginHostService extends Service {
     method: string,
     args: unknown = {},
   ): Promise<InvokeResult<T>> {
-    return this.run(() =>
+    return this.runQuiet(() =>
       this.ctx.ipc.invoke<T>("plugin_host_invoke", {
         id,
         method,
@@ -161,7 +179,7 @@ export class PluginHostService extends Service {
   }
 
   getLog(id: string): Promise<InvokeResult<string[]>> {
-    return this.run(() => this.ctx.ipc.invoke<string[]>("plugin_host_get_log", { id }));
+    return this.runQuiet(() => this.ctx.ipc.invoke<string[]>("plugin_host_get_log", { id }));
   }
 
   emitEvent(id: string, event: unknown): Promise<InvokeResult<void>> {

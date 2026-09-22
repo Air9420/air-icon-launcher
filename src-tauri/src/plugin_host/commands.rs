@@ -86,39 +86,45 @@ fn scan_plugins_inner(state: &State<'_, PluginHostState>) -> AppResult<Vec<Plugi
         })
     });
 
-    let mut reg = state_registry(state)?;
-    for (id, dir, manifest) in &found {
-        // 已有条目若已指向含 dll 的路径，不用缺 dll 的目录覆盖。
-        if let Some(existing_dir) = reg.resolve_dir(id) {
-            let existing_ok = entry_file_exists(&existing_dir, manifest);
-            let incoming_ok = entry_file_exists(dir, manifest);
-            if existing_ok && !incoming_ok {
-                if let Some(existing) = reg.get_mut(id) {
-                    existing.manifest = manifest.clone();
+    {
+        let mut reg = state_registry(state)?;
+        for (id, dir, manifest) in &found {
+            // 已有条目若已指向含 dll 的路径，不用缺 dll 的目录覆盖。
+            if let Some(existing_dir) = reg.resolve_dir(id) {
+                let existing_ok = entry_file_exists(&existing_dir, manifest);
+                let incoming_ok = entry_file_exists(dir, manifest);
+                if existing_ok && !incoming_ok {
+                    if let Some(existing) = reg.get_mut(id) {
+                        existing.manifest = manifest.clone();
+                    }
+                    continue;
                 }
-                continue;
+            }
+            reg.remember_path(id, dir.clone());
+            if let Some(existing) = reg.get_mut(id) {
+                existing.manifest = manifest.clone();
+                if entry_file_exists(dir, manifest) {
+                    existing.plugin_dir = dir.clone();
+                }
+            } else {
+                reg.insert(LoadedPlugin {
+                    manifest: manifest.clone(),
+                    plugin_dir: dir.clone(),
+                    enabled: true,
+                    loaded: false,
+                    last_error: None,
+                    library: None,
+                    fns: None,
+                    abi_storage: None,
+                });
             }
         }
-        reg.remember_path(id, dir.clone());
-        if let Some(existing) = reg.get_mut(id) {
-            existing.manifest = manifest.clone();
-            if entry_file_exists(dir, manifest) {
-                existing.plugin_dir = dir.clone();
-            }
-        } else {
-            reg.insert(LoadedPlugin {
-                manifest: manifest.clone(),
-                plugin_dir: dir.clone(),
-                enabled: true,
-                loaded: false,
-                last_error: None,
-                library: None,
-                fns: None,
-                abi_storage: None,
-            });
-        }
+        reg.load_enabled_store();
     }
-    reg.load_enabled_store();
+
+    // 扫描后自动 load 已启用但未加载的插件（重启后无需手动禁用/启用）。
+    // 单插件失败只记 last_error，不阻断整个扫描。
+    let _ = load_enabled_plugins(state);
 
     // list 以 registry 为准；返回本次扫描到的 manifest（按 id）。
     let mut seen = std::collections::HashSet::new();
@@ -133,31 +139,82 @@ fn scan_plugins_inner(state: &State<'_, PluginHostState>) -> AppResult<Vec<Plugi
     Ok(manifests)
 }
 
+/// 加载所有 `enabled && !loaded` 的插件。失败写入 `last_error`，不中断其余插件。
+pub fn load_enabled_plugins(state: &State<'_, PluginHostState>) -> AppResult<usize> {
+    let ids: Vec<String> = {
+        let reg = state_registry(state)?;
+        reg.list_runtime()
+            .into_iter()
+            .filter(|p| p.enabled && !p.loaded)
+            .map(|p| p.id)
+            .collect()
+    };
+    let mut ok = 0usize;
+    for id in ids {
+        match load_plugin_inner(state, &id) {
+            Ok(()) => ok += 1,
+            Err(err) => {
+                log::warn!(
+                    "[plugin-host] auto-load '{}' failed: [{}] {}",
+                    id,
+                    err.code,
+                    err.message
+                );
+                if let Ok(mut reg) = state_registry(state) {
+                    if let Some(p) = reg.get_mut(&id) {
+                        p.last_error = Some(format!("[{}] {}", err.code, err.message));
+                    }
+                }
+            }
+        }
+    }
+    Ok(ok)
+}
+
 /// 扫描 `plugins/` 下 manifest v2（runtime=rust）的插件。
 #[command]
 pub fn plugin_host_scan(state: State<'_, PluginHostState>) -> AppResult<Vec<PluginHostManifest>> {
     scan_plugins_inner(&state)
 }
 
+/// 自启钩子用：扫描（与 `plugin_host_scan` 同一实现）。
+pub fn scan_plugins_for_hooks(
+    state: &State<'_, PluginHostState>,
+) -> AppResult<Vec<PluginHostManifest>> {
+    scan_plugins_inner(state)
+}
+
 /// 加载插件 cdylib。
 #[command]
 pub fn plugin_host_load(state: State<'_, PluginHostState>, id: String) -> AppResult<()> {
+    load_plugin_inner(&state, &id)
+}
+
+/// 自启钩子用：加载（与 `plugin_host_load` 同一实现）。
+pub fn load_plugin_for_hooks(
+    state: &State<'_, PluginHostState>,
+    id: &str,
+) -> AppResult<()> {
+    load_plugin_inner(state, id)
+}
+
+fn load_plugin_inner(state: &State<'_, PluginHostState>, id: &str) -> AppResult<()> {
     {
         let missing = {
-            let reg = state_registry(&state)?;
-            reg.get(&id).is_none() && reg.resolve_dir(&id).is_none()
+            let reg = state_registry(state)?;
+            reg.get(id).is_none() && reg.resolve_dir(id).is_none()
         };
         if missing {
-            scan_plugins_inner(&state)?;
+            scan_plugins_inner(state)?;
         }
     }
 
     let (plugin_dir, manifest, enabled, app) = {
-        let reg = state_registry(&state)?;
+        let reg = state_registry(state)?;
         let base_dir = reg
-            .resolve_dir(&id)
+            .resolve_dir(id)
             .ok_or_else(|| AppError::not_found(format!("Plugin '{}'", id)))?;
-        let manifest = if let Some(p) = reg.get(&id) {
+        let manifest = if let Some(p) = reg.get(id) {
             if p.loaded {
                 return Ok(());
             }
@@ -166,16 +223,16 @@ pub fn plugin_host_load(state: State<'_, PluginHostState>, id: String) -> AppRes
             read_manifest_file(&base_dir.join("manifest.json"))?
         };
         // 优先解析到真正含 entry dll 的目录（安装目录 plugins/<id>）。
-        let plugin_dir = reg.resolve_load_dir(&id, &manifest.entry).unwrap_or(base_dir);
-        let enabled = reg.get(&id).map(|p| p.enabled).unwrap_or(true);
+        let plugin_dir = reg.resolve_load_dir(id, &manifest.entry).unwrap_or(base_dir);
+        let enabled = reg.get(id).map(|p| p.enabled).unwrap_or(true);
         (plugin_dir, manifest, enabled, state.app_handle())
     };
 
     let loaded = loader::load_plugin_dll(&plugin_dir, &manifest, enabled, app)?;
 
-    let mut reg = state_registry(&state)?;
+    let mut reg = state_registry(state)?;
     // 若已有旧实例，先卸载
-    if let Some(old) = reg.get_mut(&id) {
+    if let Some(old) = reg.get_mut(id) {
         if old.loaded {
             let _ = loader::unload_plugin(old);
         }
@@ -211,22 +268,35 @@ pub fn plugin_host_invoke(
     loader::invoke_plugin(plugin, &method, &args)
 }
 
-/// 启用/禁用插件（持久化）。禁用时若已加载则卸载。
+/// 启用/禁用插件（持久化）。启用时自动 load，禁用时若已加载则 unload。
 #[command]
 pub fn plugin_host_set_enabled(
     state: State<'_, PluginHostState>,
     id: String,
     enabled: bool,
 ) -> AppResult<()> {
-    let mut reg = state_registry(&state)?;
-    let plugin = reg
-        .get_mut(&id)
-        .ok_or_else(|| AppError::not_found(format!("Plugin '{}'", id)))?;
-    plugin.enabled = enabled;
-    if !enabled && plugin.loaded {
-        loader::unload_plugin(plugin)?;
+    {
+        let mut reg = state_registry(&state)?;
+        let plugin = reg
+            .get_mut(&id)
+            .ok_or_else(|| AppError::not_found(format!("Plugin '{}'", id)))?;
+        plugin.enabled = enabled;
+        if !enabled && plugin.loaded {
+            loader::unload_plugin(plugin)?;
+        }
     }
-    reg.persist_enabled()?;
+    if enabled {
+        if let Err(err) = load_plugin_inner(&state, &id) {
+            // load 失败：回滚 enabled，避免磁盘状态与前端开关不一致
+            let mut reg = state_registry(&state)?;
+            if let Some(plugin) = reg.get_mut(&id) {
+                plugin.enabled = false;
+            }
+            let _ = reg.persist_enabled();
+            return Err(err);
+        }
+    }
+    state_registry(&state)?.persist_enabled()?;
     Ok(())
 }
 
@@ -243,19 +313,28 @@ pub fn plugin_host_install(state: State<'_, PluginHostState>, path: String) -> A
     let dest = base.join(&manifest.id);
     copy_dir_recursive(&source, &dest)?;
 
-    let mut reg = state_registry(&state)?;
-    reg.insert(LoadedPlugin {
-        manifest: manifest.clone(),
-        plugin_dir: dest,
-        enabled: true,
-        loaded: false,
-        last_error: None,
-        library: None,
-        fns: None,
-        abi_storage: None,
-    });
-    reg.load_enabled_store();
-    reg.persist_enabled()?;
+    {
+        let mut reg = state_registry(&state)?;
+        reg.insert(LoadedPlugin {
+            manifest: manifest.clone(),
+            plugin_dir: dest,
+            enabled: true,
+            loaded: false,
+            last_error: None,
+            library: None,
+            fns: None,
+            abi_storage: None,
+        });
+        reg.load_enabled_store();
+        reg.persist_enabled()?;
+    }
+    // 安装默认 enabled → 立即 load，与「启用=已加载」一致。
+    if let Err(err) = load_plugin_inner(&state, &manifest.id) {
+        let mut reg = state_registry(&state)?;
+        if let Some(p) = reg.get_mut(&manifest.id) {
+            p.last_error = Some(format!("[{}] {}", err.code, err.message));
+        }
+    }
     Ok(manifest)
 }
 

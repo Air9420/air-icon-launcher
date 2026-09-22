@@ -1,0 +1,26 @@
+{
+  "manifest_version": 2,
+  "id": "com.air.proxy.disable",
+  "name": "关闭系统代理",
+  "version": "0.1.0",
+  "runtime": "rust",
+  "entry": "air_proxy_disable.dll",
+  "description": "开机自启后关闭 Windows 设置中的系统代理（ProxyEnable=0），不改动代理服务器地址与代理软件进程。",
+  "author": "Air",
+  "capabilities": ["log"],
+  "contributes": {
+    "commands": [
+      {
+        "id": "proxy.disable",
+        "title": "关闭系统代理",
+        "method": "disable"
+      },
+      {
+        "id": "proxy.status",
+        "title": "代理状态",
+        "method": "status"
+      }
+    ],
+    "menus": []
+  }
+}

@@ -1,11 +1,11 @@
 {
-  "version": "0.6.0",
-  "notes": "## v0.6.0\n\n### 架构\n- 引入 Cordis 宿主内核：能力皆 Service（ipc/settings/theme/apps/search/stats/menus/pluginHost），扩展皆 Plugin\n- 新增 Rust Plugin Host：cdylib ABI + capability 门禁；示例插件可加载/hello\n- 下线旧 iframe JS 插件系统；菜单贡献迁至 ctx.menus（单列表注册表）\n- Pinia store 瘦身：领域写路径收敛到 AppsService / apps-item-ops 单源\n- 拆分巨型 View：categories / category / ClipboardHistory / useMenuActions\n\n### 性能\n- Solar 图标按需与分包（icons chunk 约 -54%）\n- 主包与 window-visibility 减负；UpdateDialog 懒加载；剪贴板组件 idle 预载\n- 搜索 debounce + 过期响应丢弃\n\n### 修复\n- 剪贴板：再次复制已有历史项时 touch 置顶，保留收藏等字段并同步前端列表\n- 配置：移除已下线的 plugin_sandbox_enabled 残留字段（旧 JSON 兼容忽略）\n- 导入：legacy original_icon_base64 → hasCustomIcon 映射修正\n- 单元测试基线修复，当前 339 全绿",
-  "pub_date": "2026-09-19T10:36:55Z",
+  "version": "0.6.1",
+  "notes": "## v0.6.1\n\n### 插件\n- 启用开关自动 load、禁用自动 unload；启动与扫描后自动加载已启用插件\n- 卡片命令按钮改为 manifest `contributes.commands` 驱动（支持 `method` 映射）\n- 详情/调试按插件展开折叠；footer 固定按钮与命令按钮分行\n- 新增关闭系统代理示例插件（proxy.disable / proxy.status）\n\n### 修复\n- 修复重启后需手动禁用再启用才加载插件的问题\n- 修复点击命令/日志导致列表卸载、滚动回顶与页面闪烁\n- 去掉插件页重复标题；invoke 结果改为 toast 反馈",
+  "pub_date": "2026-09-22T01:18:41Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUmFjZzdKK2ViV1hlcDBnWTRmbWxpUnErL1EwUDlVZlg3c0RFN0dDSmpORWozT3dBekZSN215NmtUcUJuenF0MlpRZnUwN1BpelpMVHBJQ2JhSUYrZGdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5ODE0MTY1CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC42LjBfeDY0LXNldHVwLm5zaXMuemlwCnA4MFlFK1liYzdOcHpqNlVCRHB1d2Rxd2dsRkdYZWt0UVZUcUtRblg3MndDVGQvdUFyQUw1OVd2UE9DazBDcnBtUkRBaXRwOU9DSTllU0FyMVkrcENRPT0K",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.6.0/air-icon-launcher_0.6.0_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUlVhUEVOWHQvTnVKSkwxdStadW1uT1k2d0d5U1Z1bEZsT0d3YVR6eWtVbkkrQVlFeEM4dWFDamZlNUtub3lhbngzRnFySnY5WG4xazdVc3dMc2dYa2djPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMDM5ODk3CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC42LjFfeDY0LXNldHVwLm5zaXMuemlwCjM0dEZSTGMwYlNRZHRlQW05YzczUDYyZDJZY1ZTUmtTZmhkbzQ0TlE5c0tGWm1ZUTgrTXJ5bE96VXNlREhza2pwNjVtVVAvSUJRMXY0bW5Ga051NUF3PT0K",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.6.1/air-icon-launcher_0.6.1_x64-setup.nsis.zip"
     }
   }
 }

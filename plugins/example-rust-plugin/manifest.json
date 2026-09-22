@@ -12,7 +12,8 @@
     "commands": [
       {
         "id": "example.hello",
-        "title": "Hello from Rust"
+        "title": "Hello from Rust",
+        "method": "hello"
       }
     ],
     "menus": []

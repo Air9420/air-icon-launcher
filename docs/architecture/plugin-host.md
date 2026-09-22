@@ -9,6 +9,8 @@
 - **Rust 能力插件**（Windows `cdylib` / `.dll`）
 - **capability 门强制**（未声明能力无法调用宿主敏感 API）
 - **稳定 C ABI v1** + `libloading` 动态加载
+- **enabled 生命周期**：`plugin_host_set_enabled(true)` 自动 load，`false` 自动 unload；启动与 scan 后会对 enabled 插件自动 load
+- **命令贡献**：`contributes.commands[].method`（缺省用 `id`）驱动卡片上的 invoke 按钮
 - 命令前缀 **`plugin_host_`**，供前端 Cordis 调用
 - 配置残留 `plugin_sandbox_enabled` **已删除**；旧 JSON/备份中的该 key 由 serde 忽略，`get_config` 不再写出
 

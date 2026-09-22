@@ -43,6 +43,9 @@ pub struct PluginHostCommandContribute {
     pub id: String,
     #[serde(default)]
     pub title: String,
+    /// 实际 `plugin_host_invoke` 的 method；缺省时用 `id`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

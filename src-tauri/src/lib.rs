@@ -227,13 +227,17 @@ pub fn run() {
 
             // Rust Plugin Host (P2)：注册 State（iframe plugins.rs 已删除）
             plugin_host::init_plugin_host(&handle);
+            // 重启后自动 load 已启用插件（后台，不阻塞 setup）
+            plugin_host::schedule_load_enabled_plugins(handle.clone());
             process_monitor::start_process_monitor(handle.clone());
             display_monitor::start_display_monitor(handle.clone());
-            
+
             if autostart_service::is_autostart_launch() {
                 if let Some(window) = handle.get_webview_window("main") {
                     let _ = window.hide();
                 }
+                // 自启时对 enabled 插件各调用一次 run_on_autostart（后台，不阻塞 setup）
+                plugin_host::autostart::schedule_autostart_hooks(handle.clone());
             }
             {
                 let (toggle, clipboard_shortcut, display_shortcut) = handle

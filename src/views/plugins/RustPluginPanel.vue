@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { onMounted, ref, watch, type Ref } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCordis } from "../../kernel";
-import type { PluginHostRuntimeInfo } from "../../types/plugin-host";
+import type {
+  PluginHostCommandContribute,
+  PluginHostRuntimeInfo,
+} from "../../types/plugin-host";
 import type { AppError } from "../../utils/invoke-wrapper";
 import { showToast } from "../../composables/useGlobalToast";
 import { useConfirmDialog } from "../../composables/useConfirmDialog";
@@ -23,9 +26,32 @@ const panelBusy = ref(false);
 const logsOpen = ref(false);
 const logsPluginId = ref("");
 const logs = ref<string[]>([]);
-const invokePluginId = ref("");
-const invokeResultText = ref("");
-const invokeFailed = ref(false);
+/** 已展开详情的插件 id（默认全部折叠） */
+const expandedIds = ref<Set<string>>(new Set());
+const debugIds = ref<Set<string>>(new Set());
+
+function toggleSet(target: Ref<Set<string>>, id: string): void {
+  const next = new Set(target.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  target.value = next;
+}
+
+function toggleDetails(id: string): void {
+  toggleSet(expandedIds, id);
+}
+
+function isExpanded(id: string): boolean {
+  return expandedIds.value.has(id);
+}
+
+function toggleDebug(id: string): void {
+  toggleSet(debugIds, id);
+}
+
+function isDebugOpen(id: string): boolean {
+  return debugIds.value.has(id);
+}
 
 onMounted(async () => {
   if (!host) return;
@@ -61,6 +87,28 @@ function fmtValue(value: unknown): string {
   }
 }
 
+/** 把 invoke 返回值压成一行 toast 文案；对象取常见语义字段。 */
+function summarizeInvokeResult(method: string, value: unknown): string {
+  if (value === null || value === undefined) return `${method}: 无返回`;
+  if (typeof value === "string") return `${method}: ${value}`;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return `${method}: ${String(value)}`;
+  }
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    if (method === "status" && "proxy_enable" in obj) {
+      return obj.proxy_enable === 1 ? "系统代理：已开启" : "系统代理：已关闭";
+    }
+    try {
+      const json = JSON.stringify(value);
+      return json.length > 120 ? `${method}: ${json.slice(0, 120)}…` : `${method}: ${json}`;
+    } catch {
+      return `${method}: 已返回`;
+    }
+  }
+  return `${method}: 已返回`;
+}
+
 async function onRefresh() {
   const h = requireHost();
   if (!h) return;
@@ -88,7 +136,10 @@ async function onToggleEnabled(plugin: PluginHostRuntimeInfo, event: Event) {
     showToast(h.formatError(result.error), { type: "error" });
     return;
   }
-  showToast(enabled ? "插件已启用" : "插件已禁用", { type: "success" });
+  showToast(
+    enabled ? "插件已启用并加载" : "插件已禁用并卸载",
+    { type: "success" },
+  );
 }
 
 async function onLoad(plugin: PluginHostRuntimeInfo) {
@@ -113,21 +164,28 @@ async function onUnload(plugin: PluginHostRuntimeInfo) {
   }
 }
 
-async function onInvokeHello(plugin: PluginHostRuntimeInfo) {
+/** 由 manifest `contributes.commands` 发起的插件方法调用；结果用 toast 反馈。 */
+async function onInvokeCommand(
+  plugin: PluginHostRuntimeInfo,
+  command: { id: string; title?: string; method?: string },
+) {
   const h = requireHost();
   if (!h) return;
-  invokePluginId.value = plugin.id;
-  invokeResultText.value = "";
-  invokeFailed.value = false;
-  const result = await h.invoke(plugin.id, "hello", { name: "Air" });
+  const method = command.method || command.id;
+  const result = await h.invoke(plugin.id, method, {});
   if (result.ok) {
-    invokeResultText.value = fmtValue(result.value);
-    showToast("调用成功", { type: "success" });
+    showToast(summarizeInvokeResult(method, result.value), { type: "success" });
   } else {
-    invokeFailed.value = true;
-    invokeResultText.value = fmtError(result.error);
     showToast(h.formatError(result.error), { type: "error" });
   }
+}
+
+function commandLabel(command: {
+  id: string;
+  title?: string;
+  method?: string;
+}): string {
+  return command.title || command.method || command.id;
 }
 
 async function onShowLogs(plugin: PluginHostRuntimeInfo) {
@@ -201,6 +259,10 @@ function commandList(plugin: PluginHostRuntimeInfo): string {
   const cmds = plugin.contributes?.commands ?? [];
   return cmds.length ? cmds.map((c) => c.id).join(", ") : "—";
 }
+
+function pluginCommands(plugin: PluginHostRuntimeInfo): PluginHostCommandContribute[] {
+  return plugin.contributes?.commands ?? [];
+}
 </script>
 
 <template>
@@ -237,7 +299,10 @@ function commandList(plugin: PluginHostRuntimeInfo): string {
       ctx.pluginHost 未注册，请检查 kernel bootstrap。
     </div>
 
-    <div v-else-if="loading || panelBusy" class="loading">与 Plugin Host 通信中...</div>
+    <!-- 仅首次/空列表时显示骨架；IPC 忙碌时不卸载列表，避免滚动高度塌缩回顶 -->
+    <div v-else-if="plugins.length === 0 && (loading || panelBusy)" class="loading">
+      与 Plugin Host 通信中...
+    </div>
 
     <div v-else-if="plugins.length === 0" class="empty">
       暂无 Rust 能力插件。可将含 manifest.json v2 的插件目录通过「从文件夹安装」导入。
@@ -263,7 +328,7 @@ function commandList(plugin: PluginHostRuntimeInfo): string {
             </div>
           </div>
           <div class="plugin-actions">
-            <label class="switch" :title="plugin.enabled ? '点击禁用' : '点击启用'">
+            <label class="switch" :title="plugin.enabled ? '点击禁用并卸载' : '点击启用并加载'">
               <input
                 type="checkbox"
                 :checked="plugin.enabled"
@@ -272,24 +337,36 @@ function commandList(plugin: PluginHostRuntimeInfo): string {
               />
               <span class="slider"></span>
             </label>
+            <button
+              class="details-toggle"
+              type="button"
+              :aria-expanded="isExpanded(plugin.id)"
+              :title="isExpanded(plugin.id) ? '折叠详情' : '展开详情'"
+              @click="toggleDetails(plugin.id)"
+            >
+              <span class="chevron" :class="{ open: isExpanded(plugin.id) }" aria-hidden="true"></span>
+              详情
+            </button>
           </div>
         </div>
 
-        <div v-if="plugin.description" class="plugin-description">
-          {{ plugin.description }}
-        </div>
+        <div v-if="isExpanded(plugin.id)" class="plugin-details">
+          <div v-if="plugin.description" class="plugin-description">
+            {{ plugin.description }}
+          </div>
 
-        <div class="kv-row">
-          <span class="kv-label">capabilities</span>
-          <span class="kv-value caps">{{ capList(plugin) }}</span>
-        </div>
-        <div class="kv-row">
-          <span class="kv-label">commands</span>
-          <span class="kv-value">{{ commandList(plugin) }}</span>
-        </div>
-        <div class="kv-row">
-          <span class="kv-label">entry</span>
-          <span class="kv-value mono">{{ plugin.entry }}</span>
+          <div class="kv-row">
+            <span class="kv-label">capabilities</span>
+            <span class="kv-value caps">{{ capList(plugin) }}</span>
+          </div>
+          <div class="kv-row">
+            <span class="kv-label">commands</span>
+            <span class="kv-value">{{ commandList(plugin) }}</span>
+          </div>
+          <div class="kv-row">
+            <span class="kv-label">entry</span>
+            <span class="kv-value mono">{{ plugin.entry }}</span>
+          </div>
         </div>
 
         <div v-if="plugin.last_error" class="plugin-error">
@@ -297,51 +374,68 @@ function commandList(plugin: PluginHostRuntimeInfo): string {
         </div>
 
         <div class="plugin-footer">
-          <div class="footer-left">
+          <div class="footer-main">
             <span class="log-count">日志 {{ plugin.log_count }} 条</span>
+            <div class="footer-actions">
+              <button
+                class="mini-btn"
+                type="button"
+                :disabled="loading || panelBusy"
+                @click="onShowLogs(plugin)"
+              >
+                日志
+              </button>
+              <button
+                class="mini-btn danger"
+                type="button"
+                :disabled="loading || panelBusy"
+                @click="onUninstall(plugin)"
+              >
+                删除
+              </button>
+              <button
+                class="mini-btn debug-toggle"
+                type="button"
+                :aria-expanded="isDebugOpen(plugin.id)"
+                @click="toggleDebug(plugin.id)"
+              >
+                调试
+              </button>
+            </div>
           </div>
-          <div class="footer-actions">
+          <div v-if="pluginCommands(plugin).length" class="footer-commands">
             <button
-              class="mini-btn"
+              v-for="cmd in pluginCommands(plugin)"
+              :key="cmd.id"
+              class="mini-btn command"
               type="button"
-              :disabled="loading || panelBusy"
-              @click="onLoad(plugin)"
-            >
-              加载
-            </button>
-            <button
-              class="mini-btn"
-              type="button"
+              :title="cmd.method || cmd.id"
               :disabled="loading || panelBusy || !plugin.loaded"
-              @click="onUnload(plugin)"
+              @click="onInvokeCommand(plugin, cmd)"
             >
-              卸载
-            </button>
-            <button
-              class="mini-btn"
-              type="button"
-              :disabled="loading || panelBusy || !plugin.loaded"
-              @click="onInvokeHello(plugin)"
-            >
-              调用 hello
-            </button>
-            <button
-              class="mini-btn"
-              type="button"
-              :disabled="loading || panelBusy"
-              @click="onShowLogs(plugin)"
-            >
-              日志
-            </button>
-            <button
-              class="mini-btn danger"
-              type="button"
-              :disabled="loading || panelBusy"
-              @click="onUninstall(plugin)"
-            >
-              删除
+              {{ commandLabel(cmd) }}
             </button>
           </div>
+        </div>
+
+        <div v-if="isDebugOpen(plugin.id)" class="debug-row">
+          <span class="debug-hint">手动生命周期（默认由开关自动 load/unload）</span>
+          <button
+            class="mini-btn"
+            type="button"
+            :disabled="loading || panelBusy || plugin.loaded"
+            @click="onLoad(plugin)"
+          >
+            加载
+          </button>
+          <button
+            class="mini-btn"
+            type="button"
+            :disabled="loading || panelBusy || !plugin.loaded"
+            @click="onUnload(plugin)"
+          >
+            卸载
+          </button>
         </div>
       </div>
     </div>
@@ -349,15 +443,6 @@ function commandList(plugin: PluginHostRuntimeInfo): string {
     <div v-if="lastError" class="host-error">
       <div class="host-error-title">最近 Host 错误</div>
       <div class="host-error-body">{{ fmtError(lastError) }}</div>
-    </div>
-
-    <div v-if="invokePluginId" class="invoke-result">
-      <div class="invoke-title">
-        invoke · {{ invokePluginId }} · hello
-        <span v-if="invokeFailed" class="invoke-fail-tag">失败</span>
-        <span v-else class="invoke-ok-tag">成功</span>
-      </div>
-      <pre class="invoke-body">{{ invokeResultText }}</pre>
     </div>
 
     <div v-if="hostEvents.length" class="event-feed">
@@ -556,10 +641,56 @@ function commandList(plugin: PluginHostRuntimeInfo): string {
   color: var(--text-tertiary);
 }
 
+.plugin-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.details-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color-strong);
+  background: transparent;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.details-toggle:hover {
+  background: var(--hover-bg);
+  color: var(--text-color);
+}
+
+.chevron {
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  transition: transform 0.15s ease;
+}
+
+.chevron.open {
+  transform: rotate(180deg);
+}
+
+.plugin-details {
+  margin-top: 8px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border-color);
+}
+
 .plugin-description {
   font-size: 12px;
   color: var(--text-secondary);
-  margin-top: 8px;
+  margin-top: 6px;
   line-height: 1.4;
 }
 
@@ -602,30 +733,48 @@ function commandList(plugin: PluginHostRuntimeInfo): string {
 
 .plugin-footer {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 8px;
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px solid var(--border-color);
-  gap: 8px;
-  flex-wrap: wrap;
 }
 
-.footer-left {
+/* 第一行：日志计数 + 固定按钮（日志/删除/调试），始终同一行 */
+.footer-main {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .log-count {
   font-size: 11px;
   color: var(--text-tertiary);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .footer-actions {
   display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-shrink: 1;
+  min-width: 0;
+  margin-left: auto;
+}
+
+/* 第二行：蓝色命令按钮，允许换行 */
+.footer-commands {
+  display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  align-items: center;
+  width: 100%;
 }
 
 .mini-btn {
@@ -656,6 +805,35 @@ function commandList(plugin: PluginHostRuntimeInfo): string {
 
 .mini-btn.danger:hover:not(:disabled) {
   background: var(--error-bg);
+}
+
+.mini-btn.command {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.mini-btn.command:hover:not(:disabled) {
+  background: var(--primary-bg);
+}
+
+.mini-btn.debug-toggle {
+  color: var(--text-tertiary);
+}
+
+.debug-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-color);
+}
+
+.debug-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-right: 4px;
 }
 
 .switch {
@@ -709,7 +887,6 @@ input:disabled + .slider {
 }
 
 .host-error,
-.invoke-result,
 .event-feed,
 .logs-panel {
   background: var(--card-bg);
@@ -723,7 +900,6 @@ input:disabled + .slider {
 }
 
 .host-error-title,
-.invoke-title,
 .event-title,
 .logs-title {
   font-size: 12px;
@@ -733,7 +909,6 @@ input:disabled + .slider {
 }
 
 .host-error-body,
-.invoke-body,
 .logs-body {
   font-size: 11px;
   font-family: monospace;
@@ -743,22 +918,6 @@ input:disabled + .slider {
   word-break: break-all;
   max-height: 180px;
   overflow: auto;
-}
-
-.invoke-body {
-  color: var(--text-secondary);
-}
-
-.invoke-fail-tag {
-  margin-left: 8px;
-  color: var(--error-color);
-  font-weight: 500;
-}
-
-.invoke-ok-tag {
-  margin-left: 8px;
-  color: #69db7c;
-  font-weight: 500;
 }
 
 .event-line {

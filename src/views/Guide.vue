@@ -196,8 +196,9 @@
                 <p>支持通过 Rust 能力插件扩展功能，可在「设置 → 功能 → 插件管理」中管理。</p>
                 <ul>
                     <li><strong>安装插件：</strong>在插件页选择包含 manifest.json（v2 + runtime=rust）的插件文件夹</li>
-                    <li><strong>启用/禁用：</strong>点击插件卡片上的开关切换状态</li>
-                    <li><strong>卸载插件：</strong>点击插件卡片底部的「卸载」按钮</li>
+                    <li><strong>启用/禁用：</strong>卡片右上角开关；启用会自动加载插件，禁用会自动卸载</li>
+                    <li><strong>命令按钮：</strong>由插件 manifest 的 <code>contributes.commands</code> 声明，点击后调用对应 method</li>
+                    <li><strong>卸载插件：</strong>点击插件卡片底部的「删除」按钮</li>
                     <li><strong>能力门禁：</strong>未在 manifest 声明的 capability 无法调用宿主敏感 API</li>
                 </ul>
 

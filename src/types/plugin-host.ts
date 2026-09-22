@@ -6,6 +6,8 @@
 export interface PluginHostCommandContribute {
   id: string;
   title?: string;
+  /** 实际 invoke 的 method；缺省时用 id。 */
+  method?: string;
 }
 
 export interface PluginHostMenuContribute {

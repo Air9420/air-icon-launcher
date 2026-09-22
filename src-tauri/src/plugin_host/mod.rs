@@ -9,6 +9,7 @@
 //! 新系统只识别 `manifest_version=2` 且 `runtime=rust` 的插件。
 
 pub mod abi;
+pub mod autostart;
 pub mod capability;
 pub mod commands;
 pub mod loader;
@@ -20,6 +21,39 @@ pub use registry::{init_plugin_host, PluginHostState};
 use crate::error::{AppError, AppResult};
 use manifest::{read_manifest_file, PluginHostManifest};
 use std::path::{Path, PathBuf};
+use tauri::{AppHandle, Emitter, Manager};
+
+/// 启动后在后台扫描并 load 所有已启用插件（不阻塞 setup）。
+///
+/// 正常启动与 `--autostart` 都会走这里；autostart 钩子在线程内另行调度，
+/// 即使 load 已完成也会对已加载插件再次 invoke（幂等由 load 早退保证）。
+pub fn schedule_load_enabled_plugins(app: AppHandle) {
+    std::thread::spawn(move || {
+        let state = match app.try_state::<PluginHostState>() {
+            Some(s) => s,
+            None => {
+                log::warn!("[plugin-host] PluginHostState not ready");
+                return;
+            }
+        };
+        if let Err(e) = commands::scan_plugins_for_hooks(&state) {
+            log::warn!("[plugin-host] startup scan failed: [{}] {}", e.code, e.message);
+            return;
+        }
+        match commands::load_enabled_plugins(&state) {
+            Ok(n) => log::info!("[plugin-host] startup loaded {} enabled plugin(s)", n),
+            Err(e) => log::warn!("[plugin-host] load_enabled failed: [{}] {}", e.code, e.message),
+        }
+        let _ = app.emit(
+            "plugin_host_bus",
+            serde_json::json!({
+                "plugin_id": "*",
+                "event": "enabled_plugins_loaded",
+                "payload": {},
+            }),
+        );
+    });
+}
 
 /// 插件根目录：开发期优先 `<repo>/plugins`，否则 `%APPDATA%/air-icon-launcher/plugins`。
 ///

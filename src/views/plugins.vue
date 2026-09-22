@@ -79,11 +79,6 @@ async function onRefresh() {
             <div v-if="loading" class="loading">加载中...</div>
 
             <div class="section">
-                <div class="section-title">Rust 能力插件</div>
-                <div class="hint">
-                    manifest v2 + runtime=rust；目录 plugins/，配置在 app_data/plugin-host/。
-                    能力由 capability 门控制。
-                </div>
                 <RustPluginPanel />
             </div>
 
