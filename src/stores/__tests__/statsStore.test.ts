@@ -383,4 +383,26 @@ describe("statsStore - 智能排序 & 统计", () => {
       expect(stats.searchHistory).toHaveLength(0);
     });
   });
+
+  describe("external directory blocking", () => {
+    it("filters only recent launches inside the selected directory", () => {
+      stats.recordExternalLaunch({ path: "C:\\Tools\\app.exe", name: "app" });
+      stats.recordExternalLaunch({ path: "C:\\Tools-old\\other.exe", name: "other" });
+
+      stats.blockExternalLaunchDirectory("c:/tools/");
+
+      expect(stats.isExternalLaunchBlocked("C:\\Tools\\app.exe")).toBe(true);
+      expect(stats.isExternalLaunchBlocked("C:\\Tools-old\\other.exe")).toBe(false);
+      expect(stats.externalRecentLaunches.map((entry) => entry.path)).toEqual([
+        "C:\\Tools-old\\other.exe",
+      ]);
+
+      stats.recordExternalLaunch({ path: "C:\\Tools\\later.exe", name: "later" });
+      expect(stats.externalRecentLaunches).toHaveLength(1);
+
+      stats.unblockExternalLaunchDirectory("C:\\Tools");
+      stats.recordExternalLaunch({ path: "C:\\Tools\\later.exe", name: "later" });
+      expect(stats.externalRecentLaunches).toHaveLength(2);
+    });
+  });
 });

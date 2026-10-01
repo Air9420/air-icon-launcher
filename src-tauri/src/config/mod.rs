@@ -3,7 +3,7 @@ pub mod types;
 use crate::error::{AppError, AppResult};
 use log::warn;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -383,6 +383,62 @@ fn sanitize_launcher_data(mut launcher_data: LauncherData) -> LauncherData {
     launcher_data
 }
 
+fn repair_windows_store_launcher_paths(launcher_data: &mut LauncherData) -> bool {
+    #[cfg(windows)]
+    {
+        if !launcher_data
+            .categories
+            .iter()
+            .flat_map(|category| &category.items)
+            .any(|item| {
+                item.item_type == "file"
+                    && crate::commands::installed_apps::windows_apps_target_key(&item.path)
+                        .is_some()
+            })
+        {
+            return false;
+        }
+
+        let targets =
+            crate::commands::installed_apps::current_appsfolder_targets_by_windows_apps_path();
+        repair_windows_store_launcher_paths_with_targets(launcher_data, &targets)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = launcher_data;
+        false
+    }
+}
+
+fn repair_windows_store_launcher_paths_with_targets(
+    launcher_data: &mut LauncherData,
+    targets: &HashMap<String, String>,
+) -> bool {
+    let mut changed = false;
+    for item in launcher_data
+        .categories
+        .iter_mut()
+        .flat_map(|category| &mut category.items)
+    {
+        if item.item_type != "file" {
+            continue;
+        }
+        let Some(key) = crate::commands::installed_apps::windows_apps_target_key(&item.path) else {
+            continue;
+        };
+        let Some(target) = targets.get(&key) else {
+            continue;
+        };
+
+        item.path.clear();
+        item.url = Some(target.clone());
+        item.item_type = "url".to_string();
+        item.is_directory = false;
+        changed = true;
+    }
+    changed
+}
+
 fn current_export_data(manager: &ConfigManager) -> ExportData {
     let export_time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -653,7 +709,8 @@ impl ConfigManager {
     }
 
     pub fn save_launcher_data(&self, data: &LauncherData) -> Result<(), String> {
-        let sanitized = sanitize_launcher_data(data.clone());
+        let mut sanitized = sanitize_launcher_data(data.clone());
+        repair_windows_store_launcher_paths(&mut sanitized);
         write_json_pretty_atomically(&self.launcher_data_path, &sanitized)
     }
 
@@ -862,7 +919,13 @@ pub fn patch_config(
 
 #[tauri::command]
 pub fn get_launcher_data(manager: tauri::State<'_, ConfigManager>) -> AppResult<LauncherData> {
-    Ok(manager.load_launcher_data())
+    let mut data = manager.load_launcher_data();
+    if repair_windows_store_launcher_paths(&mut data) {
+        manager
+            .save_launcher_data(&data)
+            .map_err(|e| AppError::new("LAUNCHER_DATA_SAVE_ERROR", e))?;
+    }
+    Ok(data)
 }
 
 #[tauri::command]
@@ -1324,6 +1387,38 @@ mod tests {
         ));
         std::fs::create_dir_all(&base).unwrap();
         base
+    }
+
+    #[test]
+    fn repairs_windows_store_launcher_path_to_current_appsfolder_target() {
+        let mut data = LauncherData {
+            categories: vec![CategoryData {
+                id: "cat".to_string(),
+                items: vec![LauncherItemData {
+                    id: "app".to_string(),
+                    name: "Notepad".to_string(),
+                    path: r"C:\Program Files\WindowsApps\Microsoft.WindowsNotepad_11.0.0.0_x64__8wekyb3d8bbwe\Notepad\Notepad.exe".to_string(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let targets = HashMap::from([(
+            r"microsoft.windowsnotepad_8wekyb3d8bbwe\notepad\notepad.exe".to_string(),
+            r"shell:AppsFolder\Microsoft.WindowsNotepad_8wekyb3d8bbwe!App".to_string(),
+        )]);
+
+        assert!(repair_windows_store_launcher_paths_with_targets(
+            &mut data, &targets
+        ));
+        let item = &data.categories[0].items[0];
+        assert_eq!(item.item_type, "url");
+        assert_eq!(item.path, "");
+        assert_eq!(
+            item.url.as_deref(),
+            Some(r"shell:AppsFolder\Microsoft.WindowsNotepad_8wekyb3d8bbwe!App")
+        );
     }
 
     #[test]

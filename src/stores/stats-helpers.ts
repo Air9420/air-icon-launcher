@@ -79,6 +79,7 @@ export type BlockedExternalLaunchRecord = {
   name: string;
   source: string;
   blockedAt: number;
+  isDirectory?: boolean;
 };
 
 export type LegacyUsageSnapshotRecord = {
@@ -186,6 +187,14 @@ export function normalizePathKey(path: string): string {
   return path.trim().replace(/\//g, "\\").toLowerCase();
 }
 
+export function isPathWithinDirectory(path: string, directory: string): boolean {
+  const pathKey = normalizePathKey(path);
+  const directoryKey = normalizePathKey(directory).replace(/\\+$/, "");
+  if (!pathKey || !directoryKey) return false;
+  const prefix = `${directoryKey}\\`;
+  return pathKey === directoryKey || pathKey.startsWith(prefix);
+}
+
 export function normalizeExecutableIdentityKey(path: string): string {
   const pathKey = normalizePathKey(path);
   if (!pathKey) return "";
@@ -273,6 +282,7 @@ export function normalizeBlockedExternalLaunchRecord(
     name,
     source,
     blockedAt: normalizeTimestamp(record?.blockedAt ?? Date.now()),
+    isDirectory: record?.isDirectory === true,
   };
 }
 
@@ -288,12 +298,16 @@ export function sanitizeBlockedExternalLaunchRecords(
   for (const record of sorted) {
     const pathKey = normalizePathKey(record.path);
     if (!pathKey) continue;
-    const existing = mergedByPath.get(pathKey);
+    const normalizedRecordPath = record.isDirectory
+      ? pathKey.replace(/\\+$/, "")
+      : pathKey;
+    const recordKey = `${record.isDirectory ? "directory" : "path"}:${normalizedRecordPath}`;
+    const existing = mergedByPath.get(recordKey);
     if (!existing) {
-      mergedByPath.set(pathKey, record);
+      mergedByPath.set(recordKey, record);
       continue;
     }
-    mergedByPath.set(pathKey, {
+    mergedByPath.set(recordKey, {
       ...existing,
       name: existing.name || record.name,
       source: existing.source || record.source,

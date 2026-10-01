@@ -1,11 +1,11 @@
 {
-  "version": "0.6.1",
-  "notes": "## v0.6.1\n\n### 插件\n- 启用开关自动 load、禁用自动 unload；启动与扫描后自动加载已启用插件\n- 卡片命令按钮改为 manifest `contributes.commands` 驱动（支持 `method` 映射）\n- 详情/调试按插件展开折叠；footer 固定按钮与命令按钮分行\n- 新增关闭系统代理示例插件（proxy.disable / proxy.status）\n\n### 修复\n- 修复重启后需手动禁用再启用才加载插件的问题\n- 修复点击命令/日志导致列表卸载、滚动回顶与页面闪烁\n- 去掉插件页重复标题；invoke 结果改为 toast 反馈",
-  "pub_date": "2026-09-22T01:18:41Z",
+  "version": "0.7.0",
+  "notes": "## v0.7.0\n\n### 新增\n- 外部项屏蔽列表支持按目录屏蔽外部最近启动项\n- 固定启动项右键菜单增加“在资源管理器中打开”\n\n### 修复\n- 微软商店应用更新后，自动将失效的旧版本路径迁移到当前 AppsFolder 启动地址",
+  "pub_date": "2026-10-01T17:54:17Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUlVhUEVOWHQvTnVKSkwxdStadW1uT1k2d0d5U1Z1bEZsT0d3YVR6eWtVbkkrQVlFeEM4dWFDamZlNUtub3lhbngzRnFySnY5WG4xazdVc3dMc2dYa2djPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMDM5ODk3CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC42LjFfeDY0LXNldHVwLm5zaXMuemlwCjM0dEZSTGMwYlNRZHRlQW05YzczUDYyZDJZY1ZTUmtTZmhkbzQ0TlE5c0tGWm1ZUTgrTXJ5bE96VXNlREhza2pwNjVtVVAvSUJRMXY0bW5Ga051NUF3PT0K",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.6.1/air-icon-launcher_0.6.1_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUmRxVS9MRGdKdU9kSTRsSnYrZ2drTVhEWGdZWXBoRkxNOWtuRlFRZ2ZFTlFCVXVQZTEyWTVIUWJmRmJvRTFxanFLL2ZJb1pyKytUTk94K0I4YXJrREFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwODc3MjIwCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC43LjBfeDY0LXNldHVwLm5zaXMuemlwClpPTTNSVFBRQ3g4RWNJeEs4VnRpaUU0VWRtRHcvdGVwbVRUVjlrL2pvNSs4Q3dPY1FDTjJsVUEydUQxeUx0eDI2RG1IZ2RpcHRlclpyUDBlbFVDTUNRPT0K",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.7.0/air-icon-launcher_0.7.0_x64-setup.nsis.zip"
     }
   }
 }

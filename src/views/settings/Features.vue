@@ -17,17 +17,24 @@
 
         <div class="section">
             <div class="section-title">外部项屏蔽列表</div>
+            <div class="action-buttons">
+                <button class="action-btn" type="button" @click="onBlockDirectory">
+                    屏蔽目录
+                </button>
+            </div>
             <div v-if="blockedExternalLaunches.length === 0" class="hint-text">
                 暂无已屏蔽的外部启动项
             </div>
             <div v-else class="blocked-list">
                 <div
                     v-for="entry in blockedExternalLaunches"
-                    :key="entry.path"
+                    :key="`${entry.isDirectory ? 'directory' : 'item'}:${entry.path}`"
                     class="blocked-item"
                 >
                     <div class="blocked-main">
-                        <div class="blocked-name" :title="entry.name">{{ entry.name }}</div>
+                        <div class="blocked-name" :title="entry.name">
+                            {{ entry.isDirectory ? "目录 · " : "" }}{{ entry.name }}
+                        </div>
                         <div class="blocked-path" :title="entry.path">{{ entry.path }}</div>
                     </div>
                     <div class="blocked-actions">
@@ -42,7 +49,9 @@
                         <button
                             class="action-btn"
                             type="button"
-                            @click="onUnblockExternal(entry.path)"
+                            @click="entry.isDirectory
+                                ? onUnblockDirectory(entry.path)
+                                : onUnblockExternal(entry.path)"
                         >
                             取消屏蔽
                         </button>
@@ -61,6 +70,7 @@ import { useConfirmDialog } from "../../composables/useConfirmDialog";
 import { useStatsStore } from "../../stores/statsStore";
 import { invoke } from "../../utils/invoke-wrapper";
 import { showToast } from "../../composables/useGlobalToast";
+import { open } from "@tauri-apps/plugin-dialog";
 
 const router = useRouter();
 const store = Store();
@@ -93,6 +103,27 @@ async function onClearRecentUsed() {
 
 function onUnblockExternal(path: string) {
     statsStore.unblockExternalLaunchPath(path);
+}
+
+function onUnblockDirectory(path: string) {
+    statsStore.unblockExternalLaunchDirectory(path);
+}
+
+async function onBlockDirectory() {
+    try {
+        const selected = await open({
+            directory: true,
+            multiple: false,
+            title: "选择要屏蔽的目录",
+        });
+        if (typeof selected === "string") {
+            statsStore.blockExternalLaunchDirectory(selected);
+        }
+    } catch (error) {
+        showToast(`屏蔽目录失败：${error instanceof Error ? error.message : String(error)}`, {
+            type: "error",
+        });
+    }
 }
 
 async function onRevealInExplorer(path: string) {

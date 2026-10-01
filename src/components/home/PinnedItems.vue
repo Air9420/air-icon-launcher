@@ -9,6 +9,7 @@
             :fallback-tolerance="5" @update:model-value="onReorder">
             <template #item="{ element, index }">
                 <HomeCard :item-id="element.item.id" :category-id="element.primaryCategoryId" :name="element.item.name"
+                    :item-path="element.item.path"
                     :icon-base64="element.item.iconBase64" :item-type="element.item.itemType"
                     :url="element.item.url"
                     :has-dependencies="element.item.launchDependencies.length > 0"

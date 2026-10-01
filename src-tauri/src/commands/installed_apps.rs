@@ -9,7 +9,7 @@ use quick_xml::name::QName;
 use quick_xml::Reader;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -689,17 +689,108 @@ fn score_executable_name(stem: &str, display_name: &str, dir_name: &str) -> i32 
     score
 }
 
+pub(crate) fn windows_apps_target_key(path: &str) -> Option<String> {
+    let normalized = path.trim().trim_start_matches(r"\\?\").replace('/', "\\");
+    let mut components = normalized.split('\\').filter(|part| !part.is_empty());
+    while let Some(component) = components.next() {
+        if !component.eq_ignore_ascii_case("WindowsApps") {
+            continue;
+        }
+
+        let package_full_name = components.next()?;
+        let relative_target = components.collect::<Vec<_>>().join("\\");
+        let package_name = package_full_name.split('_').next()?;
+        let publisher_id = package_full_name.rsplit('_').next()?;
+        if package_name.is_empty() || publisher_id.is_empty() || relative_target.is_empty() {
+            return None;
+        }
+
+        return Some(format!(
+            "{}_{}\\{}",
+            package_name.to_ascii_lowercase(),
+            publisher_id.to_ascii_lowercase(),
+            relative_target.to_ascii_lowercase()
+        ));
+    }
+
+    None
+}
+
+fn is_stable_appsfolder_candidate(candidate: &CandidateApp) -> bool {
+    candidate.launch_type == InstalledAppLaunchType::Shell
+        && candidate
+            .target_arguments
+            .as_deref()
+            .map(str::trim)
+            .map(str::is_empty)
+            .unwrap_or(true)
+        && candidate
+            .launch_path
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .starts_with(r"shell:appsfolder\")
+        && candidate
+            .real_target_path
+            .as_deref()
+            .and_then(|path| windows_apps_target_key(&path.to_string_lossy()))
+            .is_some()
+}
+
+pub fn current_appsfolder_targets_by_windows_apps_path() -> HashMap<String, String> {
+    #[cfg(windows)]
+    {
+        let mut targets = HashMap::<String, String>::new();
+        let mut ambiguous = HashSet::new();
+        for candidate in collect_apps_folder_candidates(usize::MAX) {
+            if candidate
+                .target_arguments
+                .as_deref()
+                .map(str::trim)
+                .map(|args| !args.is_empty())
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            let Some(target_path) = candidate.real_target_path.as_deref() else {
+                continue;
+            };
+            let Some(key) = windows_apps_target_key(&target_path.to_string_lossy()) else {
+                continue;
+            };
+            let launch_target = candidate.launch_path.to_string_lossy().to_string();
+            match targets.get(&key) {
+                Some(existing) if existing != &launch_target => {
+                    ambiguous.insert(key);
+                }
+                Some(_) => {}
+                None => {
+                    targets.insert(key, launch_target);
+                }
+            }
+        }
+        targets.retain(|key, _| !ambiguous.contains(key));
+        targets
+    }
+    #[cfg(not(windows))]
+    {
+        HashMap::new()
+    }
+}
+
 #[cfg(windows)]
 fn sort_and_dedupe_candidates(
     mut candidates: Vec<CandidateApp>,
     max_results: usize,
 ) -> Vec<CandidateApp> {
     candidates.sort_by(|a, b| {
-        a.source_rank.cmp(&b.source_rank).then_with(|| {
-            a.display_name
-                .to_lowercase()
-                .cmp(&b.display_name.to_lowercase())
-        })
+        is_stable_appsfolder_candidate(b)
+            .cmp(&is_stable_appsfolder_candidate(a))
+            .then_with(|| a.source_rank.cmp(&b.source_rank))
+            .then_with(|| {
+                a.display_name
+                    .to_lowercase()
+                    .cmp(&b.display_name.to_lowercase())
+            })
     });
 
     let mut seen_paths = HashSet::<String>::new();
@@ -1621,10 +1712,58 @@ pub fn quick_scan_registry() -> AppResult<Vec<InstalledAppEntry>> {
 mod tests {
     use super::{
         classify_launch_target, determine_candidate_icon_path, sort_and_dedupe_candidates,
-        CandidateApp, InstalledAppLaunchType,
+        windows_apps_target_key, CandidateApp, InstalledAppLaunchType,
     };
     use std::path::Path;
     use std::path::PathBuf;
+
+    #[test]
+    fn windows_apps_target_key_ignores_package_version_and_architecture() {
+        assert_eq!(
+            windows_apps_target_key(
+                r"C:\Program Files\WindowsApps\Microsoft.WindowsNotepad_11.2508.28.0_x64__8wekyb3d8bbwe\Notepad\Notepad.exe"
+            ),
+            Some(r"microsoft.windowsnotepad_8wekyb3d8bbwe\notepad\notepad.exe".to_string())
+        );
+    }
+
+    #[test]
+    fn appsfolder_store_alias_wins_over_versioned_exe_when_deduping() {
+        let apps_folder = CandidateApp {
+            display_name: "Notepad".to_string(),
+            launch_path: PathBuf::from(
+                r"shell:AppsFolder\Microsoft.WindowsNotepad_8wekyb3d8bbwe!App",
+            ),
+            real_target_path: Some(PathBuf::from(
+                r"C:\Program Files\WindowsApps\Microsoft.WindowsNotepad_11.1.0.0_x64__8wekyb3d8bbwe\Notepad\Notepad.exe",
+            )),
+            target_arguments: None,
+            launch_type: InstalledAppLaunchType::Shell,
+            dedupe_path: PathBuf::from(
+                r"shell:AppsFolder\Microsoft.WindowsNotepad_8wekyb3d8bbwe!App",
+            ),
+            icon_path: PathBuf::from(
+                r"shell:AppsFolder\Microsoft.WindowsNotepad_8wekyb3d8bbwe!App",
+            ),
+            source: "应用目录",
+            source_rank: 19,
+            publisher: None,
+        };
+        let mut file = apps_folder.clone();
+        file.launch_path = PathBuf::from(
+            r"C:\Program Files\WindowsApps\Microsoft.WindowsNotepad_11.1.0.0_x64__8wekyb3d8bbwe\Notepad\Notepad.exe",
+        );
+        file.launch_type = InstalledAppLaunchType::File;
+        file.dedupe_path = file.launch_path.clone();
+        file.icon_path = file.launch_path.clone();
+        file.source = "注册表";
+        file.source_rank = 0;
+
+        let deduped = sort_and_dedupe_candidates(vec![file, apps_folder], 10);
+
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].launch_type, InstalledAppLaunchType::Shell);
+    }
 
     #[test]
     fn desktop_shortcuts_use_launch_path_icon() {

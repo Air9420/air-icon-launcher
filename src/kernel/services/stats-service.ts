@@ -13,6 +13,7 @@ import {
   sanitizeBlockedExternalLaunchRecords,
   sanitizeExternalRecentLaunchRecords,
   dedupExternalRecentOnRecord,
+  isPathWithinDirectory,
   getTimeSlot,
   buildRecentConsecutiveScoreMap,
   SMART_SORT_WEIGHTS,
@@ -57,6 +58,7 @@ export class StatsService extends Service {
   get blockedExternalPathKeys(): Set<string> {
     const keys = new Set<string>();
     for (const record of this.blockedExternalLaunches.value) {
+      if (record.isDirectory) continue;
       const pathKey = normalizePathKey(record.path);
       if (pathKey) keys.add(pathKey);
     }
@@ -66,6 +68,7 @@ export class StatsService extends Service {
   get blockedExternalIdentityKeys(): Set<string> {
     const keys = new Set<string>();
     for (const record of this.blockedExternalLaunches.value) {
+      if (record.isDirectory) continue;
       const identityKey = normalizeExecutableIdentityKey(record.path);
       if (identityKey) keys.add(identityKey);
     }
@@ -145,7 +148,10 @@ export class StatsService extends Service {
     if (!pathKey) return false;
     if (this.blockedExternalPathKeys.has(pathKey)) return true;
     const identityKey = normalizeExecutableIdentityKey(path);
-    return !!identityKey && this.blockedExternalIdentityKeys.has(identityKey);
+    if (identityKey && this.blockedExternalIdentityKeys.has(identityKey)) return true;
+    return this.blockedExternalLaunches.value.some(
+      (record) => record.isDirectory && isPathWithinDirectory(path, record.path),
+    );
   }
 
   recordExternalLaunch(record: {
@@ -185,6 +191,7 @@ export class StatsService extends Service {
 
     const nextBlocked = [...this.blockedExternalLaunches.value];
     const existingIndex = nextBlocked.findIndex((entry) => {
+      if (entry.isDirectory) return false;
       const existingPathKey = normalizePathKey(entry.path);
       if (!existingPathKey) return false;
       if (existingPathKey === pathKey) return true;
@@ -207,14 +214,42 @@ export class StatsService extends Service {
     this.sanitizeExternalRecentLaunchHistory();
   }
 
-  unblockExternalLaunchPath(path: string): void {
+  blockExternalLaunchDirectory(path: string): void {
+    const normalized = normalizeBlockedExternalLaunchRecord({
+      path,
+      name: path.split(/[\\/]/).filter(Boolean).pop() || path,
+      source: "目录",
+      blockedAt: Date.now(),
+      isDirectory: true,
+    });
+    if (!normalized) return;
+    normalized.isDirectory = true;
+    const pathKey = normalizePathKey(normalized.path);
+    if (!pathKey) return;
+    this.blockedExternalLaunches.value = sanitizeBlockedExternalLaunchRecords([
+      normalized,
+      ...this.blockedExternalLaunches.value,
+    ]);
+    this.sanitizeExternalRecentLaunchHistory();
+  }
+
+  unblockExternalLaunchPath(path: string, isDirectory = false): void {
     const pathKey = normalizePathKey(path);
     if (!pathKey) return;
     const identityKey = normalizeExecutableIdentityKey(path);
     this.blockedExternalLaunches.value = sanitizeBlockedExternalLaunchRecords(
       this.blockedExternalLaunches.value.filter((entry) => {
+        if (entry.isDirectory !== isDirectory) return true;
         const existingPathKey = normalizePathKey(entry.path);
+        if (
+          isDirectory &&
+          isPathWithinDirectory(existingPathKey, pathKey) &&
+          isPathWithinDirectory(pathKey, existingPathKey)
+        ) {
+          return false;
+        }
         if (existingPathKey === pathKey) return false;
+        if (isDirectory) return true;
         if (identityKey) {
           const existingIdentityKey = normalizeExecutableIdentityKey(entry.path);
           if (existingIdentityKey === identityKey) return false;
@@ -232,7 +267,7 @@ export class StatsService extends Service {
       this.externalRecentLaunches.value,
       this.blockedExternalPathKeys,
       this.blockedExternalIdentityKeys,
-    );
+    ).filter((entry) => !this.isExternalLaunchBlocked(entry.path));
   }
 
   removeLaunchEventsForItems(categoryId: string, itemIds: string[]): void {

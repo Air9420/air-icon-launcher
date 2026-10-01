@@ -18,6 +18,7 @@ import {
   sanitizeBlockedExternalLaunchRecords,
   sanitizeExternalRecentLaunchRecords,
   dedupExternalRecentOnRecord,
+  isPathWithinDirectory,
   buildRecentConsecutiveScoreMap,
   getTimeSlot,
   getTimeBasedThreshold,
@@ -80,6 +81,7 @@ export const useStatsStore = defineStore(
     const blockedExternalPathKeys = computed(() => {
       const keys = new Set<string>();
       for (const record of blockedExternalLaunches.value) {
+        if (record.isDirectory) continue;
         const pathKey = normalizePathKey(record.path);
         if (pathKey) keys.add(pathKey);
       }
@@ -89,6 +91,7 @@ export const useStatsStore = defineStore(
     const blockedExternalIdentityKeys = computed(() => {
       const keys = new Set<string>();
       for (const record of blockedExternalLaunches.value) {
+        if (record.isDirectory) continue;
         const identityKey = normalizeExecutableIdentityKey(record.path);
         if (identityKey) keys.add(identityKey);
       }
@@ -163,7 +166,10 @@ export const useStatsStore = defineStore(
       if (!pathKey) return false;
       if (blockedExternalPathKeys.value.has(pathKey)) return true;
       const identityKey = normalizeExecutableIdentityKey(path);
-      return !!identityKey && blockedExternalIdentityKeys.value.has(identityKey);
+      if (identityKey && blockedExternalIdentityKeys.value.has(identityKey)) return true;
+      return blockedExternalLaunches.value.some(
+        (record) => record.isDirectory && isPathWithinDirectory(path, record.path),
+      );
     }
 
     function recordExternalLaunch(record: {
@@ -215,6 +221,7 @@ export const useStatsStore = defineStore(
 
       const nextBlocked = [...blockedExternalLaunches.value];
       const existingIndex = nextBlocked.findIndex((entry) => {
+        if (entry.isDirectory) return false;
         const existingPathKey = normalizePathKey(entry.path);
         if (!existingPathKey) return false;
         if (existingPathKey === pathKey) return true;
@@ -247,6 +254,7 @@ export const useStatsStore = defineStore(
       const identityKey = normalizeExecutableIdentityKey(path);
       blockedExternalLaunches.value = sanitizeBlockedExternalLaunchRecords(
         blockedExternalLaunches.value.filter((entry) => {
+          if (entry.isDirectory) return true;
           const existingPathKey = normalizePathKey(entry.path);
           if (existingPathKey === pathKey) return false;
           if (identityKey) {
@@ -255,6 +263,47 @@ export const useStatsStore = defineStore(
           }
           return true;
         }),
+      );
+    }
+
+    function blockExternalLaunchDirectory(path: string): void {
+      if (statsService) {
+        statsService.blockExternalLaunchDirectory(path);
+        return;
+      }
+      const normalized = normalizeBlockedExternalLaunchRecord({
+        path,
+        name: path.split(/[\\/]/).filter(Boolean).pop() || path,
+        source: "目录",
+        blockedAt: Date.now(),
+        isDirectory: true,
+      });
+      if (!normalized) return;
+      normalized.isDirectory = true;
+      if (!normalizePathKey(normalized.path)) return;
+      blockedExternalLaunches.value = sanitizeBlockedExternalLaunchRecords([
+        normalized,
+        ...blockedExternalLaunches.value,
+      ]);
+      sanitizeExternalRecentLaunchHistory();
+    }
+
+    function unblockExternalLaunchDirectory(path: string): void {
+      if (statsService) {
+        statsService.unblockExternalLaunchPath(path, true);
+        return;
+      }
+      const pathKey = normalizePathKey(path);
+      if (!pathKey) return;
+      blockedExternalLaunches.value = sanitizeBlockedExternalLaunchRecords(
+        blockedExternalLaunches.value.filter(
+          (entry) =>
+            !entry.isDirectory ||
+            !(
+              isPathWithinDirectory(entry.path, pathKey) &&
+              isPathWithinDirectory(pathKey, entry.path)
+            ),
+        ),
       );
     }
 
@@ -270,7 +319,7 @@ export const useStatsStore = defineStore(
         externalRecentLaunches.value,
         blockedExternalPathKeys.value,
         blockedExternalIdentityKeys.value,
-      );
+      ).filter((entry) => !isExternalLaunchBlocked(entry.path));
     }
 
     sanitizeExternalRecentLaunchHistory();
@@ -530,6 +579,8 @@ export const useStatsStore = defineStore(
       recordExternalLaunch,
       blockExternalLaunchPath,
       unblockExternalLaunchPath,
+      blockExternalLaunchDirectory,
+      unblockExternalLaunchDirectory,
       isExternalLaunchBlocked,
       sanitizeExternalRecentLaunchHistory,
       clearLaunchHistory,

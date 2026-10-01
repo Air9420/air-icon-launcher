@@ -35,6 +35,17 @@ describe("contextMenu scenario membership group", () => {
     setActivePinia(createPinia());
   });
 
+  it("shows open-in-explorer for a pinned launcher item with a path", () => {
+    const menuModel = buildContextMenuModel(
+      createIconItemContext({
+        homeSection: "pinned",
+        itemPath: "C:\\Apps\\Example\\app.exe",
+      }),
+    );
+
+    expect(menuModel.some((item) => item.id === "builtin:open-in-explorer")).toBe(true);
+  });
+
   it("shows scenario membership group for IconItem in category", () => {
     const itemId = "item-1";
     const menuModel = buildContextMenuModel(
