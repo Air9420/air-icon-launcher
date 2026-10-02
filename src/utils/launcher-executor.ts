@@ -1,4 +1,5 @@
 import { invoke } from "./invoke-wrapper";
+import { errorToString } from "./app-error";
 import type { LauncherItem } from "../stores";
 
 export type LauncherItemRef = {
@@ -167,7 +168,7 @@ export async function executeLauncherItemWithDependencies(
         try {
             await options.launchItem(item, ref);
         } catch (error) {
-            const reason = error instanceof Error ? error.message : String(error);
+            const reason = errorToString(error);
             throw new LauncherExecutionError(
                 "LAUNCH_FAILED",
                 `启动“${getRefLabel(item, ref)}”失败：${reason}`,

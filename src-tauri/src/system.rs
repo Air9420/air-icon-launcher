@@ -161,11 +161,68 @@ pub(crate) fn open_apps_folder_shell_target(value: &str) -> AppResult<()> {
     )))
 }
 
+#[cfg(target_os = "windows")]
+fn find_start_app_id_for_package_family(
+    package_family: &str,
+    app_ids: &[String],
+) -> Option<String> {
+    let mut matches = app_ids.iter().filter(|app_id| {
+        crate::commands::installed_apps::windows_apps_package_family_key(app_id).as_deref()
+            == Some(package_family)
+    });
+    let app_id = matches.next()?.clone();
+    if matches.next().is_some() {
+        return None;
+    }
+    Some(app_id)
+}
+
+#[cfg(target_os = "windows")]
+fn current_apps_folder_target_for_windows_apps_path(path: &str) -> Option<String> {
+    let package_family = crate::commands::installed_apps::windows_apps_package_family_key(path)?;
+    let targets =
+        crate::commands::installed_apps::current_appsfolder_targets_by_windows_apps_path();
+    if let Some(target) = targets.get(&format!("package:{package_family}")) {
+        return Some(target.clone());
+    }
+
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "Get-StartApps | Select-Object -ExpandProperty AppID | ConvertTo-Json -Compress",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let app_ids = match value {
+        serde_json::Value::Array(values) => values
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .map(str::to_string)
+            .collect::<Vec<_>>(),
+        serde_json::Value::String(value) => vec![value],
+        _ => return None,
+    };
+
+    find_start_app_id_for_package_family(&package_family, &app_ids)
+        .map(|app_id| format!(r"shell:AppsFolder\{app_id}"))
+}
+
 #[tauri::command]
 pub fn open_path(path: String) -> AppResult<()> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return Err(AppError::invalid_input("Path cannot be empty"));
+    }
+
+    #[cfg(target_os = "windows")]
+    if let Some(target) = current_apps_folder_target_for_windows_apps_path(trimmed) {
+        return open_apps_folder_shell_target(&target);
     }
 
     let target = PathBuf::from(trimmed);
@@ -1380,6 +1437,31 @@ mod tests {
             }
             _ => panic!("expected data URL favicon candidate"),
         }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn resolves_a_unique_start_app_id_for_a_windows_apps_package() {
+        let package_family = "openai.codex_2p2nqsd0c76g0";
+        let app_ids = vec![
+            "OpenAI.Codex_2p2nqsd0c76g0!App".to_string(),
+            "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App".to_string(),
+        ];
+
+        assert_eq!(
+            find_start_app_id_for_package_family(package_family, &app_ids),
+            Some("OpenAI.Codex_2p2nqsd0c76g0!App".to_string())
+        );
+        assert_eq!(
+            find_start_app_id_for_package_family(
+                package_family,
+                &[
+                    "OpenAI.Codex_2p2nqsd0c76g0!App".to_string(),
+                    "OpenAI.Codex_2p2nqsd0c76g0!Settings".to_string(),
+                ]
+            ),
+            None
+        );
     }
 
     #[cfg(target_os = "windows")]

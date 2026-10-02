@@ -1,11 +1,11 @@
 {
-  "version": "0.7.0",
-  "notes": "## v0.7.0\n\n### 新增\n- 外部项屏蔽列表支持按目录屏蔽外部最近启动项\n- 固定启动项右键菜单增加“在资源管理器中打开”\n\n### 修复\n- 微软商店应用更新后，自动将失效的旧版本路径迁移到当前 AppsFolder 启动地址",
-  "pub_date": "2026-10-01T17:54:17Z",
+  "version": "0.7.1",
+  "notes": "## v0.7.1\n\n### 修复\n- 修复微软商店应用更新后，固定启动项可能因旧 WindowsApps 路径失效而无法启动；按唯一 AppsFolder 应用标识回退并自动迁移旧路径。\n- 修复启动失败提示未显示后端错误信息。",
+  "pub_date": "2026-10-02T02:24:40.846Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUmRxVS9MRGdKdU9kSTRsSnYrZ2drTVhEWGdZWXBoRkxNOWtuRlFRZ2ZFTlFCVXVQZTEyWTVIUWJmRmJvRTFxanFLL2ZJb1pyKytUTk94K0I4YXJrREFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwODc3MjIwCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC43LjBfeDY0LXNldHVwLm5zaXMuemlwClpPTTNSVFBRQ3g4RWNJeEs4VnRpaUU0VWRtRHcvdGVwbVRUVjlrL2pvNSs4Q3dPY1FDTjJsVUEydUQxeUx0eDI2RG1IZ2RpcHRlclpyUDBlbFVDTUNRPT0K",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.7.0/air-icon-launcher_0.7.0_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUlp6d1lRVkRDMXZlWEJRSjlBVjVvaVdnSzdmUVFpUFBIaGR1UVluWmtYVkdnRkUybDRTaFFtRTJoNVpVblQxUU8xWXBGYVhhVnNtdkh0REhtSUVxNkFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTA3ODA5CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC43LjFfeDY0LXNldHVwLm5zaXMuemlwCk01OW1mREhJN3JXNkRaTU50V2NTZWdvcFVPL1lFa2ZSclQxMHY5YzhYWWMrdlNPUTFqRHpzdjk3Qm9Mb2dUUDliVjJoM2RaMG5TeTdHcHh4T3k5VERRPT0K",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.7.1/air-icon-launcher_0.7.1_x64-setup.nsis.zip"
     }
   }
 }

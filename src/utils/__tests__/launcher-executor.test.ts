@@ -324,4 +324,18 @@ describe("launcher-executor", () => {
 
     expect(launched).toEqual(["VPN"]);
   });
+
+  it("preserves Tauri AppError messages when launch fails", async () => {
+    await expect(
+      executeLauncherItemWithDependencies({
+        target: createRef("apps", "chatgpt"),
+        getItem: () => createItem("chatgpt", "ChatGPT"),
+        launchItem: async () => {
+          throw { code: "NOT_FOUND", message: "AppsFolder target not found" };
+        },
+      }),
+    ).rejects.toMatchObject({
+      message: "启动“ChatGPT”失败：[NOT_FOUND] AppsFolder target not found",
+    });
+  });
 });

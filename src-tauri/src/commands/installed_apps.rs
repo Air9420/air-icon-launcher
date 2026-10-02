@@ -716,6 +716,85 @@ pub(crate) fn windows_apps_target_key(path: &str) -> Option<String> {
     None
 }
 
+pub(crate) fn windows_apps_package_family_key(path: &str) -> Option<String> {
+    let normalized = path.trim().trim_start_matches(r"\\?\").replace('/', "\\");
+    let mut components = normalized.split('\\').filter(|part| !part.is_empty());
+    let package_family = loop {
+        let Some(component) = components.next() else {
+            let app_entry = normalized
+                .split_once('\\')
+                .filter(|(prefix, _)| prefix.eq_ignore_ascii_case("shell:AppsFolder"))
+                .map(|(_, entry)| entry)
+                .unwrap_or(&normalized);
+            if app_entry.contains('\\') {
+                return None;
+            }
+            break app_entry.split('!').next()?.to_string();
+        };
+        if component.eq_ignore_ascii_case("WindowsApps") {
+            let package_full_name = components.next()?;
+            break format!(
+                "{}_{}",
+                package_full_name.split('_').next()?,
+                package_full_name.rsplit('_').next()?
+            );
+        }
+    };
+
+    let (package_name, publisher_id) = package_family.rsplit_once('_')?;
+    if package_name.is_empty() || publisher_id.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{}_{}",
+        package_name.to_ascii_lowercase(),
+        publisher_id.to_ascii_lowercase()
+    ))
+}
+
+fn apps_folder_targets_by_windows_apps_path(
+    candidates: impl IntoIterator<Item = CandidateApp>,
+) -> HashMap<String, String> {
+    let mut targets = HashMap::<String, String>::new();
+    let mut ambiguous = HashSet::new();
+    for candidate in candidates {
+        if candidate
+            .target_arguments
+            .as_deref()
+            .map(str::trim)
+            .map(|args| !args.is_empty())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+
+        let launch_target = candidate.launch_path.to_string_lossy().to_string();
+        let mut keys = Vec::new();
+        if let Some(target_path) = candidate.real_target_path.as_deref() {
+            if let Some(key) = windows_apps_target_key(&target_path.to_string_lossy()) {
+                keys.push(key);
+            }
+        }
+        if let Some(package_family) = windows_apps_package_family_key(&launch_target) {
+            keys.push(format!("package:{package_family}"));
+        }
+
+        for key in keys {
+            match targets.get(&key) {
+                Some(existing) if existing != &launch_target => {
+                    ambiguous.insert(key);
+                }
+                Some(_) => {}
+                None => {
+                    targets.insert(key, launch_target.clone());
+                }
+            }
+        }
+    }
+    targets.retain(|key, _| !ambiguous.contains(key));
+    targets
+}
+
 fn is_stable_appsfolder_candidate(candidate: &CandidateApp) -> bool {
     candidate.launch_type == InstalledAppLaunchType::Shell
         && candidate
@@ -739,37 +818,7 @@ fn is_stable_appsfolder_candidate(candidate: &CandidateApp) -> bool {
 pub fn current_appsfolder_targets_by_windows_apps_path() -> HashMap<String, String> {
     #[cfg(windows)]
     {
-        let mut targets = HashMap::<String, String>::new();
-        let mut ambiguous = HashSet::new();
-        for candidate in collect_apps_folder_candidates(usize::MAX) {
-            if candidate
-                .target_arguments
-                .as_deref()
-                .map(str::trim)
-                .map(|args| !args.is_empty())
-                .unwrap_or(false)
-            {
-                continue;
-            }
-            let Some(target_path) = candidate.real_target_path.as_deref() else {
-                continue;
-            };
-            let Some(key) = windows_apps_target_key(&target_path.to_string_lossy()) else {
-                continue;
-            };
-            let launch_target = candidate.launch_path.to_string_lossy().to_string();
-            match targets.get(&key) {
-                Some(existing) if existing != &launch_target => {
-                    ambiguous.insert(key);
-                }
-                Some(_) => {}
-                None => {
-                    targets.insert(key, launch_target);
-                }
-            }
-        }
-        targets.retain(|key, _| !ambiguous.contains(key));
-        targets
+        apps_folder_targets_by_windows_apps_path(collect_apps_folder_candidates(usize::MAX))
     }
     #[cfg(not(windows))]
     {
@@ -1967,6 +2016,34 @@ mod tests {
         assert_eq!(item.name, "Codex");
         assert_eq!(item.target_path, None);
         assert_eq!(item.arguments, None);
+    }
+
+    #[test]
+    fn maps_unique_package_family_and_skips_ambiguous_families() {
+        let candidate = |launch_path: &str| CandidateApp {
+            display_name: "ChatGPT".to_string(),
+            launch_path: PathBuf::from(launch_path),
+            real_target_path: None,
+            target_arguments: None,
+            launch_type: super::InstalledAppLaunchType::Shell,
+            dedupe_path: PathBuf::from(launch_path),
+            icon_path: PathBuf::from(launch_path),
+            source: "应用目录",
+            source_rank: 19,
+            publisher: None,
+        };
+        let unique_path = r"shell:AppsFolder\OpenAI.Codex_2p2nqsd0c76g0!App";
+        let unique = super::apps_folder_targets_by_windows_apps_path([candidate(unique_path)]);
+        assert_eq!(
+            unique.get("package:openai.codex_2p2nqsd0c76g0"),
+            Some(&unique_path.to_string())
+        );
+
+        let ambiguous = super::apps_folder_targets_by_windows_apps_path([
+            candidate(unique_path),
+            candidate(r"shell:AppsFolder\OpenAI.Codex_2p2nqsd0c76g0!Settings"),
+        ]);
+        assert!(!ambiguous.contains_key("package:openai.codex_2p2nqsd0c76g0"));
     }
 
     #[test]

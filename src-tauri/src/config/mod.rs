@@ -423,10 +423,13 @@ fn repair_windows_store_launcher_paths_with_targets(
         if item.item_type != "file" {
             continue;
         }
-        let Some(key) = crate::commands::installed_apps::windows_apps_target_key(&item.path) else {
-            continue;
-        };
-        let Some(target) = targets.get(&key) else {
+        let target = crate::commands::installed_apps::windows_apps_target_key(&item.path)
+            .and_then(|key| targets.get(&key))
+            .or_else(|| {
+                crate::commands::installed_apps::windows_apps_package_family_key(&item.path)
+                    .and_then(|key| targets.get(&format!("package:{key}")))
+            });
+        let Some(target) = target else {
             continue;
         };
 
@@ -1418,6 +1421,43 @@ mod tests {
         assert_eq!(
             item.url.as_deref(),
             Some(r"shell:AppsFolder\Microsoft.WindowsNotepad_8wekyb3d8bbwe!App")
+        );
+    }
+
+    #[test]
+    fn repairs_store_path_when_appsfolder_target_path_is_unavailable() {
+        let path = r"C:\Program Files\WindowsApps\OpenAI.Codex_26.928.3736.0_x64__2p2nqsd0c76g0\app\ChatGPT.exe";
+        let apps_folder = r"shell:AppsFolder\OpenAI.Codex_2p2nqsd0c76g0!App";
+        let package_family =
+            crate::commands::installed_apps::windows_apps_package_family_key(path).unwrap();
+        assert_eq!(
+            crate::commands::installed_apps::windows_apps_package_family_key(apps_folder),
+            Some(package_family.clone())
+        );
+
+        let mut data = LauncherData {
+            categories: vec![CategoryData {
+                id: "cat".to_string(),
+                items: vec![LauncherItemData {
+                    id: "chatgpt".to_string(),
+                    name: "ChatGPT".to_string(),
+                    path: path.to_string(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let targets =
+            HashMap::from([(format!("package:{package_family}"), apps_folder.to_string())]);
+
+        assert!(repair_windows_store_launcher_paths_with_targets(
+            &mut data, &targets
+        ));
+        assert_eq!(data.categories[0].items[0].item_type, "url");
+        assert_eq!(
+            data.categories[0].items[0].url.as_deref(),
+            Some(apps_folder)
         );
     }
 
