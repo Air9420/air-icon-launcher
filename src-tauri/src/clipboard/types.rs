@@ -12,10 +12,25 @@ pub struct ClipboardRecord {
     pub hash: String,
     pub timestamp: u64,
     pub is_favorite: bool,
+    /// 原始文本的完整字符数。
+    ///
+    /// 轻量列表接口（`get_clipboard_history_lite`）会把 `text_content` 截断，
+    /// 前端需要这个字段来判断「是否被截断 / 是否可展开」，
+    /// 否则会把截断后的内容当成完整文本复制出去。
+    #[serde(default)]
+    pub text_length: usize,
+    /// `text_content` 是否已被截断（轻量接口为 true）。
+    #[serde(default)]
+    pub text_truncated: bool,
 }
 
 impl From<ClipboardRecordDb> for ClipboardRecord {
     fn from(db_record: ClipboardRecordDb) -> Self {
+        let text_length = db_record
+            .text_content
+            .as_ref()
+            .map(|text| text.chars().count())
+            .unwrap_or(0);
         Self {
             id: db_record.id,
             record_type: db_record.content_type,
@@ -25,7 +40,18 @@ impl From<ClipboardRecordDb> for ClipboardRecord {
             hash: db_record.hash,
             timestamp: db_record.timestamp as u64,
             is_favorite: db_record.is_favorite,
+            text_length,
+            text_truncated: false,
         }
+    }
+}
+
+impl ClipboardRecord {
+    /// 标记为「文本已截断」，并保留完整长度供前端展示。
+    pub fn into_truncated(mut self, full_length: usize) -> Self {
+        self.text_length = full_length;
+        self.text_truncated = true;
+        self
     }
 }
 

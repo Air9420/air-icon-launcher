@@ -229,6 +229,114 @@ impl ClipboardDatabase {
         Ok(records)
     }
 
+    /// 轻量全量查询：文本内容按 `preview_chars` 截断。
+    ///
+    /// 用于「一次性把整份历史喂给虚拟列表」的场景。
+    /// 库里存在单条 4MB+ 的文本，直接全量传输会产生接近 9MB 的 IPC 负载；
+    /// 截断到 240 字符后只有约 330KB，且列表本来也只显示预览，
+    /// 完整内容在用户展开/复制时再按 id 单独获取。
+    ///
+    /// 返回值额外携带 `text_full_len`（原始字符数），供前端判断是否被截断。
+    pub fn get_all_lite(
+        &self,
+        filter: &str,
+        preview_chars: usize,
+    ) -> SqliteResult<Vec<(ClipboardRecordDb, usize)>> {
+        let conn = self.read_conn.lock().unwrap();
+        // SQLite 的 substr 按字符（非字节）计数，正好符合前端的字符截断语义；
+        // length() 对 TEXT 同样按字符计数，用来回传真实长度。
+        let sql = match filter {
+            "favorites" => {
+                "SELECT id, content_type, content_subtype,
+                        CASE WHEN text_content IS NULL THEN NULL
+                             ELSE substr(text_content, 1, ?1) END,
+                        image_path, hash, timestamp, is_favorite,
+                        COALESCE(length(text_content), 0)
+                 FROM clipboard_records WHERE is_favorite = 1
+                 ORDER BY timestamp DESC"
+            }
+            "text" | "image" => {
+                "SELECT id, content_type, content_subtype,
+                        CASE WHEN text_content IS NULL THEN NULL
+                             ELSE substr(text_content, 1, ?1) END,
+                        image_path, hash, timestamp, is_favorite,
+                        COALESCE(length(text_content), 0)
+                 FROM clipboard_records WHERE content_type = ?2
+                 ORDER BY timestamp DESC"
+            }
+            "code" => {
+                "SELECT id, content_type, content_subtype,
+                        CASE WHEN text_content IS NULL THEN NULL
+                             ELSE substr(text_content, 1, ?1) END,
+                        image_path, hash, timestamp, is_favorite,
+                        COALESCE(length(text_content), 0)
+                 FROM clipboard_records WHERE content_subtype = 'code'
+                 ORDER BY timestamp DESC"
+            }
+            _ => {
+                "SELECT id, content_type, content_subtype,
+                        CASE WHEN text_content IS NULL THEN NULL
+                             ELSE substr(text_content, 1, ?1) END,
+                        image_path, hash, timestamp, is_favorite,
+                        COALESCE(length(text_content), 0)
+                 FROM clipboard_records
+                 ORDER BY timestamp DESC"
+            }
+        };
+
+        let mut stmt = conn.prepare(sql)?;
+        let map_row = |row: &rusqlite::Row<'_>| -> SqliteResult<(ClipboardRecordDb, usize)> {
+            let full_len: i64 = row.get(8)?;
+            Ok((
+                ClipboardRecordDb {
+                    id: row.get(0)?,
+                    content_type: row.get(1)?,
+                    content_subtype: row.get(2)?,
+                    text_content: row.get(3)?,
+                    image_path: row.get(4)?,
+                    hash: row.get(5)?,
+                    timestamp: row.get(6)?,
+                    is_favorite: row.get(7)?,
+                },
+                full_len.max(0) as usize,
+            ))
+        };
+
+        let records = if filter == "text" || filter == "image" {
+            stmt.query_map(rusqlite::params![preview_chars as i64, filter], map_row)?
+                .collect::<SqliteResult<Vec<_>>>()?
+        } else {
+            stmt.query_map(rusqlite::params![preview_chars as i64], map_row)?
+                .collect::<SqliteResult<Vec<_>>>()?
+        };
+
+        Ok(records)
+    }
+
+    /// 按 id 取完整记录（含未截断的完整文本）。
+    pub fn get_by_id(&self, id: &str) -> SqliteResult<Option<ClipboardRecordDb>> {
+        let conn = self.read_conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, content_type, content_subtype, text_content, image_path, hash, timestamp, is_favorite
+             FROM clipboard_records WHERE id = ?1",
+        )?;
+
+        let mut records = stmt.query_map([id], |row| {
+            Ok(ClipboardRecordDb {
+                id: row.get(0)?,
+                content_type: row.get(1)?,
+                content_subtype: row.get(2)?,
+                text_content: row.get(3)?,
+                image_path: row.get(4)?,
+                hash: row.get(5)?,
+                timestamp: row.get(6)?,
+                is_favorite: row.get(7)?,
+            })
+        })?;
+
+        Ok(records.next().transpose()?)
+    }
+
     pub fn search(&self, query: &str, limit: usize, offset: usize) -> SqliteResult<Vec<ClipboardRecordDb>> {
         let conn = self.read_conn.lock().unwrap();
         let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");

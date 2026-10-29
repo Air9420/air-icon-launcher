@@ -26,6 +26,10 @@ export type ClipboardRecord = {
     hash: string;
     timestamp: number;
     is_favorite: boolean;
+    /** 原始文本的完整字符数（轻量列表接口提供）。 */
+    text_length?: number;
+    /** `text_content` 是否被截断（轻量列表接口为 true）。 */
+    text_truncated?: boolean;
 };
 
 export function getRecordContent(record: ClipboardRecord): string {
@@ -61,7 +65,14 @@ export const useClipboardStore = defineStore("clipboard", () => {
     const hasMore = ref<boolean>(true);
     const isLoadingMore = ref<boolean>(false);
     const currentFilter = ref<string>("all");
-    const PAGE_SIZE = 30;
+    /**
+     * 全量加载时文本的截断长度。
+     *
+     * 库里存在单条 4MB+ 的文本，全量传输会产生接近 9MB 的 IPC 负载；
+     * 截断到 240 字符后约 330KB。列表本来只显示预览，
+     * 完整内容在展开/复制时按 id 单独获取。
+     */
+    const PREVIEW_CHARS = 240;
 
     function findRecordIndex(record: { id?: string; hash: string }): number {
         return clipboardHistory.value.findIndex(
@@ -131,48 +142,68 @@ export const useClipboardStore = defineStore("clipboard", () => {
     async function preloadHistory(filter: string = "all") {
         const startTime = performance.now();
         console.log(`[clipboard-store] ▶ preloadHistory (filter: ${filter})`);
-        
-        // 立即重置状态，避免显示旧数据
+
+        // 立即重置状态，避免显示旧数据。
+        // `historyLoaded` 必须一起重置：否则第二次进入时它仍是 true，
+        // 依赖它判断「数据是否就绪」的定位逻辑会在列表清空的瞬间误判为已就绪。
         clipboardHistory.value = [];
         hasMore.value = false;
         isLoadingMore.value = false;
-        
+        historyLoaded.value = false;
+
         try {
-            const backendHistory = await invokeOrThrow<ClipboardRecord[]>("get_clipboard_history", {
-                filter,
-                limit: filter === "favorites" ? 1000 : PAGE_SIZE,
-                offset: 0,
-            });
-            
-            console.log(`[clipboard-store] got ${backendHistory.length} records (${(performance.now() - startTime).toFixed(1)}ms)`);
+            // 一次性拉取整份历史（文本按预览长度截断）。
+            // 虚拟列表需要完整数据集才能正确计算滚动高度与定位；
+            // 完整文本在展开/复制时按 id 单独获取（见 loadFullRecord）。
+            const backendHistory = await invokeOrThrow<ClipboardRecord[]>(
+                "get_clipboard_history_lite",
+                {
+                    filter,
+                    previewChars: PREVIEW_CHARS,
+                }
+            );
+
+            console.log(
+                `[clipboard-store] got ${backendHistory.length} records (${(performance.now() - startTime).toFixed(1)}ms)`
+            );
             clipboardHistory.value = backendHistory;
             currentFilter.value = filter;
-            hasMore.value = filter !== "favorites" && backendHistory.length >= PAGE_SIZE;
+            hasMore.value = false;
             historyLoaded.value = true;
         } catch (error) {
             console.warn("[clipboard-store] Failed to preload clipboard history:", error);
         }
     }
 
-    async function loadMore() {
-        if (isLoadingMore.value || !hasMore.value) return;
-        isLoadingMore.value = true;
+    /** 按需拉取完整记录（列表里是截断后的预览文本）。 */
+    async function loadFullRecord(id: string): Promise<ClipboardRecord | null> {
         try {
-            const offset = clipboardHistory.value.length;
-            const moreRecords = await invokeOrThrow<ClipboardRecord[]>("get_clipboard_history", {
-                filter: currentFilter.value,
-                limit: PAGE_SIZE,
-                offset,
+            const record = await invokeOrThrow<ClipboardRecord | null>("get_clipboard_record", {
+                id,
             });
-            if (moreRecords.length > 0) {
-                clipboardHistory.value.push(...moreRecords);
-            }
-            hasMore.value = moreRecords.length >= PAGE_SIZE;
+            return record ?? null;
         } catch (error) {
-            console.warn("[clipboard-store] Failed to load more:", error);
-        } finally {
-            isLoadingMore.value = false;
+            console.warn("[clipboard-store] Failed to load full record:", error);
+            return null;
         }
+    }
+
+    /**
+     * 取得可直接用于复制/展开的完整文本。
+     *
+     * 列表数据来自轻量接口，长文本已被截断；
+     * 这里按需补拉完整内容，避免复制到残缺文本。
+     */
+    async function getFullText(record: ClipboardRecord): Promise<string> {
+        const text = record.text_content ?? "";
+        if (!record.text_truncated) return text;
+
+        const full = await loadFullRecord(record.id);
+        return full?.text_content ?? text;
+    }
+
+    async function loadMore() {
+        // 已改为一次性全量加载，保留空实现以兼容既有调用点。
     }
 
     async function search(query: string): Promise<ClipboardRecord[]> {
@@ -208,6 +239,8 @@ export const useClipboardStore = defineStore("clipboard", () => {
         setCurrentClipboardHash,
         preloadHistory,
         loadMore,
+        loadFullRecord,
+        getFullText,
         search,
     };
 }, { persist: createVersionedPersistConfig("clipboard", ["clipboardHistory", "clipboardHistoryEnabled"]) });

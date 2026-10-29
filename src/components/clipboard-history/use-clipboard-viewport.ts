@@ -11,9 +11,25 @@ export function useClipboardViewport(params: {
     isLoadingMore: Ref<boolean>;
     loadMore: () => void;
     clearSearchKeyword: () => void;
+    /** 当前搜索关键词（用于判断清空后是否需要等重新加载）。 */
+    currentKeyword?: () => string;
+    /** 等待列表数据就绪（清空搜索后重新加载完成）。 */
+    waitForHistoryReady?: () => Promise<void>;
+    /** 定位失败时的提示回调（记录已被删除/清理）。 */
+    onLocateMiss?: (recordId: string) => void;
 }) {
-    const { history, contentRef, itemRefs, hasMore, isLoadingMore, loadMore, clearSearchKeyword } =
-        params;
+    const {
+        history,
+        contentRef,
+        itemRefs,
+        hasMore,
+        isLoadingMore,
+        loadMore,
+        clearSearchKeyword,
+        currentKeyword = () => "",
+        waitForHistoryReady = async () => {},
+        onLocateMiss,
+    } = params;
 
     const imagePreviewMap = ref<Record<string, string>>({});
     const imageLoadingSet = ref<Set<string>>(new Set());
@@ -83,32 +99,67 @@ export function useClipboardViewport(params: {
         }, ANCHOR_FLASH_MS);
     }
 
-    function onLocateClipboardItem(event: Event) {
+    /**
+     * 定位到指定记录。
+     *
+     * 虚拟列表下未渲染的项没有 DOM，不能靠 `itemRefs` 查找，
+     * 必须委托给列表组件的 `scrollToRecordId`（内部走 `scrollToIndex`），
+     * 等目标行渲染出来后再做高亮。
+     *
+     * 数据已是全量加载（`get_clipboard_history_lite`），所以不需要分页加载；
+     * 若仍找不到，说明该记录已被删除/清理。
+     *
+     * 注意：调用方必须保证「搜索关键词已清空且列表数据已就绪」，
+     * 否则虚拟列表里根本没有这一行。
+     */
+    async function locateRecord(
+        recordId: string,
+        scrollToRecordId?: ((id: string) => Promise<boolean> | boolean) | null
+    ): Promise<boolean> {
+        const found = scrollToRecordId ? await scrollToRecordId(recordId) : false;
+        if (!found) return false;
+
+        // 等虚拟列表把目标行渲染出来
+        await nextTick();
+        await nextTick();
+
+        void triggerAnchorFlash(recordId);
+        return true;
+    }
+
+    async function onLocateClipboardItem(event: Event) {
         const customEvent = event as CustomEvent;
         const { recordId } = customEvent.detail;
 
+        // 先清空搜索词。清空会触发列表按筛选重新加载（异步），
+        // 必须等它完成后才能定位，否则虚拟列表里还是过滤后的旧数据。
+        const hadKeyword = !!currentKeyword();
         clearSearchKeyword();
 
-        nextTick(() => {
-            const target = itemRefs.value[recordId];
-            const container = contentRef.value;
-            if (!target || !container) return;
+        if (hadKeyword) {
+            await waitForHistoryReady();
+        }
 
-            void triggerAnchorFlash(recordId);
-
-            const nextScrollTop = getAnchorScrollTop(container, target);
-            animateScrollTo(container, nextScrollTop);
-        });
+        const found = await locateRecord(recordId, getScrollToRecordId());
+        if (!found) {
+            onLocateMiss?.(recordId);
+        }
     }
 
+    /** 由父组件注入：虚拟列表暴露的滚动方法。 */
+    let scrollToRecordIdRef: ((id: string) => Promise<boolean> | boolean) | null = null;
+
+    function setScrollToRecordId(fn: ((id: string) => Promise<boolean> | boolean) | null) {
+        scrollToRecordIdRef = fn;
+    }
+
+    function getScrollToRecordId() {
+        return scrollToRecordIdRef;
+    }
+
+    /** 兼容旧调用点：直接滚动到已渲染的记录。 */
     async function scrollToRecord(recordId: string) {
-        await nextTick();
-        const target = itemRefs.value[recordId];
-        const container = contentRef.value;
-        if (!target || !container) return;
-        await triggerAnchorFlash(recordId);
-        const nextScrollTop = getAnchorScrollTop(container, target);
-        animateScrollTo(container, nextScrollTop);
+        await locateRecord(recordId, getScrollToRecordId());
     }
 
     async function afterToggleExpand(recordId: string, wasExpanded: boolean) {
@@ -283,6 +334,9 @@ export function useClipboardViewport(params: {
         onLocateClipboardItem,
         triggerAnchorFlash,
         scrollToRecord,
+        locateRecord,
+        setScrollToRecordId,
+        getScrollToRecordId,
         afterToggleExpand,
         observeImageElement,
         dispose,

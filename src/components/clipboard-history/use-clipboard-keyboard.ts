@@ -8,8 +8,17 @@ export function useClipboardKeyboard(params: {
     searchInputRef: Ref<HTMLInputElement | null>;
     onBack: () => void;
     onCopyItem: (item: ClipboardRecord) => void;
+    /** 虚拟列表暴露的定位方法（未渲染项也能滚动到）。 */
+    getScrollToRecordId?: () => ((id: string) => Promise<boolean> | boolean) | null;
 }) {
-    const { flatVisibleRecords, filterOrder, searchInputRef, onBack, onCopyItem } = params;
+    const {
+        flatVisibleRecords,
+        filterOrder,
+        searchInputRef,
+        onBack,
+        onCopyItem,
+        getScrollToRecordId = () => null,
+    } = params;
 
     const tabRegion = ref<ClipboardTabRegion>("search");
     const focusedFilterIndex = ref(0);
@@ -102,10 +111,24 @@ export function useClipboardKeyboard(params: {
         delete itemRefs.value[recordId];
     }
 
+    /**
+     * 把当前键盘焦点滚动到可视区域。
+     *
+     * 虚拟列表下，焦点所在行可能根本没被渲染（DOM 不存在），
+     * 因此不能依赖 `itemRefs`，必须优先委托给虚拟列表的 `scrollToRecordId`。
+     * `itemRefs` 只作为兜底（例如列表未注入滚动方法时）。
+     */
     function scrollFocusedRecordIntoView() {
         if (tabRegion.value !== "content") return;
         const focusedId = focusedRecordId.value;
         if (!focusedId) return;
+
+        const scrollToRecordId = getScrollToRecordId();
+        if (scrollToRecordId) {
+            void scrollToRecordId(focusedId);
+            return;
+        }
+
         const node = itemRefs.value[focusedId];
         node?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
     }
@@ -184,6 +207,31 @@ export function useClipboardKeyboard(params: {
         });
     }
 
+    /** 跳转到首/末条，或按页翻动（PageUp / PageDown）。 */
+    function moveContentFocusTo(target: "home" | "end" | "pageUp" | "pageDown") {
+        const list = flatVisibleRecords.value;
+        if (list.length === 0) return;
+
+        let nextIndex = focusedRecordIndex.value;
+        if (target === "home") {
+            nextIndex = 0;
+        } else if (target === "end") {
+            nextIndex = list.length - 1;
+        } else {
+            // 每页约 8 条，与常见列表一屏可见数量接近
+            const pageSize = 8;
+            nextIndex =
+                target === "pageUp"
+                    ? Math.max(0, nextIndex - pageSize)
+                    : Math.min(list.length - 1, nextIndex + pageSize);
+        }
+
+        focusedRecordIndex.value = nextIndex;
+        nextTick(() => {
+            scrollFocusedRecordIntoView();
+        });
+    }
+
     function triggerFocusedFilterSelection(selectedFilter: Ref<ClipboardFilter>) {
         const key = focusedFilterKey.value;
         selectedFilter.value = key;
@@ -244,6 +292,26 @@ export function useClipboardKeyboard(params: {
             if (e.key === "ArrowUp" || e.key === "ArrowDown") {
                 e.preventDefault();
                 moveContentFocusByArrow(e.key as "ArrowUp" | "ArrowDown");
+                return;
+            }
+            if (e.key === "Home") {
+                e.preventDefault();
+                moveContentFocusTo("home");
+                return;
+            }
+            if (e.key === "End") {
+                e.preventDefault();
+                moveContentFocusTo("end");
+                return;
+            }
+            if (e.key === "PageUp") {
+                e.preventDefault();
+                moveContentFocusTo("pageUp");
+                return;
+            }
+            if (e.key === "PageDown") {
+                e.preventDefault();
+                moveContentFocusTo("pageDown");
                 return;
             }
             if (e.key === "Enter") {
@@ -330,6 +398,8 @@ export function useClipboardKeyboard(params: {
         onSearchInputBlur,
         setFilterChipRef,
         setItemRef,
+        scrollFocusedRecordIntoView,
+        moveContentFocusTo,
         onClipboardKeydown,
         onClipboardMouseDown,
     };

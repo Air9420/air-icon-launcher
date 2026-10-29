@@ -148,14 +148,17 @@ void props;
     box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 40%, transparent), var(--card-shadow);
 }
 
+/* 动画时长必须与 types.ts 的 ANCHOR_FLASH_MS 一致，
+   否则类名会在动画播完前被移除，导致闪烁被截断。 */
 .history-item.is-anchor-flashing:not(.is-current) {
-    animation: anchor-item-flash 2s ease-in-out;
+    animation: anchor-item-flash 3s ease-in-out;
 }
 
 .history-item.is-current.is-anchor-flashing {
-    animation: anchor-item-flash-current 2s ease-in-out;
+    animation: anchor-item-flash-current 3s ease-in-out;
 }
 
+/* 3 秒内闪烁 3 次，收尾留一段稳定高亮，便于用户锁定目标行。 */
 @keyframes anchor-item-flash {
     0%,
     100% {
@@ -163,17 +166,26 @@ void props;
         border-color: var(--border-color);
         box-shadow: none;
     }
-    20%,
-    60% {
+    10%,
+    26%,
+    42% {
         background: var(--primary-bg);
         border-color: var(--primary-color);
         box-shadow: 0 0 0 1px var(--primary-color);
     }
-    40%,
-    80% {
+    18%,
+    34%,
+    50% {
         background: var(--card-bg);
         border-color: var(--border-color);
         box-shadow: none;
+    }
+    /* 最后 1/3 保持高亮，让用户能看清定位到的行 */
+    55%,
+    92% {
+        background: var(--primary-bg);
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 1px var(--primary-color);
     }
 }
 
@@ -184,8 +196,20 @@ void props;
         border-color: var(--primary-color);
         box-shadow: 0 0 0 1px var(--primary-color);
     }
-    25%,
-    75% {
+    15%,
+    45% {
+        background: var(--card-bg-solid);
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 2px var(--primary-color);
+    }
+    30%,
+    60% {
+        background: var(--primary-bg);
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 1px var(--primary-color);
+    }
+    65%,
+    92% {
         background: var(--card-bg-solid);
         border-color: var(--primary-color);
         box-shadow: 0 0 0 2px var(--primary-color);

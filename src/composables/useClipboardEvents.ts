@@ -74,7 +74,10 @@ export function useClipboardEvents() {
             if (item.content_type === "image" && item.image_path) {
                 await invokeOrThrow("set_clipboard_content", { content: item.image_path, isImage: true });
             } else {
-                await invokeOrThrow("set_clipboard_content", { content: item.text_content, isImage: false });
+                // 列表数据可能来自轻量接口（长文本已截断），
+                // 复制前必须补拉完整内容，否则会复制到残缺文本。
+                const fullText = await clipboardStore.getFullText(item);
+                await invokeOrThrow("set_clipboard_content", { content: fullText, isImage: false });
             }
             clipboardStore.promoteClipboardRecord(item);
             clipboardStore.setCurrentClipboardHash(item.hash);

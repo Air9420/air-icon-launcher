@@ -367,6 +367,82 @@ pub fn get_clipboard_history(
     Ok(Vec::new())
 }
 
+/// 一次性拉取整份历史（文本按预览长度截断）。
+///
+/// 供前端虚拟列表使用：虚拟列表需要完整数据集才能正确计算滚动高度与定位，
+/// 但库里存在单条 4MB+ 的文本，全量传输接近 9MB。
+/// 这里只返回前 `preview_chars` 个字符，实际负载约 330KB；
+/// 用户展开或复制时再用 `get_clipboard_record` 按 id 取完整内容。
+///
+/// 同样需要 `spawn_blocking`：全表扫描 + 截断是阻塞的。
+#[tauri::command]
+pub async fn get_clipboard_history_lite(
+    filter: Option<String>,
+    preview_chars: Option<usize>,
+    state: tauri::State<'_, Arc<ClipboardState>>,
+) -> Result<Vec<ClipboardRecord>, String> {
+    let state = Arc::clone(state.inner());
+
+    tokio::task::spawn_blocking(move || {
+        let config = state.config.lock().unwrap().clone();
+        if !config.history_enabled {
+            return Ok(Vec::new());
+        }
+
+        let filter = filter.unwrap_or_else(|| "all".to_string());
+        // 上限 2000，避免前端传超大值把负载拉回全量。
+        let preview_chars = preview_chars.unwrap_or(240).clamp(1, 2000);
+
+        if let Some(db) = state.database.lock().unwrap().as_ref() {
+            let records = db
+                .get_all_lite(&filter, preview_chars)
+                .map_err(|e| e.to_string())?;
+            // 把「原始完整长度」回传给前端：前端据此判断是否被截断，
+            // 避免把截断后的内容当成完整文本复制出去。
+            let result: Vec<ClipboardRecord> = records
+                .into_iter()
+                .map(|(db_record, full_len)| {
+                    let record: ClipboardRecord = db_record.into();
+                    let truncated = record
+                        .text_content
+                        .as_ref()
+                        .map(|text| text.chars().count() < full_len)
+                        .unwrap_or(false);
+                    if truncated {
+                        record.into_truncated(full_len)
+                    } else {
+                        record
+                    }
+                })
+                .collect();
+            return Ok(result);
+        }
+
+        Ok(Vec::new())
+    })
+    .await
+    .map_err(|e| format!("get_clipboard_history_lite failed: {}", e))?
+}
+
+/// 按 id 取单条完整记录（含完整文本）。
+#[tauri::command]
+pub async fn get_clipboard_record(
+    id: String,
+    state: tauri::State<'_, Arc<ClipboardState>>,
+) -> Result<Option<ClipboardRecord>, String> {
+    let state = Arc::clone(state.inner());
+
+    tokio::task::spawn_blocking(move || {
+        if let Some(db) = state.database.lock().unwrap().as_ref() {
+            let record = db.get_by_id(&id).map_err(|e| e.to_string())?;
+            return Ok(record.map(|r| r.into()));
+        }
+        Ok(None)
+    })
+    .await
+    .map_err(|e| format!("get_clipboard_record failed: {}", e))?
+}
+
 #[tauri::command]
 pub fn get_clipboard_history_by_type(
     content_type: String,
@@ -377,34 +453,42 @@ pub fn get_clipboard_history_by_type(
     get_clipboard_history(Some(content_type), limit, offset, state)
 }
 
+/// 搜索剪贴板历史。
+///
+/// `LIKE '%q%'` 是全表扫描（几 MB 文本量级），且要拿读连接锁，
+/// 因此放到阻塞线程池执行，避免占用 WebView2 消息泵。
 #[tauri::command]
-pub fn search_clipboard_history(
+pub async fn search_clipboard_history(
     query: String,
     limit: Option<usize>,
     offset: Option<usize>,
     state: tauri::State<'_, Arc<ClipboardState>>,
 ) -> Result<Vec<ClipboardRecord>, String> {
-    let config = state.config.lock().unwrap().clone();
-    if !config.history_enabled {
-        return Ok(Vec::new());
-    }
+    let state = Arc::clone(state.inner());
 
-    let limit = limit.unwrap_or(50);
-    let offset = offset.unwrap_or(0);
+    tokio::task::spawn_blocking(move || {
+        let config = state.config.lock().unwrap().clone();
+        if !config.history_enabled {
+            return Ok(Vec::new());
+        }
 
-    if query.trim().is_empty() {
-        return Ok(Vec::new());
-    }
+        let limit = limit.unwrap_or(50);
+        let offset = offset.unwrap_or(0);
 
-    if let Some(db) = state.database.lock().unwrap().as_ref() {
-        let records = db.search(&query, limit, offset)
-            .map_err(|e| e.to_string())?;
+        if query.trim().is_empty() {
+            return Ok(Vec::new());
+        }
 
-        let result: Vec<ClipboardRecord> = records.into_iter().map(|r| r.into()).collect();
-        return Ok(result);
-    }
+        if let Some(db) = state.database.lock().unwrap().as_ref() {
+            let records = db.search(&query, limit, offset).map_err(|e| e.to_string())?;
+            let result: Vec<ClipboardRecord> = records.into_iter().map(|r| r.into()).collect();
+            return Ok(result);
+        }
 
-    Ok(Vec::new())
+        Ok(Vec::new())
+    })
+    .await
+    .map_err(|e| format!("search_clipboard_history failed: {}", e))?
 }
 
 #[tauri::command]
