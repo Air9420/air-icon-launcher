@@ -996,9 +996,10 @@ export function useHomeSearch(deps: HomeSearchDeps) {
 
     function applyFocusLost(): void {
         isWindowFocused.value = false;
-        showShortcutHints.value = false;
         closeSearchHistoryPanel();
         resetHomeKeyboardNav.current();
+        // 号标不在这里关：按 Ctrl+数字启动应用后目标程序会抢焦点，
+        // 一旦关掉，用户继续按 Ctrl+数字就看不到号标了。号标只跟随 Ctrl 键状态。
     }
 
     function setWindowFocused(focused: boolean): void {

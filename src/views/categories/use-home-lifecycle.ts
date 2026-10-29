@@ -57,7 +57,24 @@ export type HomeKeyboardDeps = {
 };
 
 export function createHomeKeyboardHandlers(deps: HomeKeyboardDeps) {
+    /**
+     * 号标是否可见。
+     *
+     * 只跟随 Ctrl 的物理状态，不跟随窗口焦点：按 Ctrl+数字启动应用后，
+     * 目标程序会抢走焦点，若此时把号标关掉，用户继续按 Ctrl+数字就看不到提示了。
+     */
+    function setShortcutHints(visible: boolean) {
+        if (deps.showShortcutHints.value === visible) return;
+        deps.showShortcutHints.value = visible;
+    }
+
     function onKeydown(e: KeyboardEvent) {
+        // 兜底：窗口失焦期间松开的 Ctrl 收不到 keyup，
+        // 之后任何不带 Ctrl 的按键都说明 Ctrl 已经松开，顺手把号标关掉。
+        if (!e.ctrlKey && !e.metaKey && e.key !== "Control") {
+            setShortcutHints(false);
+        }
+
         const hasBlockingDialog = !!document.querySelector(".confirm-overlay, .input-overlay");
         if (e.key === "Escape" && deps.showSearchHistoryPanel.value) {
             deps.closeSearchHistoryPanel();
@@ -71,12 +88,12 @@ export function createHomeKeyboardHandlers(deps: HomeKeyboardDeps) {
         }
 
         if (e.key === "Control") {
-            deps.showShortcutHints.value = true;
+            setShortcutHints(true);
             return;
         }
 
         if (e.ctrlKey && !e.altKey && !e.metaKey) {
-            deps.showShortcutHints.value = true;
+            setShortcutHints(true);
             const shortcutIndex = getSearchShortcutIndex(e);
             if (shortcutIndex !== null) {
                 if (!deps.searchKeyword.value.trim()) {
@@ -146,7 +163,7 @@ export function createHomeKeyboardHandlers(deps: HomeKeyboardDeps) {
 
     function onKeyup(e: KeyboardEvent) {
         if (e.key === "Control" || !e.ctrlKey) {
-            deps.showShortcutHints.value = false;
+            setShortcutHints(false);
         }
     }
 
