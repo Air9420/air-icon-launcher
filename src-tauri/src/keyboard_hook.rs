@@ -98,6 +98,24 @@ pub fn get_strong_shortcut_mode() -> bool {
     HOOK_ENABLED.load(Ordering::Relaxed)
 }
 
+/// 查询 Ctrl 键的**物理**按下状态。
+///
+/// 前端 `keyup` 只有在窗口有焦点时才会收到；启动项把焦点抢走后，
+/// 用户松开 Ctrl 的事件就丢了，导致「松开 Ctrl 不隐藏窗口」。
+/// `GetAsyncKeyState` 读取的是全局按键状态，不受窗口焦点影响，
+/// 前端可据此兜底判定 Ctrl 是否真的松开。
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub fn is_ctrl_key_pressed() -> bool {
+    unsafe { GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000 != 0 }
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub fn is_ctrl_key_pressed() -> bool {
+    false
+}
+
 fn should_trigger() -> bool {
     let now = Instant::now().elapsed().as_millis() as u64;
     let last = LAST_TRIGGER_TIME.load(Ordering::Relaxed);

@@ -199,23 +199,10 @@ const {
     onApplyBulkEdit,
 } = selection;
 
-type LaunchStatus = "launching" | "success";
-const launchStatusMap = ref<Map<string, LaunchStatus>>(new Map());
-const { setLaunchStatus: setLaunchStatusWithHide } = useLaunchStatus({
+// 状态与「启动即隐藏」都在 useLaunchStatus 内维护：点击即隐藏，动画只在按住 Ctrl 时出现。
+const { launchStatusMap, setLaunchStatus, clearLaunchStatus } = useLaunchStatus({
     autoHideAfterLaunch,
 });
-
-function setLaunchStatus(itemId: string, status: LaunchStatus) {
-    launchStatusMap.value.set(itemId, status);
-    launchStatusMap.value = new Map(launchStatusMap.value);
-    setLaunchStatusWithHide(itemId, status);
-    if (status === "success") {
-        setTimeout(() => {
-            launchStatusMap.value.delete(itemId);
-            launchStatusMap.value = new Map(launchStatusMap.value);
-        }, 2000);
-    }
-}
 
 async function onOpenItem(item: { id: string }) {
     if (!item) return;
@@ -228,8 +215,7 @@ async function onOpenItem(item: { id: string }) {
         setLaunchStatus(item.id, "success");
     } catch (e) {
         console.error(e);
-        launchStatusMap.value.delete(item.id);
-        launchStatusMap.value = new Map(launchStatusMap.value);
+        clearLaunchStatus(item.id);
     }
 }
 

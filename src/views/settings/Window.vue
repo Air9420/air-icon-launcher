@@ -67,10 +67,10 @@
             <div class="section-title">启动项</div>
             <label class="check">
                 <input v-model="autoHideAfterLaunchDraft" type="checkbox" @change="onAutoHideAfterLaunchChange" />
-                <span>启动成功后自动隐藏窗口</span>
+                <span>点击启动项后立即隐藏窗口</span>
             </label>
             <div class="hint">
-                成功打开一个启动项后自动隐藏本程序窗口
+                点击任意启动项时立即隐藏本程序窗口，不再等待启动结果
             </div>
             <div class="hint compact">
                 <DangerSquare size="18" weight="Bold" /> 按住 <kbd>Ctrl</kbd> 键可连续启动多个，松开后自动隐藏

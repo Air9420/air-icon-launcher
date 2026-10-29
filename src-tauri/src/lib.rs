@@ -318,6 +318,7 @@ pub fn run() {
             app_settings::get_show_mode,
             keyboard_hook::set_strong_shortcut_mode,
             keyboard_hook::get_strong_shortcut_mode,
+            keyboard_hook::is_ctrl_key_pressed,
             autostart_service::get_autostart_service_status,
             autostart_service::set_autostart_service_enabled,
             autostart_service::get_autostart_status,

@@ -162,7 +162,7 @@
                 <ul>
                     <li><strong>跟随鼠标：</strong>开启后窗口显示时自动移动到鼠标位置</li>
                     <li><strong>锚点位置：</strong>配合跟随鼠标，可设置窗口显示在鼠标的上方/中间/下方</li>
-                    <li><strong>启动后隐藏：</strong>开启后成功打开启动项会自动隐藏窗口</li>
+                    <li><strong>启动即隐藏：</strong>开启后点击启动项会立即隐藏窗口，不再等待启动结果</li>
                     <li><strong>Ctrl 多选：</strong>按住 <kbd>Ctrl</kbd> 键可连续启动多个启动项，松开后自动隐藏窗口</li>
                     <li><strong>开机自启：</strong>可选择三种方式
                         <ul>
