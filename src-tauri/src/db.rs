@@ -88,11 +88,18 @@ impl ClipboardDatabase {
         })
     }
 
+    /// 插入单条记录。
+    ///
+    /// 使用 upsert：`hash` 有唯一索引（v3 迁移建立），
+    /// 重复内容时更新为最新的时间戳并合并收藏状态，而不是插入重复行。
     pub fn insert(&self, record: &ClipboardRecordDb) -> SqliteResult<()> {
         let conn = self.write_conn.lock().unwrap();
         conn.execute(
             "INSERT INTO clipboard_records (id, content_type, content_subtype, text_content, image_path, hash, timestamp, is_favorite)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(hash) DO UPDATE SET
+                 timestamp = MAX(clipboard_records.timestamp, excluded.timestamp),
+                 is_favorite = MAX(clipboard_records.is_favorite, excluded.is_favorite)",
             params![
                 record.id,
                 record.content_type,
@@ -107,13 +114,17 @@ impl ClipboardDatabase {
         Ok(())
     }
 
+    /// 批量插入记录（同样按 hash upsert，不会产生重复行）。
     pub fn insert_batch(&self, records: &[ClipboardRecordDb]) -> SqliteResult<()> {
         let mut conn = self.write_conn.lock().unwrap();
         let tx = conn.transaction()?;
         for record in records {
             tx.execute(
                 "INSERT INTO clipboard_records (id, content_type, content_subtype, text_content, image_path, hash, timestamp, is_favorite)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 ON CONFLICT(hash) DO UPDATE SET
+                     timestamp = MAX(clipboard_records.timestamp, excluded.timestamp),
+                     is_favorite = MAX(clipboard_records.is_favorite, excluded.is_favorite)",
                 params![
                     record.id,
                     record.content_type,

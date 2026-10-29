@@ -295,6 +295,8 @@ fn process_clipboard_change(
                     hash: hash.clone(),
                     timestamp: get_timestamp(),
                     is_favorite: false,
+                    text_length: 0,
+                    text_truncated: false,
                 };
 
                 if let Some(db) = database.lock().unwrap().as_ref() {
@@ -343,11 +345,13 @@ fn process_clipboard_change(
                     id: generate_id(),
                     record_type: "text".to_string(),
                     content_subtype,
+                    text_length: text.chars().count(),
                     text_content: Some(text.clone()),
                     image_path: None,
                     hash: hash.clone(),
                     timestamp: get_timestamp(),
                     is_favorite: false,
+                    text_truncated: false,
                 };
 
                 if let Some(db) = database.lock().unwrap().as_ref() {

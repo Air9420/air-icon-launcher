@@ -24,11 +24,14 @@ pub struct MigrationRunner {
 impl MigrationRunner {
     pub fn new(favorite_hashes: Vec<String>) -> Self {
         Self {
-            migrations: vec![Box::new(
-                super::migrations::v2_add_favorite_and_subtype::AddFavoriteAndSubtypeFields::new(
-                    favorite_hashes,
+            migrations: vec![
+                Box::new(
+                    super::migrations::v2_add_favorite_and_subtype::AddFavoriteAndSubtypeFields::new(
+                        favorite_hashes,
+                    ),
                 ),
-            )],
+                Box::new(super::migrations::v3_dedupe_clipboard_by_hash::DedupeClipboardByHash),
+            ],
         }
     }
 
