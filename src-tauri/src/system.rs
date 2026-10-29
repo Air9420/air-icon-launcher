@@ -542,109 +542,33 @@ pub fn get_current_monitor_fingerprint(
     Ok(monitor.as_ref().map(monitor_to_fingerprint_info))
 }
 
+/// 最近文件列表。
+///
+/// 扫描 + 快捷方式解析 + 存在性探测都是阻塞 IO（网络路径单次探测可达 1s 以上），
+/// 因此必须走 `spawn_blocking`，否则会卡住 WebView2 的消息泵
+/// （表现为输入法候选框卡死、连续按键被吞）。
 #[tauri::command]
-pub fn get_recent_files(
+pub async fn get_recent_files(
     limit: Option<u32>,
     include_icons: Option<bool>,
+    force_refresh: Option<bool>,
 ) -> AppResult<Vec<RecentFileEntry>> {
     let target_limit = limit.unwrap_or(40).clamp(1, 120) as usize;
     let should_include_icons = include_icons.unwrap_or(false);
+    let should_force_refresh = force_refresh.unwrap_or(false);
 
-    #[cfg(target_os = "windows")]
-    {
-        return get_recent_files_windows(target_limit, should_include_icons);
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = target_limit;
-        let _ = should_include_icons;
-        Ok(Vec::new())
-    }
+    tokio::task::spawn_blocking(move || {
+        crate::recent_files::get_recent_files_cached(
+            target_limit,
+            should_include_icons,
+            should_force_refresh,
+        )
+    })
+    .await
+    .map_err(|e| AppError::internal(format!("get_recent_files failed: {}", e)))?
 }
 
-#[cfg(target_os = "windows")]
-fn get_recent_files_windows(limit: usize, include_icons: bool) -> AppResult<Vec<RecentFileEntry>> {
-    let Some(app_data) = std::env::var_os("APPDATA").map(PathBuf::from) else {
-        return Ok(Vec::new());
-    };
-    let recent_dir = app_data.join("Microsoft\\Windows\\Recent");
-    if !recent_dir.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut candidates: Vec<(PathBuf, u64)> = Vec::new();
-    let read_dir = fs::read_dir(&recent_dir)
-        .map_err(|e| AppError::io_error(format!("Failed to read Recent directory: {}", e)))?;
-
-    for entry in read_dir.flatten() {
-        let path = entry.path();
-        if path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| ext.eq_ignore_ascii_case("lnk"))
-            != Some(true)
-        {
-            continue;
-        }
-
-        let used_at = entry
-            .metadata()
-            .ok()
-            .and_then(|meta| meta.modified().ok())
-            .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|duration| duration.as_millis() as u64)
-            .unwrap_or(0);
-
-        candidates.push((path, used_at));
-    }
-
-    candidates.sort_by(|a, b| b.1.cmp(&a.1));
-
-    let mut dedupe = HashSet::<String>::new();
-    let mut entries: Vec<RecentFileEntry> = Vec::new();
-
-    for (lnk_path, used_at) in candidates {
-        let Some(target_path) = crate::drag::resolve_windows_shortcut_target_pathbuf(&lnk_path)
-        else {
-            continue;
-        };
-
-        let target_path_str = target_path.to_string_lossy().to_string();
-        let normalized_key = target_path_str.replace('/', "\\").to_ascii_lowercase();
-        if normalized_key.is_empty() || !dedupe.insert(normalized_key) {
-            continue;
-        }
-
-        if !target_path.exists() {
-            continue;
-        }
-
-        let icon_base64 = if include_icons {
-            crate::drag::extract_icons_from_paths_blocking(vec![target_path_str.clone()], None)
-                .into_iter()
-                .next()
-                .flatten()
-        } else {
-            None
-        };
-
-        entries.push(RecentFileEntry {
-            name: derive_display_name_from_path(&target_path),
-            path: target_path_str,
-            used_at,
-            icon_base64,
-        });
-
-        if entries.len() >= limit {
-            break;
-        }
-    }
-
-    Ok(entries)
-}
-
-fn derive_display_name_from_path(path: &Path) -> String {
+pub(crate) fn derive_display_name_from_path(path: &Path) -> String {
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())

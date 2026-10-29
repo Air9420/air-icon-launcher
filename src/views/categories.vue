@@ -196,6 +196,7 @@ const {
     setWindowFocused,
     setWindowVisibility,
     onWindowBlur,
+    primeSearchResources,
 } = homeSearch;
 
 const { pinnedMergedItems, mergedRecentDisplayItems } = useHomePageState();
@@ -302,6 +303,10 @@ onMounted(async () => {
     if (searchKeyword.value === undefined) {
         /* keep reactive binding alive */
     }
+
+    // 首屏即预热搜索资源：把最近文件扫描 / 索引同步 / .lnk 解析挪到用户输入之前，
+    // 否则这些开销会全部压在「第一次敲键」上，表现为输入法候选框卡死。
+    primeSearchResources();
 
     disposeWindowListeners = await setupHomeWindowListeners({
         onKeydown,

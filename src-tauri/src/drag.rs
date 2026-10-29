@@ -311,30 +311,73 @@ fn encode_raster_icon_bytes(bytes: &[u8], max_edge: u32) -> Option<String> {
 /// 在 Windows 上解析 .lnk 快捷方式指向的真实路径，用于获取不带叠加层的目标图标。
 #[cfg(windows)]
 pub(crate) fn resolve_windows_shortcut_target_pathbuf(path: &PathBuf) -> Option<PathBuf> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows::core::{Interface, PCWSTR};
-    use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
+    resolve_windows_shortcut_targets(std::slice::from_ref(path))
+        .into_iter()
+        .next()
+        .flatten()
+}
+
+/// 批量解析 .lnk 目标路径。
+///
+/// 逐个调用时每次都要 `CoInitializeEx` + `CoCreateInstance`，上百个快捷方式会
+/// 累积出可观的固定开销。这里共享一次 COM 初始化与一个 `IShellLinkW` 实例，
+/// 返回顺序与入参严格一致（解析失败为 `None`）。
+#[cfg(windows)]
+pub(crate) fn resolve_windows_shortcut_targets(paths: &[PathBuf]) -> Vec<Option<PathBuf>> {
+    use windows::core::Interface;
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
-        COINIT_APARTMENTTHREADED, STGM_READ,
+        COINIT_APARTMENTTHREADED,
     };
-    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink, SLGP_RAWPATH};
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
 
-    struct ComInitGuard;
+    if paths.is_empty() {
+        return Vec::new();
+    }
+
+    struct ComInitGuard {
+        should_uninit: bool,
+    }
     impl Drop for ComInitGuard {
         fn drop(&mut self) {
-            unsafe { CoUninitialize() };
+            if self.should_uninit {
+                unsafe { CoUninitialize() };
+            }
         }
     }
 
-    if unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_err() {
-        return None;
-    }
-    let _guard = ComInitGuard;
+    // S_FALSE（已在本线程初始化过）不应配对 CoUninitialize，否则会打破调用方的 COM 生命周期。
+    let init_result = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    let should_uninit = init_result.is_ok();
+    let _guard = ComInitGuard { should_uninit };
 
-    let shell_link: IShellLinkW =
-        unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER) }.ok()?;
-    let persist: IPersistFile = shell_link.cast().ok()?;
+    let Ok(shell_link) = (unsafe {
+        CoCreateInstance::<_, IShellLinkW>(&ShellLink, None, CLSCTX_INPROC_SERVER)
+    }) else {
+        return vec![None; paths.len()];
+    };
+    let Ok(persist) = shell_link.cast::<IPersistFile>() else {
+        return vec![None; paths.len()];
+    };
+
+    let mut results = Vec::with_capacity(paths.len());
+    for path in paths {
+        results.push(load_shortcut_target(&shell_link, &persist, path));
+    }
+    results
+}
+
+#[cfg(windows)]
+fn load_shortcut_target(
+    shell_link: &windows::Win32::UI::Shell::IShellLinkW,
+    persist: &windows::Win32::System::Com::IPersistFile,
+    path: &PathBuf,
+) -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
+    use windows::Win32::System::Com::STGM_READ;
+    use windows::Win32::UI::Shell::SLGP_RAWPATH;
 
     let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
     wide.push(0);

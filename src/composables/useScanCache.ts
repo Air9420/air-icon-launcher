@@ -30,7 +30,8 @@ let cacheLoadPromise: Promise<void> | null = null;
 const iconHydrationPromises = new Map<string, Promise<string | null>>();
 const resolvedLnkTargetCache = new Map<string, string | null>();
 let launcherPathKeyCache: { fingerprint: string; keys: Set<string> } | null = null;
-const pendingResolvedLnkTargets = new Map<string, Promise<string | null>>();
+/** 同一批 .lnk 只解析一次（并发调用 getFallbackSection 时共享）。 */
+let pendingLnkBatch: Promise<void> | null = null;
 
 function getResolvedLnkCacheKey(path: string): string {
   return normalizePathKey(path);
@@ -84,7 +85,7 @@ export function clearScanCacheStateForTests(): void {
   iconHydrationPromises.clear();
   resolvedLnkTargetCache.clear();
   launcherPathKeyCache = null;
-  pendingResolvedLnkTargets.clear();
+  pendingLnkBatch = null;
 }
 
 export function useScanCache() {
@@ -159,6 +160,13 @@ export function useScanCache() {
     }
 
     const keys = new Set<string>();
+    /** 本轮需要解析、且不在内存缓存里的 .lnk：一次批量 IPC 解决。 */
+    const unresolvedLnkItems: Array<{
+      categoryId: string;
+      itemId: string;
+      path: string;
+      cacheKey: string;
+    }> = [];
 
     for (const [categoryId, items] of Object.entries(launcherStore.launcherItemsByCategoryId)) {
       for (const item of items) {
@@ -184,38 +192,12 @@ export function useScanCache() {
               launcherStore.setLauncherItemResolvedPath(categoryId, item.id, cachedTarget);
             }
           } else {
-            try {
-              let pending = pendingResolvedLnkTargets.get(lnkCacheKey);
-              if (!pending) {
-                pending = invoke<string>('resolve_lnk_target', { path: item.path })
-                  .then((result) => {
-                    if (result.ok && result.value) {
-                      resolvedLnkTargetCache.set(lnkCacheKey, result.value);
-                      writePersistedResolvedLnkTargets();
-                      return result.value;
-                    }
-                    resolvedLnkTargetCache.set(lnkCacheKey, null);
-                    return null;
-                  })
-                  .catch((e) => {
-                    resolvedLnkTargetCache.set(lnkCacheKey, null);
-                    debugWarn("failed to resolve lnk:", item.path, e);
-                    return null;
-                  })
-                  .finally(() => {
-                    pendingResolvedLnkTargets.delete(lnkCacheKey);
-                  });
-                pendingResolvedLnkTargets.set(lnkCacheKey, pending);
-              }
-              const resolved = await pending;
-              if (resolved) {
-                pathToAdd = resolved;
-                launcherStore.setLauncherItemResolvedPath(categoryId, item.id, resolved);
-                debugLog("resolved lnk:", item.path, "->", pathToAdd);
-              }
-            } catch (e) {
-              debugWarn("failed to resolve lnk:", item.path, e);
-            }
+            unresolvedLnkItems.push({
+              categoryId,
+              itemId: item.id,
+              path: item.path,
+              cacheKey: lnkCacheKey,
+            });
           }
         }
 
@@ -224,8 +206,77 @@ export function useScanCache() {
       }
     }
 
+    if (unresolvedLnkItems.length > 0) {
+      await resolvePendingLnkTargets(unresolvedLnkItems);
+      // 解析结果会改变 key 集合，重建一次（此时全部命中缓存，不会再有 IPC）。
+      return buildLauncherPathKeys();
+    }
+
     launcherPathKeyCache = { fingerprint, keys };
     return keys;
+  }
+
+  /**
+   * 批量解析 .lnk 目标。
+   *
+   * 之前是逐个 `invoke('resolve_lnk_target')`，上百个启动项就是上百次 IPC 往返；
+   * 现在一次 `resolve_lnk_targets` 拿全部结果，并同步写入本地/持久化缓存，
+   * 避免重启后重复解析。
+   */
+  function resolvePendingLnkTargets(
+    targets: Array<{ categoryId: string; itemId: string; path: string; cacheKey: string }>
+  ): Promise<void> {
+    if (pendingLnkBatch) return pendingLnkBatch;
+    const launcherStore = useLauncherStore();
+
+    pendingLnkBatch = (async () => {
+      const uniquePaths: string[] = [];
+      const pathSet = new Set<string>();
+      for (const target of targets) {
+        if (pathSet.has(target.path)) continue;
+        pathSet.add(target.path);
+        uniquePaths.push(target.path);
+      }
+
+      let resolvedList: Array<string | null> = [];
+      try {
+        const result = await invoke<Array<string | null>>('resolve_lnk_targets', {
+          paths: uniquePaths,
+        });
+        if (result.ok && Array.isArray(result.value)) {
+          resolvedList = result.value;
+        } else if (!result.ok) {
+          debugWarn('failed to resolve lnk batch:', result.error);
+        }
+      } catch (e) {
+        debugWarn('failed to resolve lnk batch:', e);
+      }
+
+      const resolvedByPath = new Map<string, string | null>();
+      for (let i = 0; i < uniquePaths.length; i += 1) {
+        const resolved = resolvedList[i] ?? null;
+        const trimmed = typeof resolved === 'string' ? resolved.trim() : '';
+        resolvedByPath.set(uniquePaths[i], trimmed || null);
+      }
+
+      let cacheDirty = false;
+      for (const target of targets) {
+        const resolved = resolvedByPath.get(target.path) ?? null;
+        resolvedLnkTargetCache.set(target.cacheKey, resolved);
+        cacheDirty = true;
+        if (!resolved) continue;
+        launcherStore.setLauncherItemResolvedPath(target.categoryId, target.itemId, resolved);
+        debugLog('resolved lnk:', target.path, '->', resolved);
+      }
+
+      if (cacheDirty) {
+        writePersistedResolvedLnkTargets();
+      }
+    })().finally(() => {
+      pendingLnkBatch = null;
+    });
+
+    return pendingLnkBatch;
   }
 
   async function warmLauncherPathKeys(): Promise<void> {

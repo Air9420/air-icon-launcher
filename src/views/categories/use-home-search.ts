@@ -133,7 +133,6 @@ export function useHomeSearch(deps: HomeSearchDeps) {
     const isWindowFocused = ref(true);
     const showShortcutHints = ref(false);
     const windowVisibility = ref<WindowVisibilityState>("visible");
-    const hasPrimedSearchResources = ref(false);
 
     const recentFileCandidates = ref<RecentFileSearchResult[]>(
         searchExtensionsStore.recentFileCandidates.length > 0
@@ -305,19 +304,30 @@ export function useHomeSearch(deps: HomeSearchDeps) {
         return Date.now() - loadedAt > RECENT_FILE_CACHE_STALE_MS;
     }
 
-    async function primeSearchResources(): Promise<void> {
-        if (hasPrimedSearchResources.value) return;
-        hasPrimedSearchResources.value = true;
-
+    /**
+     * 预热搜索依赖的资源。
+     *
+     * 关键点：**必须在用户第一次敲键之前完成**。
+     * 之前它只在 `ensureRustSearchReady()`（首次输入时）被调用，导致「第一次搜索」
+     * 要同时承担：最近文件扫描（冷启动约 1s）、索引同步、扫描缓存加载、.lnk 解析。
+     * 现在改为窗口显示/挂载时就预热，首次输入只做一次真正的搜索。
+     *
+     * 各子任务内部都有缓存与去重，重复调用是廉价的。
+     */
+    function primeSearchResources(): void {
         if (shouldRefreshRecentFileCandidates()) {
-            void loadRecentFileCandidates();
+            void loadRecentFileCandidates().catch((error) => {
+                console.warn("Failed to preload recent files:", error);
+            });
         }
         if (!ensureIndexPromise) {
             ensureIndexPromise = store.syncSearchIndex().finally(() => {
                 ensureIndexPromise = null;
             });
         }
-        void ensureIndexPromise;
+        void ensureIndexPromise.catch((error) => {
+            console.warn("Failed to preload search index:", error);
+        });
         void loadCache().catch((error) => {
             console.warn("Failed to preload scan cache:", error);
         });
@@ -666,7 +676,8 @@ export function useHomeSearch(deps: HomeSearchDeps) {
     }, SEARCH_THROTTLE_MS, true);
 
     async function ensureRustSearchReady(): Promise<boolean> {
-        await primeSearchResources();
+        // 正常情况下这里已经命中预热结果；兜底再触发一次（内部有去重）。
+        primeSearchResources();
         if (isRustSearchReady.value) return true;
         if (!ensureIndexPromise) {
             ensureIndexPromise = store.syncSearchIndex().finally(() => {
@@ -980,6 +991,8 @@ export function useHomeSearch(deps: HomeSearchDeps) {
         showShortcutHints.value = false;
         store.clearSearch();
         selectedIndex.value = -1;
+        // 窗口显示即预热：用户第一下敲键时，最近文件/索引/扫描缓存已经在路上了。
+        primeSearchResources();
         nextTick(() => {
             searchBoxRef.value?.focus();
             hydrateVisibleSearchResultIcons();
@@ -1132,6 +1145,7 @@ export function useHomeSearch(deps: HomeSearchDeps) {
         setWindowVisibility,
         getPendingHomeSearchSelection,
         setPendingHomeSearchSelection,
+        primeSearchResources,
         loadRecentFileCandidates,
         hydrateRecentFileCandidateIcons,
         onWindowBlur,

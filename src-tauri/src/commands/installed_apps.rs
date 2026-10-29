@@ -1730,8 +1730,18 @@ fn collect_apps_folder_candidates(max_candidates: usize) -> Vec<CandidateApp> {
     out
 }
 
+/// 快速扫描注册表应用。
+///
+/// 会遍历 HKLM/HKCU 的卸载表并探测安装路径，属于阻塞 IO，
+/// 必须 `spawn_blocking` 以免卡住 WebView2 消息泵。
 #[tauri::command]
-pub fn quick_scan_registry() -> AppResult<Vec<InstalledAppEntry>> {
+pub async fn quick_scan_registry() -> AppResult<Vec<InstalledAppEntry>> {
+    tokio::task::spawn_blocking(quick_scan_registry_blocking)
+        .await
+        .map_err(|e| crate::error::AppError::internal(format!("quick_scan_registry failed: {}", e)))?
+}
+
+fn quick_scan_registry_blocking() -> AppResult<Vec<InstalledAppEntry>> {
     #[cfg(windows)]
     {
         let candidates = collect_registry_candidates();

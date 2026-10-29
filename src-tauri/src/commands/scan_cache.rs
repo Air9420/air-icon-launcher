@@ -164,9 +164,15 @@ pub fn launch_scanned_app(path: String) -> AppResult<()> {
     }
 }
 
+/// 提取单个路径的图标。
+///
+/// 图标提取会走 `SHGetFileInfoW` / 解析 .lnk / 解码图片，属于阻塞 IO，
+/// 必须 `spawn_blocking`，否则会阻塞 WebView2 消息泵。
 #[tauri::command]
-pub fn extract_icon_lazy(path: String) -> AppResult<Option<String>> {
-    Ok(installed_apps::extract_icon_for_path(&path))
+pub async fn extract_icon_lazy(path: String) -> AppResult<Option<String>> {
+    tokio::task::spawn_blocking(move || installed_apps::extract_icon_for_path(&path))
+        .await
+        .map_err(|e| AppError::internal(format!("extract_icon_lazy failed: {}", e)))
 }
 
 #[tauri::command]
@@ -183,4 +189,30 @@ pub async fn resolve_lnk_target(path: String) -> AppResult<Option<String>> {
     })
     .await
     .map_err(|e| AppError::internal(format!("resolve_lnk_target failed: {}", e)))?
+}
+
+/// 批量解析 .lnk 目标路径。
+///
+/// 前端此前是「一个快捷方式一次 IPC」，上百个启动项会产生上百次往返；
+/// 这里合并成一次调用，共享同一份 COM 初始化与 `IShellLinkW` 实例。
+/// 返回顺序与入参一致，解析失败为 `null`。
+#[tauri::command]
+pub async fn resolve_lnk_targets(paths: Vec<String>) -> AppResult<Vec<Option<String>>> {
+    tokio::task::spawn_blocking(move || {
+        #[cfg(target_os = "windows")]
+        {
+            let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+            crate::drag::resolve_windows_shortcut_targets(&path_bufs)
+                .into_iter()
+                .map(|target| target.map(|path| path.to_string_lossy().into_owned()))
+                .collect()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = paths;
+            Vec::new()
+        }
+    })
+    .await
+    .map_err(|e| AppError::internal(format!("resolve_lnk_targets failed: {}", e)))
 }

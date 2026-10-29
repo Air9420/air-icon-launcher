@@ -272,7 +272,7 @@ describe("matchScannedApps", () => {
       } as any)
       .mockResolvedValueOnce({
         ok: true,
-        value: "C:\\Google\\Chrome.exe",
+        value: ["C:\\Google\\Chrome.exe"],
       } as any);
 
     const cache = useScanCache();
@@ -282,8 +282,9 @@ describe("matchScannedApps", () => {
     expect(store.getLauncherItemById("cat-1", "item-1")?.resolvedPath).toBe(
       "C:\\Google\\Chrome.exe"
     );
-    expect(invokeWrapper.invoke).toHaveBeenCalledWith("resolve_lnk_target", {
-      path: "C:\\Apps\\Chrome.lnk",
+    // 批量解析：一次 IPC 覆盖全部 .lnk，而不是逐个往返。
+    expect(invokeWrapper.invoke).toHaveBeenCalledWith("resolve_lnk_targets", {
+      paths: ["C:\\Apps\\Chrome.lnk"],
     });
   });
 
@@ -325,7 +326,7 @@ describe("matchScannedApps", () => {
       } as any)
       .mockResolvedValueOnce({
         ok: true,
-        value: "C:\\Google\\Chrome.exe",
+        value: ["C:\\Google\\Chrome.exe"],
       } as any);
 
     const firstCache = useScanCache();
@@ -371,7 +372,7 @@ describe("matchScannedApps", () => {
 
     const secondCache = useScanCache();
     expect(await secondCache.getFallbackSection("chrome")).toBeNull();
-    expect(invokeSpy.mock.calls.filter(([command]) => command === "resolve_lnk_target")).toHaveLength(0);
+    expect(invokeSpy.mock.calls.filter(([command]) => command === "resolve_lnk_targets")).toHaveLength(0);
     expect(store.getLauncherItemById("cat-1", "item-1")?.resolvedPath).toBe(
       "C:\\Google\\Chrome.exe"
     );

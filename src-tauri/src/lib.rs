@@ -18,6 +18,7 @@ mod migrations;
 mod pinyin;
 mod plugin_host;
 mod process_monitor;
+mod recent_files;
 mod search;
 mod system;
 mod tray;
@@ -231,6 +232,10 @@ pub fn run() {
             plugin_host::schedule_load_enabled_plugins(handle.clone());
             process_monitor::start_process_monitor(handle.clone());
             display_monitor::start_display_monitor(handle.clone());
+
+            // 后台预热最近文件缓存：扫描 Recent 目录 + 解析快捷方式在冷启动时约 1s，
+            // 放在窗口首次显示之后跑，用户第一次输入时直接命中缓存。
+            recent_files::prewarm_async(80, false, std::time::Duration::from_millis(1200));
 
             if autostart_service::is_autostart_launch() {
                 if let Some(window) = handle.get_webview_window("main") {

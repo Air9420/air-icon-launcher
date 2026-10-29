@@ -920,25 +920,40 @@ pub fn patch_config(
     Ok(current)
 }
 
+/// 读取启动项数据。
+///
+/// 内部会读 `launcher_data.json` 并对 Windows Store 路径做一次修复扫描
+/// （后者可能启动 PowerShell 枚举 AppsFolder），属于阻塞 IO，
+/// 必须 `spawn_blocking` 以免卡住 WebView2 消息泵。
 #[tauri::command]
-pub fn get_launcher_data(manager: tauri::State<'_, ConfigManager>) -> AppResult<LauncherData> {
-    let mut data = manager.load_launcher_data();
-    if repair_windows_store_launcher_paths(&mut data) {
-        manager
-            .save_launcher_data(&data)
-            .map_err(|e| AppError::new("LAUNCHER_DATA_SAVE_ERROR", e))?;
-    }
-    Ok(data)
+pub async fn get_launcher_data(manager: tauri::State<'_, ConfigManager>) -> AppResult<LauncherData> {
+    let manager = manager.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let mut data = manager.load_launcher_data();
+        if repair_windows_store_launcher_paths(&mut data) {
+            manager
+                .save_launcher_data(&data)
+                .map_err(|e| AppError::new("LAUNCHER_DATA_SAVE_ERROR", e))?;
+        }
+        Ok(data)
+    })
+    .await
+    .map_err(|e| AppError::internal(format!("get_launcher_data failed: {}", e)))?
 }
 
 #[tauri::command]
-pub fn save_launcher_data(
+pub async fn save_launcher_data(
     manager: tauri::State<'_, ConfigManager>,
     data: LauncherData,
 ) -> AppResult<()> {
-    manager
-        .save_launcher_data(&data)
-        .map_err(|e| AppError::new("LAUNCHER_DATA_SAVE_ERROR", e))
+    let manager = manager.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        manager
+            .save_launcher_data(&data)
+            .map_err(|e| AppError::new("LAUNCHER_DATA_SAVE_ERROR", e))
+    })
+    .await
+    .map_err(|e| AppError::internal(format!("save_launcher_data failed: {}", e)))?
 }
 
 #[tauri::command]
