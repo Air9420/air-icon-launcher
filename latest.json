@@ -1,11 +1,11 @@
 {
-  "version": "0.7.1",
-  "notes": "## v0.7.1\n\n### 修复\n- 修复微软商店应用更新后，固定启动项可能因旧 WindowsApps 路径失效而无法启动；按唯一 AppsFolder 应用标识回退并自动迁移旧路径。\n- 修复启动失败提示未显示后端错误信息。",
-  "pub_date": "2026-10-02T02:24:40.846Z",
+  "version": "0.7.2",
+  "notes": "## v0.7.2\n\n### 修复\n- 点击启动项后立即隐藏窗口，不再等待启动结果；冷启动应用不再出现窗口滞留。\n- 修复松开 Ctrl 后偶尔不隐藏窗口的问题（窗口失焦时 keyup 事件丢失）。\n- 修复 Ctrl+数字启动应用后，快捷键号标被焦点变化清掉的问题。\n\n### 变更\n- 启动动画（转圈 / ✓）仅在按住 Ctrl 连续启动时显示。\n- 设置项文案调整为「点击启动项后立即隐藏窗口」。",
+  "pub_date": "2026-10-29T00:56:02.000Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUlp6d1lRVkRDMXZlWEJRSjlBVjVvaVdnSzdmUVFpUFBIaGR1UVluWmtYVkdnRkUybDRTaFFtRTJoNVpVblQxUU8xWXBGYVhhVnNtdkh0REhtSUVxNkFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTA3ODA5CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC43LjFfeDY0LXNldHVwLm5zaXMuemlwCk01OW1mREhJN3JXNkRaTU50V2NTZWdvcFVPL1lFa2ZSclQxMHY5YzhYWWMrdlNPUTFqRHpzdjk3Qm9Mb2dUUDliVjJoM2RaMG5TeTdHcHh4T3k5VERRPT0K",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.7.1/air-icon-launcher_0.7.1_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUlRLc3VxZGREU1NZN3REVFg3V0IwaUpXUHBRTEdSd1NKeHZCMCt4bkV4UU8zemdIWFpWOHFaVmZmVXdiSlZleHNBTFB3SHlVWC9sMktLaGpyTTlwV0FzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjM1MzU2CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC43LjJfeDY0LXNldHVwLm5zaXMuemlwCkZIbGNCc21TaVB1WnhhdDJLbmNBakNESXc0WHQxMEhlbEJhRWx2UERUeHFPS2tvZlloQWNzcnNhdWFKKzBnTnZxeC9xZHlBeHRaZnZCZFZ0N042Q0NnPT0K",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.7.2/air-icon-launcher_0.7.2_x64-setup.nsis.zip"
     }
   }
 }
