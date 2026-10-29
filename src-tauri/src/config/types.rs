@@ -267,6 +267,12 @@ pub struct LauncherItemData {
     pub id: String,
     pub name: String,
     pub path: String,
+    /// `.lnk` 解析出的真实目标路径。
+    ///
+    /// 前端一直有读写这个字段（导入导出、扫描去重都用它），但后端结构体此前没有声明，
+    /// 导致每次 `save_launcher_data` 都会把它丢掉，重启后又要重新解析全部快捷方式。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_path: Option<String>,
     pub url: Option<String>,
     pub item_type: String,
     pub is_directory: bool,
@@ -287,6 +293,7 @@ impl Default for LauncherItemData {
             id: String::new(),
             name: String::new(),
             path: String::new(),
+            resolved_path: None,
             url: None,
             item_type: "file".to_string(),
             is_directory: false,
