@@ -1,11 +1,11 @@
 {
-  "version": "0.7.2",
-  "notes": "## v0.7.2\n\n### 修复\n- 点击启动项后立即隐藏窗口，不再等待启动结果；冷启动应用不再出现窗口滞留。\n- 修复松开 Ctrl 后偶尔不隐藏窗口的问题（窗口失焦时 keyup 事件丢失）。\n- 修复 Ctrl+数字启动应用后，快捷键号标被焦点变化清掉的问题。\n\n### 变更\n- 启动动画（转圈 / ✓）仅在按住 Ctrl 连续启动时显示。\n- 设置项文案调整为「点击启动项后立即隐藏窗口」。",
-  "pub_date": "2026-10-29T00:56:02.000Z",
+  "version": "0.7.3",
+  "notes": "## v0.7.3\n\n### 优化\n- 消除冷启动首次搜索卡顿。首次输入不再同步执行最近文件扫描、快捷方式解析与存在性探测，改为启动后后台预热；快捷方式探测改为并行，冷启动扫描从约 1050ms 降到 163ms。\n- 搜索资源预热提前到窗口挂载时，输入法预选框不再卡住。\n\n### 新特性\n- 剪贴板历史改用虚拟列表，可流畅浏览全部记录（6000+ 条）。\n- 新增「回到最新」悬浮按钮，滚动后一键回到顶部。\n- 剪贴板历史支持 Home / End / PageUp / PageDown 键盘导航。\n\n### 修复\n- 修复「在剪贴板历史中定位」在目标记录不在首屏时完全无效的问题，定位后会高亮闪烁 3 秒。\n- 修复剪贴板历史中同一内容重复出现的问题（清理历史重复记录并加唯一约束）。\n- 修复快捷方式解析结果无法持久化，导致每次启动都要重新解析全部快捷方式。\n- 修复长文本复制时只复制到截断内容的问题。",
+  "pub_date": "2026-10-30T02:19:00.000Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUlRLc3VxZGREU1NZN3REVFg3V0IwaUpXUHBRTEdSd1NKeHZCMCt4bkV4UU8zemdIWFpWOHFaVmZmVXdiSlZleHNBTFB3SHlVWC9sMktLaGpyTTlwV0FzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjM1MzU2CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC43LjJfeDY0LXNldHVwLm5zaXMuemlwCkZIbGNCc21TaVB1WnhhdDJLbmNBakNESXc0WHQxMEhlbEJhRWx2UERUeHFPS2tvZlloQWNzcnNhdWFKKzBnTnZxeC9xZHlBeHRaZnZCZFZ0N042Q0NnPT0K",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.7.2/air-icon-launcher_0.7.2_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUmRBUU1Ick85L0J0Ukw1bEtIS054Y1FEWXhoZ3R6RVVreUltb0daTm91N2xKdlRPYjA1TkZqbGI0bkw0dnNpN0RkK3BEZGdKYzY1aEF2eUwyYkg2eUFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjk3OTQyCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC43LjNfeDY0LXNldHVwLm5zaXMuemlwCmJEelh4bkl4Z2kyMTVEckFYVTRBSk8vdnFQYkJ4RXNNaFNxWEpJQkUzM2lrVnJmOGRWMkt2MWE5SEdGSGlPNk9UYkVqT1JJU0JTcTJUWXQ2Zk1LbUJRPT0K",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.7.3/air-icon-launcher_0.7.3_x64-setup.nsis.zip"
     }
   }
 }
