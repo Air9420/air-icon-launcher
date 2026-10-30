@@ -1,11 +1,11 @@
 {
-  "version": "0.8.1",
-  "notes": "## v0.8.1\n\n### 安全\n- 更换更新签名密钥。原签名私钥曾被提交进版本控制并推送到公开仓库，存在被用于伪造更新包的风险，本次已轮换为全新密钥。\n\n### 注意\n- **本版本更换了签名公钥，v0.8.0 及更早版本无法通过自动更新升级**，需手动下载安装包覆盖安装。\n- 从 v0.8.1 起自动更新恢复正常。\n\n### 说明\n- 本次发布不包含功能性改动，仅涉及签名密钥轮换。",
-  "pub_date": "2026-10-30T03:42:00.000Z",
+  "version": "0.8.2",
+  "notes": "## v0.8.2\n\n### 修复\n- 修复热角唤起时窗口闪烁：窗口改为在隐藏状态下算好落点，显示后一次性落位，显示与重绘次数由 4 次降为 1 次。\n- 修复热角唤起后无法获得焦点（焦点指示器恒为红色）：改为在窗口所属线程内附加前台线程后聚焦。\n- 修复光标停留在角落时反复重复唤起：同一次停留只处理一次，离开角落后方可再次唤起。\n- 修复热角唤起不回到角落位置：窗口被拖动或切换到其他窗口后，再次热角唤起会重新归位到设定的角落，保持位置固定。\n- 修复窗口可见但失去焦点时热角无法唤回。\n\n### 说明\n- 热角唤起改为「先通知前端切好页面，再显示窗口」，避免旧页面内容闪现。",
+  "pub_date": "2026-10-31T06:30:00.000Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbUt3NUd3RVF4cUhHU0VtSkpqYWpFWVRiKysxSUZpM3pTNm15Vlhpb0VyakVVZThSQzdGeHFlTjZnRDk5dGUzR0lBci83UzZhYUo3YmNWWlVqazZqOXZaWXhxSnZTNVFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMzMxNzMzCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC44LjFfeDY0LXNldHVwLm5zaXMuemlwCmFSY2V0Y1RWV2dlbkJSL3JiRWVFUnBmS0lia3k3ZFk0RFc5T1VvakkwUlorNUNudXQxYlZ6S1lOVUQ4aTU1WTh6VDJSTjFSRDZyc3pxeUFRTklTb0N3PT0K",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.8.1/air-icon-launcher_0.8.1_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbUt3NUd3RVF4cUVpU25hYWxjdDFxQ2c2YWxob2gvSUZUcit4bTViRGhWSG9xZnNtUWYySGtlTFVDQ29MMi9ndlRBZ01laGxUeU9WcGJtcXByS0xqQ1pTa2ZmZ2lEelFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMzk5MzQxCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC44LjJfeDY0LXNldHVwLm5zaXMuemlwCjhhTXZsL1FVbXJPeDl2eGhMTHdPRUQ2eHp2Y1lVMkF5UWx0ME9aQXhKRUo2ZTF3K3piYVlYNGVvZ2RDM28xVzFQUWFkbENQWWZPL1hEUnBiVXNlc0NnPT0K",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.8.2/air-icon-launcher_0.8.2_x64-setup.nsis.zip"
     }
   }
 }
