@@ -1,11 +1,11 @@
 {
-  "version": "0.8.0",
-  "notes": "## v0.8.0\n\n### 优化\n- 分类内智能排序改为以「累计启动次数」为主要依据。原先近 7 天次数占 0.4 权重，归一化后区分度被压平——天天用的浏览器和每天开 3 次的编辑器得分几乎相同，实际只起到「活跃度开关」的作用。现调整为：累计次数 0.45、近 7 天 0.2、当前时段 0.2、连续启动 0.05。\n- 移除置顶条目在打分公式中的重复计分。置顶条目本就整组排在前面，该因子在组内恒等，对相对排序无影响。\n\n### 新特性\n- 新增独立持久化的「终身启动次数」。原累计次数由启动事件流推导，而事件流最多保留 5000 条 / 180 天，导致总次数随时间缩水、越用数字越小。现在单独持久化，不再随裁剪回退。\n- 设置页统计主榜改为「启动次数 TOP 10」，按终身累计次数排序。\n- 分类使用占比改按终身次数计算，某个分类这周没碰不会再从占比中消失。\n\n### 变更\n- 移除设置页统计的「当前时段推荐」区块。该区块排序使用混合分数（时段次数 + 终身次数对数 + 最近使用加分），而右侧仅显示时段次数，导致「次数多反而排名低」的观感矛盾；且判定以应用自身总次数为分母，全天使用的应用反而永远无法入选。\n- 移除首页「最近使用」中的「时段」推荐徽标（与上一条同源）。\n- 移除设置页总览的「当前时段」卡片。该卡片仅将系统时间换算为时段名称，不含任何统计数据。总览布局相应改为三列。\n\n### 兼容性说明\n- 升级时自动迁移统计数据（v3 → v4），用现有事件流与历史快照回填终身计数起点，升级瞬间数字不会跳变。\n- 本次含不兼容变更，降级回旧版本将丢失终身计数字段（不影响旧功能运行）。",
-  "pub_date": "2026-10-30T02:56:00.000Z",
+  "version": "0.8.1",
+  "notes": "## v0.8.1\n\n### 安全\n- 更换更新签名密钥。原签名私钥曾被提交进版本控制并推送到公开仓库，存在被用于伪造更新包的风险，本次已轮换为全新密钥。\n\n### 注意\n- **本版本更换了签名公钥，v0.8.0 及更早版本无法通过自动更新升级**，需手动下载安装包覆盖安装。\n- 从 v0.8.1 起自动更新恢复正常。\n\n### 说明\n- 本次发布不包含功能性改动，仅涉及签名密钥轮换。",
+  "pub_date": "2026-10-30T03:42:00.000Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL3R1b0JCbEhXUlZpakZhWitucWtyMWhERTN5RWNWMmVBVmtwSXN0SC9sdUNwWGQ3SE1TU0k1OUJ1UGV1ZG5LOGxBZmswdks3VHByUlN5WnRtNnM5K1cwTGFVVStmRndvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMzI4OTUyCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC44LjBfeDY0LXNldHVwLm5zaXMuemlwCkhzeVIvUEFmT0pUOG1OUlBOY1hsZ3BCQm5aRjcyakxvZWpYcWt3VWZLM2orcDYrSmsxYXpCdWlpY0ViWnVNMlJaeFp6LzZ5dWxucnVZellrQlVFekNRPT0K",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.8.0/air-icon-launcher_0.8.0_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbUt3NUd3RVF4cUhHU0VtSkpqYWpFWVRiKysxSUZpM3pTNm15Vlhpb0VyakVVZThSQzdGeHFlTjZnRDk5dGUzR0lBci83UzZhYUo3YmNWWlVqazZqOXZaWXhxSnZTNVFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMzMxNzMzCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC44LjFfeDY0LXNldHVwLm5zaXMuemlwCmFSY2V0Y1RWV2dlbkJSL3JiRWVFUnBmS0lia3k3ZFk0RFc5T1VvakkwUlorNUNudXQxYlZ6S1lOVUQ4aTU1WTh6VDJSTjFSRDZyc3pxeUFRTklTb0N3PT0K",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.8.1/air-icon-launcher_0.8.1_x64-setup.nsis.zip"
     }
   }
 }

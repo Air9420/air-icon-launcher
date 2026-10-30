@@ -15,7 +15,7 @@ bun run check
 
 # 3) 编译（必须带签名环境变量，见 §4）
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = Read-Host "签名密码" -AsSecureString | ConvertFrom-SecureString -AsPlainText
-$env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content "Z:\VScodeProject\air-icon-launcher\private.key" -Raw)
+$env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content "Z:\VScodeProject\air-icon-launcher\private-new.key" -Raw)
 bun tauri build
 
 # 4) 提交 + 打标签
@@ -143,12 +143,12 @@ $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = Read-Host "签名密码" -AsSecureStri
 # 方式二：从本地未跟踪文件读取（自行创建 sign_password.txt，已在 .gitignore 覆盖范围内）
 # $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (Get-Content "sign_password.txt" -Raw).Trim()
 
-$env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content "Z:\VScodeProject\air-icon-launcher\private.key" -Raw)
+$env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content "Z:\VScodeProject\air-icon-launcher\private-new.key" -Raw)
 bun tauri build
 ```
 
-> ⚠️ `private.key` 已不再被版本控制跟踪（见 §11.1），但**本地文件必须保留**，否则无法签名。
-> 新环境部署时需从安全渠道单独获取该文件。
+> ⚠️ 签名私钥为 `private-new.key`（v0.8.1 起启用）。该文件已在 `.gitignore` 中，**必须本地妥善备份**，
+> 丢失后将无法再签发更新包。旧的 `private.key` 已弃用（已泄露，见 §11.1）。
 
 - 耗时约 **3 分钟**（release profile 开了 LTO，属正常）
 - 产物在 `src-tauri\target\release\bundle\nsis\`
@@ -388,46 +388,50 @@ $sig -eq $j.platforms.'windows-x86_64'.signature   # 应为 True
 
 ---
 
-## 11. 待处理的安全风险
+## 11. 安全风险记录
 
-### 11.1 `private.key` 泄露（部分处理）
+### 11.1 `private.key` 泄露与密钥轮换（已处理）
 
-**现状（2026-10-30 更新）**：
+**事件**：`private.key`（旧签名私钥）曾进入版本控制并推送到 GitHub / Gitee 公开仓库，
+引入提交 `757bd09 chore: 启用更新包生成 createUpdaterArtifacts`。
 
-- ✅ 已从版本控制移除：`git rm --cached private.key`，并加入 `.gitignore`（`private.key`、`*.key`）
-- ✅ 本地文件仍保留在仓库根目录，构建可继续使用
-- ❌ **历史提交中仍存在**：引入提交 `757bd09 chore: 启用更新包生成 createUpdaterArtifacts`
-- ❌ **已推送到 GitHub 与 Gitee 公开仓库**，任何访问者都能从历史里翻出私钥
+**处理结果（2026-10-30，随 v0.8.1 生效）**：
 
-**风险**：任何能访问该仓库的人都可以用它签出「合法」的更新包。
-配合 `latest.json`，理论上可向现有用户推送恶意更新。
+- ✅ 已轮换密钥对：新密钥 `private-new.key` / `private-new.key.pub`
+- ✅ 新公钥已写入 `src-tauri/tauri.conf.json` → `plugins.updater.pubkey`
+- ✅ 旧私钥 `private.key` 已移出版本控制，`.gitignore` 覆盖 `private.key`、`private-new.key`、`*.key`、`*.key.pub`
+- ⚠️ **历史提交中旧私钥仍然存在**（用户决策：不清理历史，接受该风险）
 
-> ⚠️ **仅 `git rm --cached` 只是让后续提交不再包含它，历史记录里依然可读。**
-> 在完成历史清理或密钥轮换之前，**该私钥应视为已泄露**。
+**已知后果**：
 
-**彻底修复步骤（尚未执行，需用户决策）**：
+| 客户端版本 | 自动更新能力 |
+|---|---|
+| v0.8.1 及以后 | ✅ 正常，内置新公钥 |
+| v0.8.0 及以前 | ❌ 无法验证新签名，需**手动下载重装** |
 
-1. 生成新密钥对
-   ```powershell
-   bun tauri signer generate -w private-new.key
-   ```
-2. 新公钥写入 `src-tauri/tauri.conf.json` → `plugins.updater.pubkey`
-   （当前旧公钥以 `dW50cnVzdGVk...NDU2NTEwNjAxRUFCNjdG` 开头）
-3. 把 `private.key` 从历史中彻底清除
-   ```powershell
-   git filter-repo --path private.key --invert-paths
-   # 或 git filter-repo --replace-text（批量脱敏）
-   ```
-4. 强制推送到两个远程（会重写历史，需通知所有协作者）
-   ```powershell
-   git push origin --force --all
-   git push gitee  --force --all
-   ```
-5. **轮换后旧版本客户端无法验证新签名**，需要过渡方案：
-   保留旧公钥验证一轮，或让用户手动重装
+> 因用户基数小且暂无用户反馈需求，本次**未做过渡版本**（未发双公钥中间版）。
+> 旧版本用户升级需手动安装 v0.8.1。
 
-> 顺序很重要：先轮换密钥（步骤 1–2），再清理历史（步骤 3–4）。
-> 反之，若只清历史不换钥，私钥仍可能已被他人留存，风险不降。
+**残留风险（已接受）**：
+
+- 旧私钥在 Git 历史中可被读取，理论上仍能伪造「v0.8.0 及以前」的更新包
+- 但新版本客户端只信任新公钥，该伪造包无法影响 v0.8.1+ 用户
+- 若未来需要彻底清除，仍需 `git filter-repo` 重写历史 + 强推（会改变所有提交哈希）
+
+**新密钥保管**：
+
+- 私钥：`private-new.key`（本地，已 gitignore，**务必备份**，丢失将无法再签发更新）
+- 密码：与旧密钥相同，见 §4 获取方式
+
+### 11.2 文档中的明文凭据（已处理）
+
+本文件历史版本曾包含 Gitee Token 与签名密码明文，且已随仓库推送到公开平台。
+
+- ✅ 签名密码已从本文档移除，改为运行时交互输入（见 §4）
+- ✅ Gitee Token 已从本文档移除，改为从环境变量 `GITEE_TOKEN` 读取（见 §8）
+- ⚠️ 历史版本中的明文仍存在于 Git 历史（与 §11.1 同属已接受的历史残留）
+- ⚠️ 若凭据曾在公开仓库出现，建议在平台重新生成
+  - Gitee Token：https://gitee.com/profile/personal_access_tokens
 
 ### 11.2 文档中的明文凭据
 
@@ -449,7 +453,7 @@ $sig -eq $j.platforms.'windows-x86_64'.signature   # 应为 True
 | 项 | 值 / 位置 |
 |---|---|
 | 仓库根目录 | `Z:\VScodeProject\air-icon-launcher` |
-| 签名私钥 | `private.key`（本地保留，⚠️ 已泄露，见 §11.1） |
+| 签名私钥 | `private-new.key`（⚠️ 务必备份；旧的 `private.key` 已弃用且已泄露，见 §11.1） |
 | 签名密码 | 运行时输入，见 §4 |
 | Gitee Token | 环境变量 `GITEE_TOKEN` |
 | GitHub | `Air9420/air-icon-launcher` |
