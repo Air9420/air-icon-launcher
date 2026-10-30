@@ -49,6 +49,21 @@ bun run test:unit        # 前端单元测试 (vitest run)
 - Rust 测试：`bun run test`（实际执行 `cargo test --no-default-features`）
 - 没有 CI workflow，PR 前需手动跑 `bun run check` 验证
 
+## 发布
+
+发版前**必读** [`docs/RELEASE.md`](docs/RELEASE.md)，里面记录了完整流程与已知坑位。
+
+最容易踩的两个坑：
+
+- **`git push` 会无限挂起**：本机 `credential.helper=manager` 会弹 GUI 窗口等人点，
+  非交互会话里没人点就一直卡住。必须先执行：
+  ```powershell
+  $env:GIT_TERMINAL_PROMPT = "0"; $env:GCM_INTERACTIVE = "never"
+  git -c credential.interactive=false push origin main
+  ```
+- **Gitee release 中文乱码**：必须写 JSON 文件 + `curl --data-binary @file`，
+  不能用 PowerShell 的 `ConvertTo-Json`。
+
 ---
 
 <!-- gitnexus:start -->
