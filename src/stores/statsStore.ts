@@ -21,12 +21,14 @@ import {
   isPathWithinDirectory,
   buildRecentConsecutiveScoreMap,
   getTimeSlot,
-  getTimeBasedThreshold,
-  getTimeBasedRecommendationScore,
   isWithinWeek,
   SMART_SORT_WEIGHTS,
   DAY_MS,
   normalizeExternalExecutableIdentity,
+  getLifetimeCountKey,
+  incrementLifetimeLaunchCount,
+  incrementLifetimeTimeSlotCount,
+  splitLifetimeCountKey,
   type AppUsageStats,
   type SearchKeywordRecord,
   type LaunchEventRecord,
@@ -34,6 +36,8 @@ import {
   type BlockedExternalLaunchRecord,
   type LegacyUsageSnapshotRecord,
   type LaunchEventCategoryRef,
+  type LifetimeLaunchCounts,
+  type LifetimeTimeSlotCounts,
   type ItemLookup,
 } from "./stats-helpers";
 
@@ -77,6 +81,10 @@ export const useStatsStore = defineStore(
       statsService?.launchTrackingStartedAt ?? ref<number | null>(null);
     const legacyUsageSnapshot =
       statsService?.legacyUsageSnapshot ?? ref<LegacyUsageSnapshotRecord[]>([]);
+    const lifetimeLaunchCounts =
+      statsService?.lifetimeLaunchCounts ?? ref<LifetimeLaunchCounts>({});
+    const lifetimeTimeSlotCounts =
+      statsService?.lifetimeTimeSlotCounts ?? ref<LifetimeTimeSlotCounts>({});
 
     const blockedExternalPathKeys = computed(() => {
       const keys = new Set<string>();
@@ -137,8 +145,13 @@ export const useStatsStore = defineStore(
         latestLegacyUsedAt > 0
           ? Math.max(normalizedStartedAt, latestLegacyUsedAt + 1)
           : normalizedStartedAt;
+      const seededCounts = { ...lifetimeLaunchCounts.value };
+      for (const record of normalizedSnapshot) {
+        const key = getLifetimeCountKey(record.categoryId, record.itemId);
+        seededCounts[key] = Math.max(seededCounts[key] ?? 0, record.usageCount);
+      }
+      lifetimeLaunchCounts.value = seededCounts;
     }
-
     function recordLaunchEvent(record: LaunchEventRecord): void {
       if (statsService) {
         statsService.recordLaunchEvent(record);
@@ -150,6 +163,17 @@ export const useStatsStore = defineStore(
         launchTrackingStartedAt.value = normalized.usedAt;
         legacyUsageSnapshot.value = [];
       }
+      lifetimeLaunchCounts.value = incrementLifetimeLaunchCount(
+        lifetimeLaunchCounts.value,
+        normalized.categoryId,
+        normalized.itemId,
+      );
+      lifetimeTimeSlotCounts.value = incrementLifetimeTimeSlotCount(
+        lifetimeTimeSlotCounts.value,
+        normalized.categoryId,
+        normalized.itemId,
+        getTimeSlot(new Date(normalized.usedAt).getHours()),
+      );
       launchEvents.value = pruneLaunchEvents([...launchEvents.value, normalized]);
     }
 
@@ -158,6 +182,8 @@ export const useStatsStore = defineStore(
       externalRecentLaunches.value = [];
       launchTrackingStartedAt.value = null;
       legacyUsageSnapshot.value = [];
+      lifetimeLaunchCounts.value = {};
+      lifetimeTimeSlotCounts.value = {};
     }
 
     function isExternalLaunchBlocked(path: string): boolean {
@@ -337,6 +363,15 @@ export const useStatsStore = defineStore(
       legacyUsageSnapshot.value = legacyUsageSnapshot.value.filter(
         (r) => !(r.categoryId === categoryId && targetIds.has(r.itemId)),
       );
+      const nextCounts = { ...lifetimeLaunchCounts.value };
+      const nextSlots = { ...lifetimeTimeSlotCounts.value };
+      for (const itemId of targetIds) {
+        const key = getLifetimeCountKey(categoryId, itemId);
+        delete nextCounts[key];
+        delete nextSlots[key];
+      }
+      lifetimeLaunchCounts.value = nextCounts;
+      lifetimeTimeSlotCounts.value = nextSlots;
     }
 
     function removeLaunchEventsForCategory(categoryId: string): void {
@@ -348,6 +383,20 @@ export const useStatsStore = defineStore(
       legacyUsageSnapshot.value = legacyUsageSnapshot.value.filter(
         (r) => r.categoryId !== categoryId,
       );
+      const prefix = `${categoryId}:`;
+      const nextCounts: LifetimeLaunchCounts = {};
+      for (const [key, count] of Object.entries(lifetimeLaunchCounts.value)) {
+        if (key.startsWith(prefix)) continue;
+        nextCounts[key] = count;
+      }
+      lifetimeLaunchCounts.value = nextCounts;
+
+      const nextSlots: LifetimeTimeSlotCounts = {};
+      for (const [key, slots] of Object.entries(lifetimeTimeSlotCounts.value)) {
+        if (key.startsWith(prefix)) continue;
+        nextSlots[key] = slots;
+      }
+      lifetimeTimeSlotCounts.value = nextSlots;
     }
 
     function remapLaunchEventCategoryRefs(refs: LaunchEventCategoryRef[]): void {
@@ -376,6 +425,42 @@ export const useStatsStore = defineStore(
           return { ...record, categoryId: next };
         }),
       );
+      const remappedCounts: LifetimeLaunchCounts = {};
+      for (const [key, count] of Object.entries(lifetimeLaunchCounts.value)) {
+        const nextKey = nextCategoryIdByKey.get(key);
+        if (!nextKey) {
+          remappedCounts[key] = count;
+          continue;
+        }
+        const itemId = key.slice(key.indexOf(":") + 1);
+        const targetKey = getLifetimeCountKey(nextKey, itemId);
+        remappedCounts[targetKey] = (remappedCounts[targetKey] ?? 0) + count;
+      }
+      lifetimeLaunchCounts.value = remappedCounts;
+
+      const remappedSlots: LifetimeTimeSlotCounts = {};
+      for (const [key, slots] of Object.entries(lifetimeTimeSlotCounts.value)) {
+        const nextKey = nextCategoryIdByKey.get(key);
+        if (!nextKey) {
+          remappedSlots[key] = slots;
+          continue;
+        }
+        const parsed = splitLifetimeCountKey(key);
+        if (!parsed) continue;
+        const targetKey = getLifetimeCountKey(nextKey, parsed.itemId);
+        const existing = remappedSlots[targetKey];
+        if (!existing) {
+          remappedSlots[targetKey] = { ...slots };
+          continue;
+        }
+        remappedSlots[targetKey] = {
+          morning: existing.morning + slots.morning,
+          afternoon: existing.afternoon + slots.afternoon,
+          evening: existing.evening + slots.evening,
+          night: existing.night + slots.night,
+        };
+      }
+      lifetimeTimeSlotCounts.value = remappedSlots;
     }
 
     const appUsageStats = computed<AppUsageStats[]>(() => {
@@ -386,6 +471,8 @@ export const useStatsStore = defineStore(
         recentUsedItems: launcher.recentUsedItems,
         launchTrackingStartedAt: launchTrackingStartedAt.value,
         getItem: launcherItemLookup,
+        lifetimeLaunchCounts: lifetimeLaunchCounts.value,
+        lifetimeTimeSlotCounts: lifetimeTimeSlotCounts.value,
       });
     });
 
@@ -398,7 +485,7 @@ export const useStatsStore = defineStore(
 
     const allTimeTopApps = computed(() =>
       [...appUsageStats.value]
-        .sort((a, b) => b.totalLaunches - a.totalLaunches)
+        .sort((a, b) => b.lifetimeLaunches - a.lifetimeLaunches)
         .slice(0, 10),
     );
 
@@ -406,47 +493,15 @@ export const useStatsStore = defineStore(
       return getTimeSlot(new Date().getHours());
     }
 
-    const timeBasedRecommendations = computed(() => {
-      const currentSlot = getCurrentTimeSlot();
-      const now = Date.now();
-      return appUsageStats.value
-        .map((stats) => {
-          const currentSlotLaunches = stats.timeSlotCounts[currentSlot];
-          const slotShare =
-            stats.totalLaunches > 0 ? currentSlotLaunches / stats.totalLaunches : 0;
-          return {
-            stats,
-            score: getTimeBasedRecommendationScore(stats, currentSlot, now),
-            currentSlotLaunches,
-            slotShare,
-          };
-        })
-        .filter(({ stats, currentSlotLaunches, slotShare }) => {
-          const threshold = getTimeBasedThreshold(stats.totalLaunches);
-          return (
-            currentSlotLaunches >= threshold.minSlotLaunches &&
-            stats.totalLaunches >= threshold.minTotalLaunches &&
-            slotShare >= threshold.minSlotShare
-          );
-        })
-        .sort((a, b) => {
-          const scoreDiff = b.score - a.score;
-          if (scoreDiff !== 0) return scoreDiff;
-          const slotDiff = b.currentSlotLaunches - a.currentSlotLaunches;
-          if (slotDiff !== 0) return slotDiff;
-          return b.stats.lastUsedAt - a.stats.lastUsedAt;
-        })
-        .map(({ stats }) => stats)
-        .slice(0, 8);
-    });
-
     const frequentlyUsedApps = computed(() => {
       const threeDaysAgo = Date.now() - 3 * DAY_MS;
       return [...appUsageStats.value]
-        .filter((s) => s.lastUsedAt >= threeDaysAgo && s.totalLaunches >= 3)
+        .filter((s) => s.lastUsedAt >= threeDaysAgo && s.lifetimeLaunches >= 3)
         .sort((a, b) => {
-          const scoreA = a.totalLaunches + (isWithinWeek(a.lastUsedAt) ? a.weekLaunches * 2 : 0);
-          const scoreB = b.totalLaunches + (isWithinWeek(b.lastUsedAt) ? b.weekLaunches * 2 : 0);
+          const scoreA =
+            a.lifetimeLaunches + (isWithinWeek(a.lastUsedAt) ? a.weekLaunches * 2 : 0);
+          const scoreB =
+            b.lifetimeLaunches + (isWithinWeek(b.lastUsedAt) ? b.weekLaunches * 2 : 0);
           return scoreB - scoreA;
         })
         .slice(0, 12);
@@ -455,12 +510,13 @@ export const useStatsStore = defineStore(
     const categoryUsageDistribution = computed(() => {
       const categoryStore = useCategoryStore();
       const dist = new Map<string, { name: string; launches: number; percentage: number }>();
+      // 用终身次数而非周次数：周维度下"这周没开过"会让整个分类从占比里消失。
       let total = 0;
-      for (const stats of appUsageStats.value) total += stats.weekLaunches || 0;
+      for (const stats of appUsageStats.value) total += stats.lifetimeLaunches || 0;
       for (const stats of appUsageStats.value) {
         const cat = categoryStore.getCategoryById(stats.categoryId);
         const catName = cat?.name || "未知";
-        const launches = stats.weekLaunches || 0;
+        const launches = stats.lifetimeLaunches || 0;
         const existing = dist.get(stats.categoryId);
         if (existing) existing.launches += launches;
         else dist.set(stats.categoryId, { name: catName, launches, percentage: 0 });
@@ -482,7 +538,7 @@ export const useStatsStore = defineStore(
     );
 
     const totalLaunchesAllTime = computed(() =>
-      appUsageStats.value.reduce((sum, s) => sum + s.totalLaunches, 0),
+      appUsageStats.value.reduce((sum, s) => sum + s.lifetimeLaunches, 0),
     );
 
     function getAppUsageForItem(itemId: string): AppUsageStats | undefined {
@@ -497,8 +553,8 @@ export const useStatsStore = defineStore(
       if (statsService) {
         return statsService.getSmartSortOrder(categoryId, itemIds, pinnedItemIds);
       }
+      void pinnedItemIds;
       const currentSlot = getCurrentTimeSlot();
-      const pinnedSet = new Set(pinnedItemIds);
       const categoryStatsMap = new Map(
         appUsageStats.value
           .filter((stats) => stats.categoryId === categoryId)
@@ -519,7 +575,7 @@ export const useStatsStore = defineStore(
         const stats = categoryStatsMap.get(itemId);
         if (stats) {
           maxRecentFrequency = Math.max(maxRecentFrequency, stats.weekLaunches);
-          maxLongTermFrequency = Math.max(maxLongTermFrequency, stats.totalLaunches);
+          maxLongTermFrequency = Math.max(maxLongTermFrequency, stats.lifetimeLaunches);
           maxCurrentSlotFrequency = Math.max(
             maxCurrentSlotFrequency,
             stats.timeSlotCounts[currentSlot],
@@ -539,19 +595,17 @@ export const useStatsStore = defineStore(
       const scored = itemIds.map((id, originalIndex) => {
         const stats = categoryStatsMap.get(id);
         const recentFrequencyNorm = stats ? stats.weekLaunches / safeRecentMax : 0;
-        const longTermFrequencyNorm = stats ? stats.totalLaunches / safeLongTermMax : 0;
+        const longTermFrequencyNorm = stats ? stats.lifetimeLaunches / safeLongTermMax : 0;
         const currentSlotNorm = stats
           ? (stats.timeSlotCounts[currentSlot] || 0) / safeSlotMax
           : 0;
         const recentConsecutiveNorm =
           (recentConsecutiveScoreMap.get(`${categoryId}:${id}`) ?? 0) / safeConsecutiveMax;
-        const pinnedNorm = pinnedSet.has(id) ? 1 : 0;
         const score =
           recentFrequencyNorm * SMART_SORT_WEIGHTS.recentFrequency +
           longTermFrequencyNorm * SMART_SORT_WEIGHTS.longTermFrequency +
           currentSlotNorm * SMART_SORT_WEIGHTS.currentTimeSlot +
-          recentConsecutiveNorm * SMART_SORT_WEIGHTS.recentConsecutive +
-          pinnedNorm * SMART_SORT_WEIGHTS.pinned;
+          recentConsecutiveNorm * SMART_SORT_WEIGHTS.recentConsecutive;
         return { id, score, originalIndex };
       });
 
@@ -571,6 +625,8 @@ export const useStatsStore = defineStore(
       blockedExternalLaunches,
       launchTrackingStartedAt,
       legacyUsageSnapshot,
+      lifetimeLaunchCounts,
+      lifetimeTimeSlotCounts,
       recordSearch,
       removeSearchHistory,
       clearSearchHistory,
@@ -590,7 +646,6 @@ export const useStatsStore = defineStore(
       appUsageStats,
       weeklyTopApps,
       allTimeTopApps,
-      timeBasedRecommendations,
       frequentlyUsedApps,
       categoryUsageDistribution,
       topSearchKeywords,
@@ -609,6 +664,8 @@ export const useStatsStore = defineStore(
       "blockedExternalLaunches",
       "launchTrackingStartedAt",
       "legacyUsageSnapshot",
+      "lifetimeLaunchCounts",
+      "lifetimeTimeSlotCounts",
     ]),
   },
 );

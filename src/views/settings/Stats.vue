@@ -1,18 +1,18 @@
 <template>
   <div class="stats-panel">
     <section class="stats-section">
-      <h3 class="section-title">本周启动 TOP 10</h3>
-      <div v-if="weeklyTopApps.length === 0" class="empty-hint">
+      <h3 class="section-title">启动次数 TOP 10</h3>
+      <div v-if="topApps.length === 0" class="empty-hint">
         暂无使用记录，启动应用后这里会显示统计数据
       </div>
       <div v-else class="top-list">
-        <div v-for="(app, idx) in weeklyTopApps" :key="app.itemId" class="top-item">
+        <div v-for="(app, idx) in topApps" :key="app.itemId" class="top-item">
           <span class="rank" :class="{ 'rank-top3': idx < 3 }">{{ idx + 1 }}</span>
           <span class="app-name" :title="app.name">{{ app.name }}</span>
           <div class="bar-wrapper">
-            <div class="bar-fill" :style="{ width: `${(app.weekLaunches / maxWeekLaunches) * 100}%` }"></div>
+            <div class="bar-fill" :style="{ width: `${(app.lifetimeLaunches / maxLaunches) * 100}%` }"></div>
           </div>
-          <span class="count">{{ app.weekLaunches }} 次</span>
+          <span class="count">{{ app.lifetimeLaunches }} 次</span>
         </div>
       </div>
     </section>
@@ -62,65 +62,27 @@
           <div class="summary-value">{{ trackedAppCount }}</div>
           <div class="summary-label">已追踪应用数</div>
         </div>
-        <div class="summary-card">
-          <div class="summary-value time-slot-value">
-            <component v-if="currentTimeSlotIcon" :is="currentTimeSlotIcon" size="22" weight="LineDuotone" />
-            <span>{{ currentTimeSlotLabel }}</span>
-          </div>
-          <div class="summary-label">当前时段</div>
-        </div>
-      </div>
-    </section>
-
-    <section class="stats-section" v-if="timeRecs.length > 0">
-      <h3 class="section-title"><ClockCircle size="18" weight="LineDuotone" /> 当前时段推荐 ({{ currentTimeSlotLabel }})</h3>
-      <div class="rec-list">
-        <div v-for="app in timeRecs" :key="app.itemId" class="rec-item">
-          <span class="rec-name">{{ app.name }}</span>
-          <span class="rec-count">{{ app.timeSlotCounts[currentTimeSlot] }} 次</span>
-        </div>
       </div>
     </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, markRaw } from "vue";
+import { computed } from "vue";
 import { useStatsStore } from "../../stores/statsStore";
-import { ClockCircle, Sun, CloudSun, Moon, MoonStars } from "@solar-icons/vue";
 
 const stats = useStatsStore();
 
-const weeklyTopApps = computed(() => stats.weeklyTopApps);
+const topApps = computed(() => stats.allTimeTopApps);
 const categoryDistribution = computed(() => stats.categoryUsageDistribution);
 const topKeywords = computed(() => stats.topSearchKeywords);
-const timeRecs = computed(() => stats.timeBasedRecommendations);
-const currentTimeSlot = computed(() => stats.getCurrentTimeSlot());
 const totalWeekLaunches = computed(() => stats.totalLaunchesThisWeek);
 const totalAllTimeLaunches = computed(() => stats.totalLaunchesAllTime);
 const trackedAppCount = computed(() => stats.appUsageStats.length);
 
-const maxWeekLaunches = computed(() =>
-  Math.max(...weeklyTopApps.value.map((a) => a.weekLaunches), 1)
+const maxLaunches = computed(() =>
+  Math.max(...topApps.value.map((a) => a.lifetimeLaunches), 1)
 );
-
-const TIME_SLOT_LABELS: Record<string, string> = {
-  morning: "上午",
-  afternoon: "下午",
-  evening: "傍晚",
-  night: "夜间",
-};
-
-const TIME_SLOT_ICONS: Record<string, ReturnType<typeof markRaw>> = {
-  morning: markRaw(Sun),
-  afternoon: markRaw(CloudSun),
-  evening: markRaw(Moon),
-  night: markRaw(MoonStars),
-};
-
-const currentTimeSlotIcon = computed(() => TIME_SLOT_ICONS[currentTimeSlot.value]);
-
-const currentTimeSlotLabel = computed(() => TIME_SLOT_LABELS[currentTimeSlot.value] || currentTimeSlot.value);
 </script>
 
 <style lang="scss" scoped>
@@ -294,7 +256,7 @@ const currentTimeSlotLabel = computed(() => TIME_SLOT_LABELS[currentTimeSlot.val
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 10px;
 }
 
@@ -313,45 +275,9 @@ const currentTimeSlotLabel = computed(() => TIME_SLOT_LABELS[currentTimeSlot.val
   line-height: 1.2;
 }
 
-.time-slot-value {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-}
-
 .summary-label {
   font-size: 11px;
   color: var(--text-secondary);
   margin-top: 4px;
-}
-
-.rec-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.rec-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: var(--card-bg-solid);
-  font-size: 13px;
-}
-
-.rec-name {
-  font-weight: 600;
-  color: var(--text-color);
-  text-shadow: var(--text-shadow);
-}
-
-.rec-count {
-  font-size: 11px;
-  color: var(--text-color);
-  text-shadow: var(--text-shadow);
-  font-variant-numeric: tabular-nums;
 }
 </style>

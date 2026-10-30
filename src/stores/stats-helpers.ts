@@ -34,21 +34,23 @@ const NOISY_EXTERNAL_NAME_PATTERNS = [
   "installer", "setup", "updater", "update", "uninstall",
 ];
 
-export const MIN_TIME_SLOT_RECOMMENDATION_LAUNCHES = 3;
-export const MIN_TIME_SLOT_RECOMMENDATION_TOTAL_LAUNCHES = 5;
-export const MIN_TIME_SLOT_RECOMMENDATION_SLOT_SHARE = 0.3;
-export const TIME_BASED_RECOMMENDATION_SLOT_WEIGHT = 5;
-export const TIME_BASED_RECOMMENDATION_WEEK_WEIGHT = 2;
-export const TIME_BASED_RECOMMENDATION_RECENT_DAY_SCORE = 50;
-export const TIME_BASED_RECOMMENDATION_RECENT_THREE_DAYS_SCORE = 30;
-export const TIME_BASED_RECOMMENDATION_RECENT_WEEK_SCORE = 10;
 export const SMART_SORT_STREAK_EVENT_WINDOW = 120;
 export const SMART_SORT_STREAK_RECENCY_MIN_FACTOR = 0.3;
+/**
+ * 分类内智能排序权重。
+ *
+ * `longTermFrequency` 刻意高于 `recentFrequency`：启动器是"开一次用一天"的场景，
+ * 周次数在归一化后区分度会被压平（天天用的浏览器和每天开 3 次的编辑器都接近 1.0），
+ * 因此它只作为活跃度辅助项，长期累计次数才是主要排序依据。
+ *
+ * `pinned` 项在 `getSmartSortItems` 中已按置顶整组前置，组内所有条目该项取值相同，
+ * 对组内相对排序无影响，保留仅用于保持权重表完整。
+ */
 export const SMART_SORT_WEIGHTS = {
-  recentFrequency: 0.4,
-  longTermFrequency: 0.2,
+  recentFrequency: 0.2,
+  longTermFrequency: 0.45,
   currentTimeSlot: 0.2,
-  recentConsecutive: 0.1,
+  recentConsecutive: 0.05,
   pinned: 0.1,
 } as const;
 
@@ -94,11 +96,70 @@ export type AppUsageStats = {
   name: string;
   path: string;
   categoryId: string;
+  /** 由事件流累加得出，受 MAX_LAUNCH_EVENTS / MAX_LAUNCH_EVENT_AGE_MS 裁剪影响。 */
   totalLaunches: number;
+  /**
+   * 终身累计启动次数：独立持久化，不受事件流裁剪影响。
+   * 缺省时（旧数据 / 尚未迁移）回落到 `totalLaunches`。
+   */
+  lifetimeLaunches: number;
   weekLaunches: number;
   lastUsedAt: number;
   timeSlotCounts: Record<TimeSlot, number>;
 };
+
+/**
+ * 终身启动计数表，key 为 `${categoryId}:${itemId}`。
+ * 与 launchEvents 分离持久化，事件被裁剪后计数不会回退。
+ */
+export type LifetimeLaunchCounts = Record<string, number>;
+
+/**
+ * 终身时段分布表，key 为 `${categoryId}:${itemId}`。
+ * 与 lifetimeLaunchCounts 同样独立持久化，保证智能排序的「当前时段」因子
+ * 不随事件裁剪而失真。
+ */
+export type LifetimeTimeSlotCounts = Record<string, Record<TimeSlot, number>>;
+
+export function getLifetimeCountKey(categoryId: string, itemId: string): string {
+  return `${categoryId}:${itemId}`;
+}
+
+export function splitLifetimeCountKey(key: string): { categoryId: string; itemId: string } | null {
+  const separatorIndex = key.indexOf(":");
+  if (separatorIndex <= 0) return null;
+  const categoryId = key.slice(0, separatorIndex);
+  const itemId = key.slice(separatorIndex + 1);
+  if (!categoryId || !itemId) return null;
+  return { categoryId, itemId };
+}
+
+export function incrementLifetimeLaunchCount(
+  counts: LifetimeLaunchCounts,
+  categoryId: string,
+  itemId: string,
+  amount: number = 1,
+): LifetimeLaunchCounts {
+  if (!categoryId || !itemId || amount <= 0) return counts;
+  const key = getLifetimeCountKey(categoryId, itemId);
+  return { ...counts, [key]: (counts[key] ?? 0) + Math.floor(amount) };
+}
+
+export function incrementLifetimeTimeSlotCount(
+  counts: LifetimeTimeSlotCounts,
+  categoryId: string,
+  itemId: string,
+  slot: TimeSlot,
+  amount: number = 1,
+): LifetimeTimeSlotCounts {
+  if (!categoryId || !itemId || amount <= 0) return counts;
+  const key = getLifetimeCountKey(categoryId, itemId);
+  const existing = counts[key] ?? createEmptyTimeSlotCounts();
+  return {
+    ...counts,
+    [key]: { ...existing, [slot]: existing[slot] + Math.floor(amount) },
+  };
+}
 
 export type LaunchEventCategoryRef = {
   fromCategoryId: string;
@@ -131,46 +192,6 @@ export function getHour(timestamp: number): number {
 export function isWithinWeek(timestamp: number): boolean {
   if (!timestamp || isNaN(timestamp)) return false;
   return timestamp >= Date.now() - WEEK_MS;
-}
-
-export function getTimeBasedThreshold(totalLaunches: number): {
-  minSlotLaunches: number;
-  minTotalLaunches: number;
-  minSlotShare: number;
-} {
-  // Sample-size floor: sparse 1–2 launch items never recommend, even when all
-  // launches fall in the current slot (otherwise minTotal is non-binding).
-  if (totalLaunches < 3) {
-    return { minSlotLaunches: 2, minTotalLaunches: 3, minSlotShare: 0.4 };
-  }
-  if (totalLaunches < 10) return { minSlotLaunches: 2, minTotalLaunches: 3, minSlotShare: 0.3 };
-  return {
-    minSlotLaunches: MIN_TIME_SLOT_RECOMMENDATION_LAUNCHES,
-    minTotalLaunches: MIN_TIME_SLOT_RECOMMENDATION_TOTAL_LAUNCHES,
-    minSlotShare: MIN_TIME_SLOT_RECOMMENDATION_SLOT_SHARE,
-  };
-}
-
-export function getTimeBasedRecommendationRecencyScore(lastUsedAt: number, now: number): number {
-  if (!Number.isFinite(lastUsedAt) || lastUsedAt <= 0) return 0;
-  if (lastUsedAt >= now - DAY_MS) return TIME_BASED_RECOMMENDATION_RECENT_DAY_SCORE;
-  if (lastUsedAt >= now - 3 * DAY_MS) return TIME_BASED_RECOMMENDATION_RECENT_THREE_DAYS_SCORE;
-  if (lastUsedAt >= now - WEEK_MS) return TIME_BASED_RECOMMENDATION_RECENT_WEEK_SCORE;
-  return 0;
-}
-
-export function getTimeBasedRecommendationScore(
-  stats: AppUsageStats,
-  currentSlot: TimeSlot,
-  now: number,
-): number {
-  const currentSlotLaunches = stats.timeSlotCounts[currentSlot];
-  const recencyScore = getTimeBasedRecommendationRecencyScore(stats.lastUsedAt, now);
-  return (
-    currentSlotLaunches * TIME_BASED_RECOMMENDATION_SLOT_WEIGHT +
-    stats.weekLaunches * TIME_BASED_RECOMMENDATION_WEEK_WEIGHT +
-    recencyScore
-  );
 }
 
 export function normalizeTimestamp(value: number, fallback: number = Date.now()): number {
@@ -428,6 +449,7 @@ export function applyUsageCount(
       path: item.path,
       categoryId: record.categoryId,
       totalLaunches: 0,
+      lifetimeLaunches: 0,
       weekLaunches: 0,
       lastUsedAt: 0,
       timeSlotCounts: createEmptyTimeSlotCounts(),
@@ -447,9 +469,21 @@ export function computeAppUsageStats(options: {
   recentUsedItems: Array<{ categoryId: string; itemId: string; usedAt: number; usageCount?: number }>;
   launchTrackingStartedAt: number | null;
   getItem: (categoryId: string, itemId: string) => ItemLookup;
+  /** 可选：独立持久化的终身计数表。缺省时 lifetimeLaunches 回落到 totalLaunches。 */
+  lifetimeLaunchCounts?: LifetimeLaunchCounts;
+  /** 可选：独立持久化的终身时段分布表。缺省时沿用事件流累加值。 */
+  lifetimeTimeSlotCounts?: LifetimeTimeSlotCounts;
 }): AppUsageStats[] {
   const usageMap = new Map<string, AppUsageStats>();
-  const { launchEvents, legacyUsageSnapshot, recentUsedItems, launchTrackingStartedAt, getItem } = options;
+  const {
+    launchEvents,
+    legacyUsageSnapshot,
+    recentUsedItems,
+    launchTrackingStartedAt,
+    getItem,
+    lifetimeLaunchCounts,
+    lifetimeTimeSlotCounts,
+  } = options;
 
   if (launchTrackingStartedAt === null) {
     for (const recent of recentUsedItems) {
@@ -465,6 +499,54 @@ export function computeAppUsageStats(options: {
       applyUsageCount(usageMap, getItem, record, 1);
     }
   }
+
+  // 事件流可能已把某个条目的历史全部裁掉，此时它仍应凭终身计数出现在统计里，
+  // 否则「用了几百次的老应用」会在 180 天后从榜单上消失。
+  if (lifetimeLaunchCounts) {
+    for (const [key, count] of Object.entries(lifetimeLaunchCounts)) {
+      if (count <= 0) continue;
+      const separatorIndex = key.indexOf(":");
+      if (separatorIndex <= 0) continue;
+      const categoryId = key.slice(0, separatorIndex);
+      const itemId = key.slice(separatorIndex + 1);
+      if (!itemId) continue;
+      if (usageMap.has(`${categoryId}-${itemId}`)) continue;
+      const item = getItem(categoryId, itemId);
+      if (!item) continue;
+      const entry: AppUsageStats = {
+        itemId,
+        name: item.name,
+        path: item.path,
+        categoryId,
+        totalLaunches: 0,
+        lifetimeLaunches: 0,
+        weekLaunches: 0,
+        lastUsedAt: 0,
+        timeSlotCounts: createEmptyTimeSlotCounts(),
+      };
+      usageMap.set(`${categoryId}-${itemId}`, entry);
+    }
+  }
+
+  // 终身计数取「持久化计数」与「事件流可算出的次数」的较大值：
+  // 老数据尚未建立计数表时自然回落到 totalLaunches，且永不回退。
+  for (const entry of usageMap.values()) {
+    const key = getLifetimeCountKey(entry.categoryId, entry.itemId);
+    const persisted = lifetimeLaunchCounts?.[key] ?? 0;
+    entry.lifetimeLaunches = Math.max(persisted, entry.totalLaunches);
+
+    // 时段分布同样以持久化值为准，避免事件裁剪后时段推荐失真。
+    const persistedSlots = lifetimeTimeSlotCounts?.[key];
+    if (persistedSlots) {
+      entry.timeSlotCounts = {
+        morning: Math.max(persistedSlots.morning ?? 0, entry.timeSlotCounts.morning),
+        afternoon: Math.max(persistedSlots.afternoon ?? 0, entry.timeSlotCounts.afternoon),
+        evening: Math.max(persistedSlots.evening ?? 0, entry.timeSlotCounts.evening),
+        night: Math.max(persistedSlots.night ?? 0, entry.timeSlotCounts.night),
+      };
+    }
+  }
+
   return Array.from(usageMap.values());
 }
 

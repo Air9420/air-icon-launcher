@@ -23,13 +23,6 @@ function getSeedTimestamp(daysAgo: number, hour: number = 9): number {
   return date.getTime();
 }
 
-function getDifferentSlotHour(hour: number): number {
-  if (hour >= 6 && hour < 12) return 14;
-  if (hour >= 12 && hour < 18) return 20;
-  if (hour >= 18 && hour < 23) return 2;
-  return 9;
-}
-
 describe("statsStore - 智能排序 & 统计", () => {
   let stats: ReturnType<typeof useStatsStore>;
   let launcher: ReturnType<typeof useLauncherStore>;
@@ -217,67 +210,6 @@ describe("statsStore - 智能排序 & 统计", () => {
     });
   });
 
-  describe("timeBasedRecommendations", () => {
-    it("returns apps with current time slot usage data", () => {
-      seedUsage("cat-work", "C:\\ide.exe", 5, 0, new Date().getHours());
-
-      const recs = stats.timeBasedRecommendations;
-      expect(Array.isArray(recs)).toBe(true);
-      expect(recs.some((item) => item.name === "ide")).toBe(true);
-    });
-
-    it("requires enough slot density and overall sample size", () => {
-      const currentHour = new Date().getHours();
-      const differentSlotHour = getDifferentSlotHour(currentHour);
-
-      const qualified = ensureItem("cat-work", "C:\\qualified.exe");
-      recordUsage("cat-work", qualified.id, 3, 0, currentHour);
-      recordUsage("cat-work", qualified.id, 2, 1, differentSlotHour);
-
-      // Below minSlotLaunches for total < 10 (threshold minSlot = 2).
-      const lowSlotCount = ensureItem("cat-work", "C:\\low-slot.exe");
-      recordUsage("cat-work", lowSlotCount.id, 1, 0, currentHour);
-      recordUsage("cat-work", lowSlotCount.id, 4, 1, differentSlotHour);
-
-      // Below sample-size floor minTotalLaunches = 3 for total < 3.
-      const lowTotal = ensureItem("cat-work", "C:\\low-total.exe");
-      recordUsage("cat-work", lowTotal.id, 2, 0, currentHour);
-
-      // Enough launches overall but current-slot share < minSlotShare.
-      const lowShare = ensureItem("cat-work", "C:\\low-share.exe");
-      recordUsage("cat-work", lowShare.id, 3, 0, currentHour);
-      recordUsage("cat-work", lowShare.id, 8, 1, differentSlotHour);
-
-      const recs = stats.timeBasedRecommendations;
-
-      expect(recs.some((item) => item.name === "qualified")).toBe(true);
-      expect(recs.some((item) => item.name === "low-slot")).toBe(false);
-      expect(recs.some((item) => item.name === "low-total")).toBe(false);
-      expect(recs.some((item) => item.name === "low-share")).toBe(false);
-    });
-
-    it("ranks candidates by weighted slot usage and recency", () => {
-      const currentHour = new Date().getHours();
-      const differentSlotHour = getDifferentSlotHour(currentHour);
-
-      const recent = ensureItem("cat-work", "C:\\recent.exe");
-      recordUsage("cat-work", recent.id, 3, 0, currentHour);
-      recordUsage("cat-work", recent.id, 2, 1, differentSlotHour);
-
-      const stale = ensureItem("cat-work", "C:\\stale.exe");
-      recordUsage("cat-work", stale.id, 4, 6, currentHour);
-      recordUsage("cat-work", stale.id, 2, 6, differentSlotHour);
-
-      const recs = stats.timeBasedRecommendations;
-      const recentIndex = recs.findIndex((item) => item.name === "recent");
-      const staleIndex = recs.findIndex((item) => item.name === "stale");
-
-      expect(recentIndex).toBeGreaterThanOrEqual(0);
-      expect(staleIndex).toBeGreaterThanOrEqual(0);
-      expect(recentIndex).toBeLessThan(staleIndex);
-    });
-  });
-
   describe("frequentlyUsedApps", () => {
     it("shows apps with recent usage and minimum launches", () => {
       seedUsage("cat-work", "C:\\daily.exe", 10, 0);
@@ -337,6 +269,37 @@ describe("statsStore - 智能排序 & 统计", () => {
       const order = stats.getSmartSortOrder("nonexistent", []);
       expect(order).toEqual([]);
     });
+
+    it("ranks by lifetime usage even when the recent week is quiet", () => {
+      // long-term.exe：累计 40 次但都在 20 天前（周次数为 0）
+      // burst.exe：最近 1 天猛开 6 次（周次数占优）
+      // 权重调整后，长期累计应当胜出。
+      seedUsage("cat-work", "C:\\long-term.exe", 40, 20);
+      seedUsage("cat-work", "C:\\burst.exe", 6, 1);
+
+      const rawItems = launcher.getLauncherItemsByCategoryId("cat-work");
+      const order = stats.getSmartSortOrder("cat-work", rawItems.map((i) => i.id));
+
+      const longTerm = rawItems.find((i) => i.name === "long-term");
+      const burst = rawItems.find((i) => i.name === "burst");
+      expect(longTerm).toBeDefined();
+      expect(burst).toBeDefined();
+
+      if (longTerm && burst) {
+        expect(order.indexOf(longTerm.id)).toBeLessThan(order.indexOf(burst.id));
+      }
+    });
+
+    it("keeps original order when scores tie", () => {
+      seedUsage("cat-work", "C:\\tie-a.exe", 3, 2);
+      seedUsage("cat-work", "C:\\tie-b.exe", 3, 2);
+
+      const rawItems = launcher.getLauncherItemsByCategoryId("cat-work");
+      const ids = rawItems.map((i) => i.id);
+      const order = stats.getSmartSortOrder("cat-work", ids);
+
+      expect(order).toEqual(ids);
+    });
   });
 
   describe("totalLaunches counters", () => {
@@ -350,6 +313,60 @@ describe("statsStore - 智能排序 & 统计", () => {
 
     it("returns zero when no data", () => {
       expect(stats.totalLaunchesThisWeek).toBe(0);
+      expect(stats.totalLaunchesAllTime).toBe(0);
+    });
+  });
+
+  describe("lifetimeLaunches", () => {
+    it("keeps accumulating independently of the pruned event window", () => {
+      const target = seedUsage("cat-work", "C:\\daily.exe", 5, 1);
+      const before = stats.appUsageStats.find((s) => s.itemId === target.id);
+      expect(before?.lifetimeLaunches).toBe(5);
+
+      // 模拟事件流被裁掉（例如超过 180 天窗口），终身计数不应回退。
+      stats.launchEvents = [];
+      const after = stats.appUsageStats.find((s) => s.itemId === target.id);
+      expect(after?.lifetimeLaunches).toBe(5);
+      expect(after?.totalLaunches).toBe(0);
+    });
+
+    it("ranks allTimeTopApps by lifetime launches", () => {
+      seedUsage("cat-work", "C:\\heavy.exe", 12, 1);
+      seedUsage("cat-work", "C:\\light.exe", 3, 1);
+
+      const top = stats.allTimeTopApps;
+      expect(top[0].name).toBe("heavy");
+      expect(top[0].lifetimeLaunches).toBe(12);
+    });
+
+    it("drops counts when the item is removed", () => {
+      const target = seedUsage("cat-work", "C:\\gone.exe", 4, 1);
+      expect(stats.lifetimeLaunchCounts[`cat-work:${target.id}`]).toBe(4);
+
+      stats.removeLaunchEventsForItems("cat-work", [target.id]);
+
+      expect(stats.lifetimeLaunchCounts[`cat-work:${target.id}`]).toBeUndefined();
+    });
+
+    it("moves counts along with the item when the category changes", () => {
+      const target = seedUsage("cat-work", "C:\\move.exe", 6, 1);
+      expect(stats.lifetimeLaunchCounts[`cat-work:${target.id}`]).toBe(6);
+
+      stats.remapLaunchEventCategoryRefs([
+        { fromCategoryId: "cat-work", toCategoryId: "cat-fun", itemId: target.id },
+      ]);
+
+      expect(stats.lifetimeLaunchCounts[`cat-work:${target.id}`]).toBeUndefined();
+      expect(stats.lifetimeLaunchCounts[`cat-fun:${target.id}`]).toBe(6);
+    });
+
+    it("clears counts with the launch history", () => {
+      seedUsage("cat-work", "C:\\clear.exe", 2, 1);
+      expect(Object.keys(stats.lifetimeLaunchCounts).length).toBeGreaterThan(0);
+
+      stats.clearLaunchHistory();
+
+      expect(stats.lifetimeLaunchCounts).toEqual({});
       expect(stats.totalLaunchesAllTime).toBe(0);
     });
   });

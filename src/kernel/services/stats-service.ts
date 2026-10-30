@@ -17,6 +17,10 @@ import {
   getTimeSlot,
   buildRecentConsecutiveScoreMap,
   SMART_SORT_WEIGHTS,
+  getLifetimeCountKey,
+  incrementLifetimeLaunchCount,
+  incrementLifetimeTimeSlotCount,
+  splitLifetimeCountKey,
   type AppUsageStats,
   type SearchKeywordRecord,
   type LaunchEventRecord,
@@ -24,6 +28,8 @@ import {
   type BlockedExternalLaunchRecord,
   type LegacyUsageSnapshotRecord,
   type LaunchEventCategoryRef,
+  type LifetimeLaunchCounts,
+  type LifetimeTimeSlotCounts,
   type ItemLookup,
   type TimeSlot,
 } from "../../stores/stats-helpers";
@@ -43,6 +49,10 @@ export class StatsService extends Service {
   readonly blockedExternalLaunches: Ref<BlockedExternalLaunchRecord[]> = ref([]);
   readonly launchTrackingStartedAt: Ref<number | null> = ref(null);
   readonly legacyUsageSnapshot: Ref<LegacyUsageSnapshotRecord[]> = ref([]);
+  /** 终身启动计数，独立于 launchEvents 持久化，事件裁剪不会使其回退。 */
+  readonly lifetimeLaunchCounts: Ref<LifetimeLaunchCounts> = ref({});
+  /** 终身时段分布，同样独立持久化，保证时段推荐不随事件裁剪失真。 */
+  readonly lifetimeTimeSlotCounts: Ref<LifetimeTimeSlotCounts> = ref({});
 
   constructor(ctx: Context) {
     super(ctx, "stats");
@@ -87,6 +97,8 @@ export class StatsService extends Service {
       }>,
       launchTrackingStartedAt: this.launchTrackingStartedAt.value,
       getItem: (cid, iid) => this.lookupItem(cid, iid),
+      lifetimeLaunchCounts: this.lifetimeLaunchCounts.value,
+      lifetimeTimeSlotCounts: this.lifetimeTimeSlotCounts.value,
     });
   }
 
@@ -124,6 +136,13 @@ export class StatsService extends Service {
       latestLegacyUsedAt > 0
         ? Math.max(normalizedStartedAt, latestLegacyUsedAt + 1)
         : normalizedStartedAt;
+    // 迁移旧版聚合次数为终身计数起点，否则历史次数会随事件流裁剪消失。
+    const seededCounts = { ...this.lifetimeLaunchCounts.value };
+    for (const record of normalizedSnapshot) {
+      const key = getLifetimeCountKey(record.categoryId, record.itemId);
+      seededCounts[key] = Math.max(seededCounts[key] ?? 0, record.usageCount);
+    }
+    this.lifetimeLaunchCounts.value = seededCounts;
   }
 
   recordLaunchEvent(record: LaunchEventRecord): void {
@@ -133,6 +152,18 @@ export class StatsService extends Service {
       this.launchTrackingStartedAt.value = normalized.usedAt;
       this.legacyUsageSnapshot.value = [];
     }
+    // 终身计数先于事件裁剪累加，保证不随 5000 条 / 180 天窗口缩水。
+    this.lifetimeLaunchCounts.value = incrementLifetimeLaunchCount(
+      this.lifetimeLaunchCounts.value,
+      normalized.categoryId,
+      normalized.itemId,
+    );
+    this.lifetimeTimeSlotCounts.value = incrementLifetimeTimeSlotCount(
+      this.lifetimeTimeSlotCounts.value,
+      normalized.categoryId,
+      normalized.itemId,
+      getTimeSlot(new Date(normalized.usedAt).getHours()),
+    );
     this.launchEvents.value = pruneLaunchEvents([...this.launchEvents.value, normalized]);
   }
 
@@ -141,6 +172,8 @@ export class StatsService extends Service {
     this.externalRecentLaunches.value = [];
     this.launchTrackingStartedAt.value = null;
     this.legacyUsageSnapshot.value = [];
+    this.lifetimeLaunchCounts.value = {};
+    this.lifetimeTimeSlotCounts.value = {};
   }
 
   isExternalLaunchBlocked(path: string): boolean {
@@ -279,6 +312,15 @@ export class StatsService extends Service {
     this.legacyUsageSnapshot.value = this.legacyUsageSnapshot.value.filter(
       (record) => !(record.categoryId === categoryId && targetIds.has(record.itemId)),
     );
+    const nextCounts = { ...this.lifetimeLaunchCounts.value };
+    const nextSlots = { ...this.lifetimeTimeSlotCounts.value };
+    for (const itemId of targetIds) {
+      const key = getLifetimeCountKey(categoryId, itemId);
+      delete nextCounts[key];
+      delete nextSlots[key];
+    }
+    this.lifetimeLaunchCounts.value = nextCounts;
+    this.lifetimeTimeSlotCounts.value = nextSlots;
   }
 
   removeLaunchEventsForCategory(categoryId: string): void {
@@ -288,6 +330,20 @@ export class StatsService extends Service {
     this.legacyUsageSnapshot.value = this.legacyUsageSnapshot.value.filter(
       (record) => record.categoryId !== categoryId,
     );
+    const prefix = `${categoryId}:`;
+    const nextCounts: LifetimeLaunchCounts = {};
+    for (const [key, count] of Object.entries(this.lifetimeLaunchCounts.value)) {
+      if (key.startsWith(prefix)) continue;
+      nextCounts[key] = count;
+    }
+    this.lifetimeLaunchCounts.value = nextCounts;
+
+    const nextSlots: LifetimeTimeSlotCounts = {};
+    for (const [key, slots] of Object.entries(this.lifetimeTimeSlotCounts.value)) {
+      if (key.startsWith(prefix)) continue;
+      nextSlots[key] = slots;
+    }
+    this.lifetimeTimeSlotCounts.value = nextSlots;
   }
 
   remapLaunchEventCategoryRefs(refs: LaunchEventCategoryRef[]): void {
@@ -313,19 +369,61 @@ export class StatsService extends Service {
         return { ...record, categoryId: nextCategoryId };
       }),
     );
+
+    // 计数表随条目一起搬迁，避免换分类后累计次数归零。
+    const remappedCounts: LifetimeLaunchCounts = {};
+    for (const [key, count] of Object.entries(this.lifetimeLaunchCounts.value)) {
+      const nextKey = nextCategoryIdByKey.get(key);
+      if (!nextKey) {
+        remappedCounts[key] = count;
+        continue;
+      }
+      const itemId = key.slice(key.indexOf(":") + 1);
+      remappedCounts[getLifetimeCountKey(nextKey, itemId)] =
+        (remappedCounts[getLifetimeCountKey(nextKey, itemId)] ?? 0) + count;
+    }
+    this.lifetimeLaunchCounts.value = remappedCounts;
+
+    const remappedSlots: LifetimeTimeSlotCounts = {};
+    for (const [key, slots] of Object.entries(this.lifetimeTimeSlotCounts.value)) {
+      const nextKey = nextCategoryIdByKey.get(key);
+      if (!nextKey) {
+        remappedSlots[key] = slots;
+        continue;
+      }
+      const parsed = splitLifetimeCountKey(key);
+      if (!parsed) continue;
+      const targetKey = getLifetimeCountKey(nextKey, parsed.itemId);
+      const existing = remappedSlots[targetKey];
+      if (!existing) {
+        remappedSlots[targetKey] = { ...slots };
+        continue;
+      }
+      remappedSlots[targetKey] = {
+        morning: existing.morning + slots.morning,
+        afternoon: existing.afternoon + slots.afternoon,
+        evening: existing.evening + slots.evening,
+        night: existing.night + slots.night,
+      };
+    }
+    this.lifetimeTimeSlotCounts.value = remappedSlots;
   }
 
   getCurrentTimeSlot(): TimeSlot {
     return getTimeSlot(new Date().getHours());
   }
 
+  /**
+   * @param pinnedItemIds 保留参数以兼容既有调用方；置顶分组由 `getSmartSortedItems`
+   *   在调用前完成，组内相对排序不再依赖该集合。
+   */
   getSmartSortOrder(
     categoryId: string,
     itemIds: string[],
     pinnedItemIds: string[] = [],
   ): string[] {
+    void pinnedItemIds;
     const currentSlot = this.getCurrentTimeSlot();
-    const pinnedSet = new Set(pinnedItemIds);
     const statsList = this.appUsageStats;
     const categoryStatsMap = new Map(
       statsList
@@ -347,7 +445,7 @@ export class StatsService extends Service {
       const stats = categoryStatsMap.get(itemId);
       if (stats) {
         maxRecentFrequency = Math.max(maxRecentFrequency, stats.weekLaunches);
-        maxLongTermFrequency = Math.max(maxLongTermFrequency, stats.totalLaunches);
+        maxLongTermFrequency = Math.max(maxLongTermFrequency, stats.lifetimeLaunches);
         maxCurrentSlotFrequency = Math.max(
           maxCurrentSlotFrequency,
           stats.timeSlotCounts[currentSlot],
@@ -367,17 +465,17 @@ export class StatsService extends Service {
     const scored = itemIds.map((id, originalIndex) => {
       const stats = categoryStatsMap.get(id);
       const recentFrequencyNorm = stats ? stats.weekLaunches / safeRecentMax : 0;
-      const longTermFrequencyNorm = stats ? stats.totalLaunches / safeLongTermMax : 0;
+      const longTermFrequencyNorm = stats ? stats.lifetimeLaunches / safeLongTermMax : 0;
       const currentSlotNorm = stats ? (stats.timeSlotCounts[currentSlot] || 0) / safeSlotMax : 0;
       const recentConsecutiveNorm =
         (recentConsecutiveScoreMap.get(`${categoryId}:${id}`) ?? 0) / safeConsecutiveMax;
-      const pinnedNorm = pinnedSet.has(id) ? 1 : 0;
+      // 置顶条目在调用方（getSmartSortedItems）已整组前置，组内 pinnedNorm 恒等，
+      // 此处不再计入，避免同一事实被重复加权。
       const score =
         recentFrequencyNorm * SMART_SORT_WEIGHTS.recentFrequency +
         longTermFrequencyNorm * SMART_SORT_WEIGHTS.longTermFrequency +
         currentSlotNorm * SMART_SORT_WEIGHTS.currentTimeSlot +
-        recentConsecutiveNorm * SMART_SORT_WEIGHTS.recentConsecutive +
-        pinnedNorm * SMART_SORT_WEIGHTS.pinned;
+        recentConsecutiveNorm * SMART_SORT_WEIGHTS.recentConsecutive;
       return { id, score, originalIndex };
     });
 

@@ -89,6 +89,8 @@ export type {
   ExternalRecentLaunchRecord,
   BlockedExternalLaunchRecord,
   LegacyUsageSnapshotRecord,
+  LifetimeLaunchCounts,
+  LifetimeTimeSlotCounts,
 } from "../stores/stats-helpers";
 
 export type { InvokeResult } from "../utils/invoke-wrapper";
