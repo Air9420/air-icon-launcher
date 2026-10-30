@@ -14,7 +14,7 @@
 bun run check
 
 # 3) 编译（必须带签名环境变量，见 §4）
-$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "Xzq95199"
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = Read-Host "签名密码" -AsSecureString | ConvertFrom-SecureString -AsPlainText
 $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content "Z:\VScodeProject\air-icon-launcher\private.key" -Raw)
 bun tauri build
 
@@ -23,12 +23,13 @@ git add -A
 git commit -m "chore(release): 发布 x.y.z"
 git tag -a vx.y.z -m "Release vx.y.z"
 
-# 5) 推送（关键：必须禁用交互提示，见 §6）
-$env:GIT_TERMINAL_PROMPT = "0"; $env:GCM_INTERACTIVE = "never"
-git -c credential.interactive=false push origin main
-git -c credential.interactive=false push origin vx.y.z
-git -c credential.interactive=false push gitee main
-git -c credential.interactive=false push gitee vx.y.z
+# 5) 推送（关键：helper 必须指定 manager，否则弹窗卡死，见 §6）
+#    首次使用先执行一次（仓库级，长期生效）：
+#    git config --local credential.helper manager
+git push origin main
+git push origin vx.y.z
+git push gitee main
+git push gitee vx.y.z
 
 # 6) GitHub Release（见 §7）
 # 7) Gitee Release（见 §8）
@@ -133,11 +134,21 @@ Select-String -Path src-tauri/Cargo.toml -Pattern '^version'
 
 ## 4. 编译
 
+签名密码不再明文写在文档里，改为从环境变量或本地未跟踪文件读取。
+
 ```powershell
-$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "Xzq95199"
+# 方式一：交互输入（推荐，不落盘）
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = Read-Host "签名密码" -AsSecureString | ConvertFrom-SecureString -AsPlainText
+
+# 方式二：从本地未跟踪文件读取（自行创建 sign_password.txt，已在 .gitignore 覆盖范围内）
+# $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (Get-Content "sign_password.txt" -Raw).Trim()
+
 $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content "Z:\VScodeProject\air-icon-launcher\private.key" -Raw)
 bun tauri build
 ```
+
+> ⚠️ `private.key` 已不再被版本控制跟踪（见 §11.1），但**本地文件必须保留**，否则无法签名。
+> 新环境部署时需从安全渠道单独获取该文件。
 
 - 耗时约 **3 分钟**（release profile 开了 LTO，属正常）
 - 产物在 `src-tauri\target\release\bundle\nsis\`
@@ -173,46 +184,59 @@ $sig = (Get-Content "...\.sig" -Raw).Trim()
 
 ## 6. 推送（凭证坑集中区）
 
-### 6.1 为什么新会话会卡死
+### 6.1 为什么新会话会卡死 / 弹窗
 
-本机 `credential.helper=manager`（Git Credential Manager）。凭证**已经缓存好了**，
-但 GCM 默认会在需要时**弹出 GUI 窗口**等待点击。
-在 AI 会话 / 非交互 shell 里没人点那个窗口，于是 `git push` 无限挂起
-（实测卡满 5 分钟无输出）。
-
-**根因不是凭证缺失，而是交互式弹窗。**
-
-### 6.2 正确做法
+本机**系统级**配置是 `credential.helper = helper-selector`：
 
 ```powershell
-$env:GIT_TERMINAL_PROMPT = "0"
-$env:GCM_INTERACTIVE = "never"
-git -c credential.interactive=false push origin main
+git config --system --get-regexp '^credential'
+# credential.helper helper-selector
 ```
 
-三者任一生效即可，**建议全加上**，双保险。
+`helper-selector` 就是 `git-credential-helper-selector.exe`，它会**弹出「Select a credential helper」GUI 窗口**等人点选。
+在 AI 会话 / 非交互 shell 里没人点，于是 `git push` 无限挂起（实测卡满 5 分钟无输出）。
 
-### 6.3 永久修复（推荐做一次）
+> ⚠️ **关键误区**：`GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`、`credential.interactive=false`
+> **都拦不住这个弹窗**——它发生在「选择 helper」阶段，早于任何密码交互。
+> 只设这些环境变量会继续弹窗，必须从配置层绕开 selector。
 
-仓库级持久化，之后新会话不用再设环境变量：
+### 6.2 正确做法（仓库级指定 manager）
+
+在仓库里直接把 helper 指定为 `manager`，跳过 selector：
 
 ```powershell
 cd Z:\VScodeProject\air-icon-launcher
+git config --local credential.helper manager
 git config --local credential.interactive false
-git config --local --get credential.interactive   # 应输出 false
 ```
 
-> 这是本仓库配置，随 `.git/config` 保存在本地，不会被提交。
-
-### 6.4 验证凭证是否真的可用
+验证（应 1 秒内返回 username / password，**不弹窗**）：
 
 ```powershell
-# 只看是否有凭证，不联网、不弹窗
-echo "protocol=https`nhost=github.com`n`n" | git credential fill
-echo "protocol=https`nhost=gitee.com`n`n" | git credential fill
+$env:GIT_TERMINAL_PROMPT = "0"
+"protocol=https`nhost=github.com`n`n" | git credential fill
+"protocol=https`nhost=gitee.com`n`n"  | git credential fill
 ```
 
-正常应 1 秒内返回 `username` / `password`。若卡住，说明凭证真的缺失，需重新登录：
+> 这是本仓库配置，随 `.git/config` 保存，不会被提交，新会话自动生效。
+
+### 6.3 如果仍然弹窗
+
+说明存在更高优先级的配置把 helper 又指回 selector。逐级排查：
+
+```powershell
+git config --local  --get-regexp '^credential'
+git config --global --get-regexp '^credential'
+git config --system --get-regexp '^credential'
+```
+
+- `credential.helperselector.selected` 是 selector 记住的选择，**删掉它**：
+  `git config --local --unset credential.helperselector.selected`
+- 确认 `credential.helper` 最终解析为 `manager` 而非 `helper-selector`
+
+### 6.4 凭证真的缺失时
+
+若 `git credential fill` 返回 `fatal: unable to get password from user`，说明凭证确实没了：
 
 ```powershell
 gh auth login          # GitHub
@@ -230,9 +254,13 @@ git push gitee main  && git push gitee vx.y.z     # Gitee
 
 ```powershell
 git fetch origin --tags -q
-git rev-parse --short HEAD origin/main gitee/main vx.y.z
-# 前三个应相同
+git fetch gitee  --tags -q
+git rev-parse --short HEAD origin/main gitee/main
+# 三个应相同
 ```
+
+> ⚠️ `gitee/main` 若报 `fatal: Needed a single revision`，说明该远程引用还没拉取到本地，
+> 先执行 `git fetch gitee`；必要时用全名 `git rev-parse --short refs/remotes/gitee/main`。
 
 ---
 
@@ -259,6 +287,12 @@ gh release create vx.y.z `
 
 **必须用 JSON 文件 + curl**，PowerShell 的 `ConvertTo-Json` 会导致中文乱码。
 
+> Token 不再明文写在文档里。先设置环境变量：
+> ```powershell
+> $env:GITEE_TOKEN = Read-Host "Gitee Token" -AsSecureString | ConvertFrom-SecureString -AsPlainText
+> ```
+> Token 在 https://gitee.com/profile/personal_access_tokens 生成，需 `projects` 权限。
+
 ### 8.1 写 JSON 文件
 
 文件名 `gitee_body.json`（**不要**用 UTF-8 BOM）：
@@ -278,7 +312,7 @@ gh release create vx.y.z `
 
 ```powershell
 $resp = curl.exe -s -X POST "https://gitee.com/api/v5/repos/air9420/air-icon-launcher/releases" `
-  -H "Authorization: token <TOKEN>" `
+  -H "Authorization: token $env:GITEE_TOKEN" `
   -H "Content-Type: application/json; charset=utf-8" `
   --data-binary "@gitee_body.json"
 $resp | Out-File "gitee_resp.json" -Encoding utf8
@@ -298,7 +332,7 @@ $files = @(
 )
 foreach ($f in $files) {
   $r = curl.exe -s -X POST "https://gitee.com/api/v5/repos/air9420/air-icon-launcher/releases/$id/attach_files" `
-    -H "Authorization: token <TOKEN>" -F "file=@$f"
+    -H "Authorization: token $env:GITEE_TOKEN" -F "file=@$f"
   if ($r -notmatch '"id"') { "FAIL: $f -> $r" } else { "OK: $(Split-Path $f -Leaf)" }
 }
 ```
@@ -341,49 +375,72 @@ $sig -eq $j.platforms.'windows-x86_64'.signature   # 应为 True
 
 | 现象 | 原因 | 解法 |
 |---|---|---|
-| `git push` 卡死无输出 | GCM 弹 GUI 窗口等人点 | `GIT_TERMINAL_PROMPT=0` + `credential.interactive=false` |
+| `git push` 卡死无输出 | `helper-selector` 弹 GUI 窗口等人点 | 仓库级 `git config --local credential.helper manager`（**仅设 `GIT_TERMINAL_PROMPT=0` 无效**，见 §6.1） |
+| 弹出「Select a credential helper」窗口 | 系统级 `credential.helper=helper-selector` | 同上；并 `git config --local --unset credential.helperselector.selected` |
+| `git credential fill` 报 `unable to get password from user` | 该配置下无可用凭证 | 确认 helper 为 `manager`；仍失败则 `gh auth login` |
 | 打包后没有 `.sig` | 没设签名环境变量 | 设 `TAURI_SIGNING_PRIVATE_KEY` / `_PASSWORD` |
 | `latest.json` 读到空 | curl 没加 `-L`，停在 302 | 加 `-L` |
 | Gitee release 中文乱码 | `ConvertTo-Json` 编码问题 | 写 JSON 文件 + `curl --data-binary @file` |
 | 编译报文件占用 | dev 服务还在跑 | 先 `Stop-Process` 掉 `air-icon-launcher.exe` |
 | 自动更新提示签名无效 | `latest.json` 里 signature 与 zip 不匹配 | 从 `.nsis.zip.sig` 原样复制，别手改 |
 | 新会话 `gh` 未登录 | keyring 与 shell 会话不同 | `gh auth status` 确认，必要时 `gh auth login` |
+| `gitee/main` 报 `Needed a single revision` | 该远程引用尚未 fetch | `git fetch gitee` 后再 `rev-parse` |
 
 ---
 
 ## 11. 待处理的安全风险
 
-### 11.1 `private.key` 已进入版本控制
+### 11.1 `private.key` 泄露（部分处理）
 
-- 文件：`private.key`（Tauri 更新签名私钥，348 字节）
-- 引入提交：`757bd09 chore: 启用更新包生成 createUpdaterArtifacts`
-- **已推送到 GitHub 与 Gitee 公开仓库**
+**现状（2026-10-30 更新）**：
+
+- ✅ 已从版本控制移除：`git rm --cached private.key`，并加入 `.gitignore`（`private.key`、`*.key`）
+- ✅ 本地文件仍保留在仓库根目录，构建可继续使用
+- ❌ **历史提交中仍存在**：引入提交 `757bd09 chore: 启用更新包生成 createUpdaterArtifacts`
+- ❌ **已推送到 GitHub 与 Gitee 公开仓库**，任何访问者都能从历史里翻出私钥
 
 **风险**：任何能访问该仓库的人都可以用它签出「合法」的更新包。
 配合 `latest.json`，理论上可向现有用户推送恶意更新。
 
-**修复步骤（尚未执行，需用户决策）**：
+> ⚠️ **仅 `git rm --cached` 只是让后续提交不再包含它，历史记录里依然可读。**
+> 在完成历史清理或密钥轮换之前，**该私钥应视为已泄露**。
+
+**彻底修复步骤（尚未执行，需用户决策）**：
 
 1. 生成新密钥对
    ```powershell
    bun tauri signer generate -w private-new.key
    ```
 2. 新公钥写入 `src-tauri/tauri.conf.json` → `plugins.updater.pubkey`
-3. 把 `private.key` 从版本控制移除
+   （当前旧公钥以 `dW50cnVzdGVk...NDU2NTEwNjAxRUFCNjdG` 开头）
+3. 把 `private.key` 从历史中彻底清除
    ```powershell
-   Add-Content .gitignore "private.key"
-   git rm --cached private.key
+   git filter-repo --path private.key --invert-paths
+   # 或 git filter-repo --replace-text（批量脱敏）
    ```
-4. 轮换后旧版本客户端**无法**验证新签名，需要过渡方案
-   （保留旧公钥验证一轮，或让用户手动重装）
-5. 历史记录中的私钥仍需清理（`git filter-repo`），并强制推送
+4. 强制推送到两个远程（会重写历史，需通知所有协作者）
+   ```powershell
+   git push origin --force --all
+   git push gitee  --force --all
+   ```
+5. **轮换后旧版本客户端无法验证新签名**，需要过渡方案：
+   保留旧公钥验证一轮，或让用户手动重装
 
-> 注意：仅 `git rm --cached` 不会从历史中删除，旧提交里仍可翻出私钥。
+> 顺序很重要：先轮换密钥（步骤 1–2），再清理历史（步骤 3–4）。
+> 反之，若只清历史不换钥，私钥仍可能已被他人留存，风险不降。
 
 ### 11.2 文档中的明文凭据
 
-本文件历史版本曾包含 Gitee Token 与签名密码明文。
-建议改为从环境变量或本地未跟踪文件读取，避免继续扩散。
+本文件历史版本曾包含 Gitee Token 与签名密码明文，且已随仓库推送到公开平台。
+
+**处理情况（2026-10-30）**：
+
+- ✅ 签名密码已从本文档移除，改为运行时交互输入（见 §4）
+- ✅ Gitee Token 已从本文档移除，改为从环境变量 `GITEE_TOKEN` 读取（见 §8）
+- ❌ **历史版本中的明文仍存在于 Git 历史**，与 §11.1 同属历史清理范畴
+- ⚠️ 若这些凭据曾在公开仓库出现，应视为已泄露，建议在平台上**重新生成**
+  - Gitee Token：https://gitee.com/profile/personal_access_tokens
+  - 签名密钥：见 §11.1 轮换步骤
 
 ---
 
@@ -392,8 +449,9 @@ $sig -eq $j.platforms.'windows-x86_64'.signature   # 应为 True
 | 项 | 值 / 位置 |
 |---|---|
 | 仓库根目录 | `Z:\VScodeProject\air-icon-launcher` |
-| 签名私钥 | `private.key`（⚠️ 已泄露，见 §11.1） |
-| 签名密码 | 见 §4 命令 |
+| 签名私钥 | `private.key`（本地保留，⚠️ 已泄露，见 §11.1） |
+| 签名密码 | 运行时输入，见 §4 |
+| Gitee Token | 环境变量 `GITEE_TOKEN` |
 | GitHub | `Air9420/air-icon-launcher` |
 | Gitee | `air9420/air-icon-launcher` |
 | 产物目录 | `src-tauri\target\release\bundle\nsis\` |

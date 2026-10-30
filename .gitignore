@@ -32,6 +32,10 @@ src-tauri/target/
 .env.local
 .env.*.local
 
+# Tauri 更新签名私钥（严禁提交：泄露后可签发恶意更新包）
+private.key
+*.key
+
 # 编辑器临时文件
 *.swp
 *.swo
