@@ -13,8 +13,10 @@
 # 2) 改 3 个文件 + latest.json（见 §3）
 bun run check
 
-# 3) 编译（必须带签名环境变量，见 §4）
-$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = Read-Host "签名密码" -AsSecureString | ConvertFrom-SecureString -AsPlainText
+# 3) 编译（凭据从 .env.local 加载，见 §4）
+Get-Content .env.local | Where-Object { $_ -match '^\s*[A-Z_]+=' } | ForEach-Object {
+  $k, $v = $_ -split '=', 2; Set-Item -Path "env:$($k.Trim())" -Value $v.Trim()
+}
 $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content "Z:\VScodeProject\air-icon-launcher\private-new.key" -Raw)
 bun tauri build
 
@@ -134,21 +136,31 @@ Select-String -Path src-tauri/Cargo.toml -Pattern '^version'
 
 ## 4. 编译
 
-签名密码不再明文写在文档里，改为从环境变量或本地未跟踪文件读取。
+**凭据来源**：仓库根目录的 `.env.local`（已被 `.gitignore` 忽略，不会进版本库）。
+其中包含 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 与 `GITEE_TOKEN`。
+
+先加载凭据（**每个新 shell 都要执行一次**）：
 
 ```powershell
-# 方式一：交互输入（推荐，不落盘）
-$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = Read-Host "签名密码" -AsSecureString | ConvertFrom-SecureString -AsPlainText
+cd Z:\VScodeProject\air-icon-launcher
+Get-Content .env.local | Where-Object { $_ -match '^\s*[A-Z_]+=' } | ForEach-Object {
+  $k, $v = $_ -split '=', 2
+  Set-Item -Path "env:$($k.Trim())" -Value $v.Trim()
+}
+```
 
-# 方式二：从本地未跟踪文件读取（自行创建 sign_password.txt，已在 .gitignore 覆盖范围内）
-# $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (Get-Content "sign_password.txt" -Raw).Trim()
+然后编译：
 
+```powershell
 $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content "Z:\VScodeProject\air-icon-launcher\private-new.key" -Raw)
 bun tauri build
 ```
 
 > ⚠️ 签名私钥为 `private-new.key`（v0.8.1 起启用）。该文件已在 `.gitignore` 中，**必须本地妥善备份**，
 > 丢失后将无法再签发更新包。旧的 `private.key` 已弃用（已泄露，见 §11.1）。
+
+> `.env.local` 不存在时：向项目所有者索取密码与 Token，自行创建该文件（格式见 §11.2）。
+> **不要**把凭据写进任何被跟踪的文件。
 
 - 耗时约 **3 分钟**（release profile 开了 LTO，属正常）
 - 产物在 `src-tauri\target\release\bundle\nsis\`
@@ -287,10 +299,8 @@ gh release create vx.y.z `
 
 **必须用 JSON 文件 + curl**，PowerShell 的 `ConvertTo-Json` 会导致中文乱码。
 
-> Token 不再明文写在文档里。先设置环境变量：
-> ```powershell
-> $env:GITEE_TOKEN = Read-Host "Gitee Token" -AsSecureString | ConvertFrom-SecureString -AsPlainText
-> ```
+> Token 来源：仓库根 `.env.local` 的 `GITEE_TOKEN`（已被 `.gitignore` 忽略）。
+> 若当前 shell 未加载，先按 §4 的命令加载凭据。
 > Token 在 https://gitee.com/profile/personal_access_tokens 生成，需 `projects` 权限。
 
 ### 8.1 写 JSON 文件
@@ -421,30 +431,28 @@ $sig -eq $j.platforms.'windows-x86_64'.signature   # 应为 True
 **新密钥保管**：
 
 - 私钥：`private-new.key`（本地，已 gitignore，**务必备份**，丢失将无法再签发更新）
-- 密码：与旧密钥相同，见 §4 获取方式
+- 密码：见 `.env.local` 的 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
 
 ### 11.2 文档中的明文凭据（已处理）
 
 本文件历史版本曾包含 Gitee Token 与签名密码明文，且已随仓库推送到公开平台。
 
-- ✅ 签名密码已从本文档移除，改为运行时交互输入（见 §4）
-- ✅ Gitee Token 已从本文档移除，改为从环境变量 `GITEE_TOKEN` 读取（见 §8）
-- ⚠️ 历史版本中的明文仍存在于 Git 历史（与 §11.1 同属已接受的历史残留）
-- ⚠️ 若凭据曾在公开仓库出现，建议在平台重新生成
-  - Gitee Token：https://gitee.com/profile/personal_access_tokens
+**处理情况（2026-10-31 更新）**：
 
-### 11.2 文档中的明文凭据
-
-本文件历史版本曾包含 Gitee Token 与签名密码明文，且已随仓库推送到公开平台。
-
-**处理情况（2026-10-30）**：
-
-- ✅ 签名密码已从本文档移除，改为运行时交互输入（见 §4）
-- ✅ Gitee Token 已从本文档移除，改为从环境变量 `GITEE_TOKEN` 读取（见 §8）
-- ❌ **历史版本中的明文仍存在于 Git 历史**，与 §11.1 同属历史清理范畴
+- ✅ 签名密码与 Gitee Token 均已从本文档移除
+- ✅ 改为存放于仓库根 `.env.local`（已被 `.gitignore` 忽略，不会进版本库），
+  发布时按 §4 命令加载到环境变量
+- ❌ **历史版本中的明文仍存在于 Git 历史**，与 §11.1 同属已接受的历史残留
 - ⚠️ 若这些凭据曾在公开仓库出现，应视为已泄露，建议在平台上**重新生成**
   - Gitee Token：https://gitee.com/profile/personal_access_tokens
   - 签名密钥：见 §11.1 轮换步骤
+
+**`.env.local` 格式**（供新环境重建时参考）：
+
+```dotenv
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD=<签名密码>
+GITEE_TOKEN=<Gitee Token>
+```
 
 ---
 
@@ -454,8 +462,8 @@ $sig -eq $j.platforms.'windows-x86_64'.signature   # 应为 True
 |---|---|
 | 仓库根目录 | `Z:\VScodeProject\air-icon-launcher` |
 | 签名私钥 | `private-new.key`（⚠️ 务必备份；旧的 `private.key` 已弃用且已泄露，见 §11.1） |
-| 签名密码 | 运行时输入，见 §4 |
-| Gitee Token | 环境变量 `GITEE_TOKEN` |
+| 签名密码 | `.env.local` → `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（见 §4） |
+| Gitee Token | `.env.local` → `GITEE_TOKEN`（见 §8） |
 | GitHub | `Air9420/air-icon-launcher` |
 | Gitee | `air9420/air-icon-launcher` |
 | 产物目录 | `src-tauri\target\release\bundle\nsis\` |
