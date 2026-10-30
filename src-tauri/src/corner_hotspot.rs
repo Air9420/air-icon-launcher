@@ -4,7 +4,9 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::RwLock;
 use std::thread;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, Position};
+use tauri::{AppHandle, Emitter, Manager};
+#[cfg(not(windows))]
+use tauri::{PhysicalPosition, Position};
 
 static CORNER_HOTSPOT_RUNNING: AtomicBool = AtomicBool::new(false);
 static CURRENT_CONFIG: Lazy<RwLock<CornerHotspotConfig>> =
@@ -14,6 +16,21 @@ static CORNER_HOTSPOT_HANDLE: Lazy<RwLock<Option<std::thread::JoinHandle<()>>>> 
 
 static LAST_POS_X: AtomicI32 = AtomicI32::new(i32::MIN);
 static LAST_POS_Y: AtomicI32 = AtomicI32::new(i32::MIN);
+
+/// 前端在完成路由切换、置好过渡状态后回传的“可以显示了”信号。
+/// 显示窗口必须等它，否则窗口会在旧页面内容上先露一帧（闪烁）。
+static SHOW_ACK_TX: Lazy<RwLock<Option<std::sync::mpsc::Sender<()>>>> =
+    Lazy::new(|| RwLock::new(None));
+
+/// 前端就绪后调用，允许后端把窗口显示出来。
+#[tauri::command]
+pub fn corner_hotspot_show_ack() {
+    if let Ok(mut guard) = SHOW_ACK_TX.write() {
+        if let Some(tx) = guard.take() {
+            let _ = tx.send(());
+        }
+    }
+}
 
 #[cfg(windows)]
 const CORNER_HOTSPOT_DEBUG: bool = false;
@@ -291,126 +308,153 @@ fn is_in_corner(
     }
 }
 
+/// 计算窗口在指定角落的目标坐标（物理像素）。
 #[cfg(windows)]
-fn show_window_at_corner(app: &AppHandle, position: CornerPosition, screen: &ScreenInfo) {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
-    use windows::Win32::UI::Input::KeyboardAndMouse::{SetActiveWindow, SetFocus};
-    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, SetForegroundWindow, SetWindowPos, ShowWindow, HWND_NOTOPMOST,
-        HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_RESTORE,
+fn compute_corner_position(
+    window: &tauri::WebviewWindow,
+    position: CornerPosition,
+    screen: &ScreenInfo,
+) -> Option<(i32, i32)> {
+    let Ok(size) = window.outer_size() else {
+        corner_debug!("[corner_hotspot] compute_corner_position: outer_size failed");
+        return None;
     };
 
-    println!("[corner_hotspot] show_window_at_corner: start");
+    let window_w = size.width as i32;
+    let window_h = size.height as i32;
+
+    let taskbar_height = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|monitor| {
+            let work_area = monitor.work_area();
+            let screen_height = monitor.size().height as i32;
+            screen_height - work_area.size.height as i32
+        })
+        .unwrap_or(0);
+
+    let (x, y) = match position {
+        CornerPosition::TopLeft => (screen.x, screen.y),
+        CornerPosition::TopRight => (screen.x + screen.width - window_w, screen.y),
+        CornerPosition::BottomLeft => (
+            screen.x,
+            screen.y + screen.height - window_h - taskbar_height,
+        ),
+        CornerPosition::BottomRight => (
+            screen.x + screen.width - window_w,
+            screen.y + screen.height - window_h - taskbar_height,
+        ),
+    };
+
+    corner_debug!(
+        "[corner_hotspot] compute_corner_position: target ({}, {})",
+        x,
+        y
+    );
+    Some((x, y))
+}
+
+#[cfg(windows)]
+fn show_window_at_corner(app: &AppHandle, position: CornerPosition, screen: &ScreenInfo) {
     corner_debug!("[corner_hotspot] show_window_at_corner: start");
 
     let Some(window) = app.get_webview_window("main") else {
-        println!("[corner_hotspot] show_window_at_corner: window not found");
         corner_debug!("[corner_hotspot] show_window_at_corner: window not found");
         return;
     };
 
-    println!("[corner_hotspot] show_window_at_corner: calling window.show()");
-    corner_debug!("[corner_hotspot] show_window_at_corner: calling window.show()");
+    // ── 阶段 1：先算出目标位置 ──
+    // 注意：窗口隐藏时 Tauri 的 set_position 会被 tao 忽略（窗口不可见时不处理位置变更），
+    // 因此这里只计算坐标，真正落位放到显示之后用 SetWindowPos 完成。
+    let target = compute_corner_position(&window, position, screen);
+
+    // ── 阶段 2：先通知前端切路由/置好过渡状态，等前端回执后再显示 ──
+    // 窗口隐藏时 requestAnimationFrame 不推进，前端若在显示后才置 opacity 会先露一帧旧内容。
+    // 因此改为「后端发事件 → 前端切好路由 → 前端 ack → 后端才显示窗口」的握手。
+    {
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        if let Ok(mut guard) = SHOW_ACK_TX.write() {
+            *guard = Some(tx);
+        }
+        let _ = app.emit("corner-hotspot-triggered", ());
+
+        // 最多等 120ms：前端来不及也不阻塞唤起，只是退回“显示后由前端补状态”。
+        match rx.recv_timeout(Duration::from_millis(120)) {
+            Ok(()) => corner_debug!("[corner_hotspot] frontend acked before show"),
+            Err(_) => corner_debug!("[corner_hotspot] frontend ack timeout, showing anyway"),
+        }
+        if let Ok(mut guard) = SHOW_ACK_TX.write() {
+            *guard = None;
+        }
+    }
+
+    // ── 阶段 3+4：在主线程一次性完成「定位 → 显示 → 抢焦点」 ──
+    // 定位必须走 SetWindowPos：窗口隐藏时 Tauri 的 set_position 会被忽略。
+    // 把定位和显示放在同一轮主线程调用里，避免出现“先显示在旧位置”的中间帧。
     let _ = window.show();
-    let _ = window.set_focus();
+    force_foreground(app, target);
 
-    if let Ok(size) = window.outer_size() {
-        let window_w = size.width as i32;
-        let window_h = size.height as i32;
+    corner_debug!("[corner_hotspot] show_window_at_corner: done");
+}
 
-        let taskbar_height = window
-            .current_monitor()
-            .ok()
-            .flatten()
-            .map(|monitor| {
-                let work_area = monitor.work_area();
-                let screen_height = monitor.size().height as i32;
-                screen_height - work_area.size.height as i32
-            })
-            .unwrap_or(0);
+/// 强制把主窗口切到前台并取得焦点，同时可指定落位坐标。
+///
+/// `SetForegroundWindow` / `SetFocus` 受 Windows 前台锁限制：调用线程必须与目标窗口
+/// 共享输入队列。因此这里通过 `run_on_main_thread` 切到窗口所属线程执行，并在执行
+/// 期间把「当前前台线程」附加进来，完成后立即解除附加。
+#[cfg(windows)]
+fn force_foreground(app: &AppHandle, target: Option<(i32, i32)>) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{SetActiveWindow, SetFocus};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId, SetForegroundWindow, SetWindowPos,
+        HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    };
 
-        let (x, y) = match position {
-            CornerPosition::TopLeft => (screen.x, screen.y),
-            CornerPosition::TopRight => (screen.x + screen.width - window_w, screen.y),
-            CornerPosition::BottomLeft => (
-                screen.x,
-                screen.y + screen.height - window_h - taskbar_height,
-            ),
-            CornerPosition::BottomRight => (
-                screen.x + screen.width - window_w,
-                screen.y + screen.height - window_h - taskbar_height,
-            ),
-        };
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let Ok(hwnd) = window.hwnd() else {
+        return;
+    };
+    let raw = HWND(hwnd.0 as isize);
+
+    let _ = app.run_on_main_thread(move || unsafe {
+        // 先落位：窗口此时已 show()，SetWindowPos 能可靠生效。
+        if let Some((x, y)) = target {
+            let _ = SetWindowPos(raw, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+            corner_debug!("[corner_hotspot] force_foreground: moved to ({}, {})", x, y);
+        }
+
+        let foreground = GetForegroundWindow();
+        let foreground_tid = GetWindowThreadProcessId(foreground, None);
+        let current_tid = GetCurrentThreadId();
 
         corner_debug!(
-            "[corner_hotspot] show_window_at_corner: setting position to ({}, {})",
-            x,
-            y
+            "[corner_hotspot] force_foreground: foreground_tid={}, current_tid={}",
+            foreground_tid,
+            current_tid
         );
-        let _ = window.set_position(Position::Physical(PhysicalPosition::new(x, y)));
-    } else {
-        corner_debug!("[corner_hotspot] show_window_at_corner: outer_size failed");
-    }
 
-    let _ = app.emit("corner-hotspot-triggered", ());
-
-    if let Ok(hwnd) = window.hwnd() {
-        let raw = HWND(hwnd.0 as isize);
-        corner_debug!("[corner_hotspot] show_window_at_corner: hwnd={:p}", hwnd.0);
-        unsafe {
-            corner_debug!("[corner_hotspot] show_window_at_corner: calling ShowWindow");
-            let _ = ShowWindow(raw, SW_RESTORE);
-
-            let foreground = GetForegroundWindow();
-            let foreground_tid = GetWindowThreadProcessId(foreground, None);
-            let current_tid = GetCurrentThreadId();
-            corner_debug!("[corner_hotspot] show_window_at_corner: foreground={:p}, foreground_tid={}, current_tid={}",
-                foreground.0 as *mut std::ffi::c_void, foreground_tid, current_tid);
-
-            if foreground_tid != current_tid && foreground_tid != 0 {
-                corner_debug!("[corner_hotspot] show_window_at_corner: using AttachThreadInput");
-                let _ = AttachThreadInput(foreground_tid, current_tid, true);
-                let _ = SetForegroundWindow(raw);
-                let _ = SetActiveWindow(raw);
-                let _ = SetFocus(raw);
-                let _ = AttachThreadInput(foreground_tid, current_tid, false);
-            } else {
-                corner_debug!(
-                    "[corner_hotspot] show_window_at_corner: using SetForegroundWindow directly"
-                );
-                let _ = SetForegroundWindow(raw);
-                let _ = SetActiveWindow(raw);
-                let _ = SetFocus(raw);
-            }
-
-            corner_debug!("[corner_hotspot] show_window_at_corner: calling SetWindowPos TOPMOST");
-            let _ = SetWindowPos(
-                raw,
-                HWND_TOPMOST,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
-            );
-            corner_debug!("[corner_hotspot] show_window_at_corner: calling SetWindowPos NOTOPMOST");
-            let _ = SetWindowPos(
-                raw,
-                HWND_NOTOPMOST,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
-            );
+        let attached = foreground_tid != 0 && foreground_tid != current_tid;
+        if attached {
+            let _ = AttachThreadInput(foreground_tid, current_tid, true);
         }
-    } else {
-        corner_debug!("[corner_hotspot] show_window_at_corner: hwnd failed, using set_focus");
-        let _ = window.set_focus();
-    }
-    corner_debug!("[corner_hotspot] show_window_at_corner: done");
+
+        let _ = SetForegroundWindow(raw);
+        let _ = SetActiveWindow(raw);
+        let _ = SetFocus(raw);
+
+        // 置顶再回落，确保盖住其他窗口；不带 SWP_SHOWWINDOW，避免多一次重绘。
+        let _ = SetWindowPos(raw, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+        let _ = SetWindowPos(raw, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+
+        if attached {
+            let _ = AttachThreadInput(foreground_tid, current_tid, false);
+        }
+    });
 }
 
 #[cfg(not(windows))]
@@ -456,13 +500,9 @@ fn trigger_corner_hotspot(
     screen: &ScreenInfo,
     last_trigger: &mut Option<Instant>,
 ) -> bool {
-    println!("[corner_hotspot] trigger_corner_hotspot: called");
-    corner_debug!("[corner_hotspot] trigger_corner_hotspot: called");
-
     if let Some(window) = app.get_webview_window("main") {
         let visible = window.is_visible().unwrap_or(false);
         let focused = window.is_focused().unwrap_or(false);
-        println!("[corner_hotspot] trigger: visible={}, focused={}", visible, focused);
         corner_debug!(
             "[corner_hotspot] trigger: visible={}, focused={}",
             visible,
@@ -470,9 +510,27 @@ fn trigger_corner_hotspot(
         );
 
         if visible && focused {
-            println!("[corner_hotspot] trigger: window already visible and focused, skip");
-            corner_debug!("[corner_hotspot] trigger: window already visible and focused, skip");
+            // 已经完全唤起，无需处理。
+            corner_debug!("[corner_hotspot] trigger: visible and focused, skip");
             return false;
+        }
+
+        if visible {
+            // 窗口可见但没焦点：抢回焦点，并重新摆到热角位置。
+            // 走轻量路径（不切路由、不重新 show），避免页面重置和闪烁。
+            if let Some(instant) = *last_trigger {
+                if instant.elapsed() < Duration::from_secs(1) {
+                    corner_debug!("[corner_hotspot] trigger: refocus within 1s cooldown, skip");
+                    return false;
+                }
+            }
+            *last_trigger = Some(Instant::now());
+
+            corner_debug!("[corner_hotspot] trigger: visible but unfocused, refocus + reposition");
+            let target = compute_corner_position(&window, position, screen);
+            force_foreground(app, target);
+            let _ = app.emit("corner-hotspot-shown", ());
+            return true;
         }
     }
 
@@ -533,6 +591,8 @@ pub fn start_corner_hotspot_monitor(app: AppHandle) {
         let mut in_corner_since: Option<Instant> = None;
         let mut last_trigger: Option<Instant> = None;
         let mut last_screen: Option<ScreenInfo> = None;
+        // 本次“光标停留在角落”是否已处理过，防止停留期间反复唤起。
+        let mut corner_handled = false;
 
         while CORNER_HOTSPOT_RUNNING.load(Ordering::Relaxed) {
             let config = CURRENT_CONFIG.read().unwrap().clone();
@@ -598,6 +658,13 @@ pub fn start_corner_hotspot_monitor(app: AppHandle) {
             };
 
             if in_corner {
+                // 本次“进入角落”只处理一次：光标一直停在角落不会反复触发。
+                // 只有离开角落（下方的 else 分支）才允许下一次唤起。
+                if corner_handled {
+                    thread::sleep(sleep_duration);
+                    continue;
+                }
+
                 let since = in_corner_since.get_or_insert_with(Instant::now);
                 let elapsed = since.elapsed().as_millis();
                 let delay = Duration::from_millis(config.sensitivity.delay_ms());
@@ -619,10 +686,12 @@ pub fn start_corner_hotspot_monitor(app: AppHandle) {
                         corner_debug!("[corner_hotspot] loop: TRIGGER FIRED!");
                         trigger_corner_hotspot(&app, config.position, &screen, &mut last_trigger);
                         in_corner_since = None;
+                        corner_handled = true;
                     }
                 }
             } else {
                 in_corner_since = None;
+                corner_handled = false;
             }
 
             thread::sleep(sleep_duration);

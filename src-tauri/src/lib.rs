@@ -385,6 +385,7 @@ pub fn run() {
             window_effects::get_window_effect_support_info,
             corner_hotspot::set_corner_hotspot_config,
             corner_hotspot::get_corner_hotspot_config,
+            corner_hotspot::corner_hotspot_show_ack,
             commands::search::update_search_items,
             commands::search::update_search_items_incremental,
             commands::search::search_apps,

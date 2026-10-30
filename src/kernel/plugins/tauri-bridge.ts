@@ -2,6 +2,7 @@ import type { Context, Plugin } from "cordis";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { storeToRefs } from "pinia";
+import { nextTick } from "vue";
 import router from "../../router";
 import { safeInvoke } from "../../utils/invoke-wrapper";
 import { useWindowPosition } from "../../composables/useWindowPosition";
@@ -88,16 +89,28 @@ export function registerTauriBridgeEvents(on: KernelEventRegistrar): Disposer {
 
   disposers.push(
     on("corner-hotspot-triggered", async () => {
+      // 窗口此刻仍隐藏。先切好路由并完成首次渲染，再回执让后端显示窗口，
+      // 避免「窗口已可见、页面还是旧路由」的那一帧闪烁。
       appIsTransitioning.value = true;
-      void router.push("/categories");
+      await router.push("/categories");
+      await nextTick();
+      await safeInvoke("corner_hotspot_show_ack");
+
       await emit("window-shown", null);
+      // 双 rAF 等首帧绘制完成再淡入。窗口刚显示时 rAF 可能尚未推进，
+      // 加超时兜底，避免 opacity 永远停在 0 导致“唤起了却看不见”。
       await new Promise<void>((resolve) => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          appIsTransitioning.value = false;
+          resolve();
+        };
         requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            appIsTransitioning.value = false;
-            resolve();
-          });
+          requestAnimationFrame(finish);
         });
+        setTimeout(finish, 300);
       });
     }),
   );
