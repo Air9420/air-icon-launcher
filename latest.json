@@ -1,11 +1,11 @@
 {
-  "version": "0.8.2",
-  "notes": "## v0.8.2\n\n### 修复\n- 修复热角唤起时窗口闪烁：窗口改为在隐藏状态下算好落点，显示后一次性落位，显示与重绘次数由 4 次降为 1 次。\n- 修复热角唤起后无法获得焦点（焦点指示器恒为红色）：改为在窗口所属线程内附加前台线程后聚焦。\n- 修复光标停留在角落时反复重复唤起：同一次停留只处理一次，离开角落后方可再次唤起。\n- 修复热角唤起不回到角落位置：窗口被拖动或切换到其他窗口后，再次热角唤起会重新归位到设定的角落，保持位置固定。\n- 修复窗口可见但失去焦点时热角无法唤回。\n\n### 说明\n- 热角唤起改为「先通知前端切好页面，再显示窗口」，避免旧页面内容闪现。",
-  "pub_date": "2026-10-31T06:30:00.000Z",
+  "version": "0.9.0",
+  "notes": "## v0.9.0\n\n本次更新新增**迈从（MCHOSE）鼠标板载配置切换插件**，并重构了插件管理页面。\n\n### 新增\n\n- **迈从鼠标板载配置插件**：直接读写 MCHOSE A7 V2 Ultra+ 的板载配置，\n  无需依赖官方驱动\n  - 按热键在板载配置间切换（支持「轮换」与「两选一」两种模式）\n  - 读取并显示配置名、当前 DPI（含 X/Y 独立轴）、鼠标电量\n  - 状态可推送到远端屏幕（OSD）显示，支持自定义服务地址与停留时长\n  - 热键支持单键与组合键，采用低级键盘钩子实现\n- **插件详情页**：插件列表改为紧凑列表，详细操作、设置、日志、管理\n  移入独立路由页 `/plugins/:pluginId`\n- **声明式插件设置**：插件 manifest 新增 `contributes.settings`，\n  宿主可自动渲染设置表单（支持文本、数字、开关、下拉、多选、热键）\n- **热键录制**：热键输入框改为按键录制，点击后直接按下目标按键即可\n\n### 修复\n\n- 修复显示器信息窗口出现白色空白窗口的问题\n- 修复鼠标切换配置后 DPI 显示错位（X/Y 轴数据沿用了上一个配置）\n- 修复连续快速触发热键时偶发切换失败\n\n### 说明\n\n- 该插件需要 Windows 环境与已连接的迈从鼠标；未连接鼠标时插件功能自动降级\n- 远端 OSD 为可选项，不使用时可只在本机切换配置",
+  "pub_date": "2026-11-01T05:54:23.980Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbUt3NUd3RVF4cUVpU25hYWxjdDFxQ2c2YWxob2gvSUZUcit4bTViRGhWSG9xZnNtUWYySGtlTFVDQ29MMi9ndlRBZ01laGxUeU9WcGJtcXByS0xqQ1pTa2ZmZ2lEelFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMzk5MzQxCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC44LjJfeDY0LXNldHVwLm5zaXMuemlwCjhhTXZsL1FVbXJPeDl2eGhMTHdPRUQ2eHp2Y1lVMkF5UWx0ME9aQXhKRUo2ZTF3K3piYVlYNGVvZ2RDM28xVzFQUWFkbENQWWZPL1hEUnBiVXNlc0NnPT0K",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.8.2/air-icon-launcher_0.8.2_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbUt3NUd3RVF4cUtvTm5zajcwTzlUQVpGd3lHSlF6VzNpb1NvZmNHbE5tdklHRzR3SHprVU1rZHpDbmsxRW0xeE90UGZWZjVHMzZpT3BlalZHcXIvQUNJS0xxS3JDZEFjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNTEyNDU2CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC45LjBfeDY0LXNldHVwLm5zaXMuemlwCmpNM09wQU1lSGV4SWZLcGd6ZGNqaEhNOE43RGJIREdMTUxFUUErYkFnSXhKTUtpZ3RRR3EweXZRZ045dll5RVhWK3JBRWpQM2VueitMa1dpcE5jekRBPT0K",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.9.0/air-icon-launcher_0.9.0_x64-setup.nsis.zip"
     }
   }
 }
