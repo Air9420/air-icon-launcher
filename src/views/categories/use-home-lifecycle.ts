@@ -12,6 +12,7 @@ import {
     getDocumentVisibilityHints,
 } from "./home-hydration-helpers";
 import { shouldSkipVisibleHydration } from "../../utils/window-visibility";
+import { APP_WINDOW_HIDDEN_EVENT } from "../../utils/window-memory";
 
 const RECENT_STABILIZE_DELAY_MS = 280;
 const HOME_PINNED_ICON_HYDRATION_BUFFER = 2;
@@ -167,7 +168,17 @@ export function createHomeKeyboardHandlers(deps: HomeKeyboardDeps) {
         }
     }
 
-    return { onKeydown, onKeyup };
+    /**
+     * 立即隐藏号标。
+     *
+     * 窗口隐藏时调用：Ctrl+右键隐藏时 Ctrl 仍按着，收不到 keyup，
+     * 号标会残留到下次唤起的第一帧，造成闪烁。
+     */
+    function clearShortcutHints() {
+        setShortcutHints(false);
+    }
+
+    return { onKeydown, onKeyup, clearShortcutHints };
 }
 
 export type HomeWindowSetupOptions = {
@@ -179,6 +190,7 @@ export type HomeWindowSetupOptions = {
     applyWindowShownReset: () => void;
     applyFocusGained: () => void;
     applyFocusLost: () => void;
+    onWindowHidden: () => void;
     setWindowFocused: (v: boolean) => void;
     setWindowVisibility: (v: "visible" | "hidden") => void;
     resetHomeKeyboardNav: () => void;
@@ -223,6 +235,7 @@ export async function setupHomeWindowListeners(options: HomeWindowSetupOptions):
     window.addEventListener("pointercancel", options.cancelExternalConvertDrag, true);
     window.addEventListener("blur", options.onWindowBlur);
     window.addEventListener("scroll", options.hydrateVisibleSearchResultIcons, true);
+    window.addEventListener(APP_WINDOW_HIDDEN_EVENT, options.onWindowHidden);
 
     return () => {
         unlistenFocus();
@@ -232,6 +245,7 @@ export async function setupHomeWindowListeners(options: HomeWindowSetupOptions):
         document.removeEventListener("mousedown", options.onDocumentMouseDown, true);
         window.removeEventListener("blur", options.onWindowBlur);
         window.removeEventListener("scroll", options.hydrateVisibleSearchResultIcons, true);
+        window.removeEventListener(APP_WINDOW_HIDDEN_EVENT, options.onWindowHidden);
         window.removeEventListener(options.externalConvertEvent, options.onExternalConvertDragStart);
         window.removeEventListener("pointermove", options.onExternalConvertPointerMove, true);
         window.removeEventListener("pointerup", options.onExternalConvertPointerUp, true);

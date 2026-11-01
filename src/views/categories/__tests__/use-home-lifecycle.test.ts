@@ -77,4 +77,16 @@ describe("createHomeKeyboardHandlers 号标显隐", () => {
         onKeydown(new KeyboardEvent("keydown", { key: "a", ctrlKey: false }));
         expect(showShortcutHints.value).toBe(false);
     });
+
+    it("窗口隐藏时清掉号标，避免下次唤起首帧残留", () => {
+        const { deps, showShortcutHints } = createDeps();
+        const { onKeydown, clearShortcutHints } = createHomeKeyboardHandlers(deps);
+
+        // Ctrl+右键隐藏：Ctrl 仍按着，keyup 永远不会到。
+        onKeydown(new KeyboardEvent("keydown", { key: "Control", ctrlKey: true }));
+        expect(showShortcutHints.value).toBe(true);
+
+        clearShortcutHints();
+        expect(showShortcutHints.value).toBe(false);
+    });
 });

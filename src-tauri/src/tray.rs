@@ -34,11 +34,16 @@ pub fn create_tray(app: &AppHandle) -> tauri::tray::TrayIcon {
             }
             "settings" => {
                 if let Some(window) = app.get_webview_window("main") {
+                    let was_visible = window.is_visible().unwrap_or(false);
                     app_settings::show_main_window(
                         app,
                         false,
                         app_settings::FollowMouseYAnchor::Center,
                     );
+                    if !was_visible {
+                        // 与快捷键 / 热角唤起保持一致：隐藏 -> 可见时通知前端重置一次性 UI 状态。
+                        let _ = app.emit("window-shown", ());
+                    }
                     let _ = window.emit("tray-open-settings", ());
                 }
             }
@@ -54,11 +59,21 @@ pub fn create_tray(app: &AppHandle) -> tauri::tray::TrayIcon {
                 } => {
                     println!("[tray] left click detected");
                     let app = tray.app_handle();
+                    // 只在窗口由隐藏变为可见时补发 window-shown：
+                    // 快捷键 / 热角唤起都会发这个事件，前端据此重置号标等一次性状态；
+                    // 托盘唤起此前缺失该事件，导致 Ctrl+右键隐藏时残留的号标一直显示。
+                    let was_visible = app
+                        .get_webview_window("main")
+                        .map(|w| w.is_visible().unwrap_or(false))
+                        .unwrap_or(false);
                     app_settings::show_main_window(
                         app,
                         false,
                         app_settings::FollowMouseYAnchor::Center,
                     );
+                    if !was_visible {
+                        let _ = app.emit("window-shown", ());
+                    }
                 }
                 _ => {}
             }

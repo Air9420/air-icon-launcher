@@ -257,7 +257,7 @@ const {
     cancelExternalConvertDrag,
 } = externalDrag;
 
-const { onKeydown, onKeyup } = createHomeKeyboardHandlers({
+const { onKeydown, onKeyup, clearShortcutHints } = createHomeKeyboardHandlers({
     searchKeyword,
     homeSearchViewState,
     showShortcutHints,
@@ -319,6 +319,7 @@ onMounted(async () => {
         applyWindowShownReset,
         applyFocusGained,
         applyFocusLost,
+        onWindowHidden: clearShortcutHints,
         setWindowFocused,
         setWindowVisibility,
         resetHomeKeyboardNav,
