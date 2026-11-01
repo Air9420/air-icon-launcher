@@ -36,6 +36,39 @@ pub struct PluginHostContributes {
     pub commands: Vec<PluginHostCommandContribute>,
     #[serde(default)]
     pub menus: Vec<PluginHostMenuContribute>,
+    /// 声明式设置项；前端据此渲染表单，读写走 `settings.get` / `settings.set`。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub settings: Vec<PluginHostSettingField>,
+}
+
+/// 插件设置项声明（manifest v2 扩展）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginHostSettingField {
+    /// 配置键名
+    pub key: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    /// 控件类型：`text` | `number` | `bool` | `select` | `multiselect` | `hotkey`
+    #[serde(rename = "type", default = "default_setting_type")]
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<serde_json::Value>,
+    /// `select` / `multiselect` 的候选项
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<PluginHostSettingOption>,
+}
+
+fn default_setting_type() -> String {
+    "text".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginHostSettingOption {
+    pub value: serde_json::Value,
+    #[serde(default)]
+    pub label: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

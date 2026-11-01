@@ -6,8 +6,8 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW,
-    TranslateMessage, CW_USEDEFAULT, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_DISPLAYCHANGE,
-    WNDCLASSW,
+    TranslateMessage, MSG, WM_DISPLAYCHANGE, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_POPUP,
 };
 use windows::core::PCWSTR;
 
@@ -51,14 +51,16 @@ unsafe fn create_message_window() {
     }
 
     let hwnd = CreateWindowExW(
-        WINDOW_EX_STYLE::default(),
+        // 消息窗口必须完全不可见：不参与合成、不进任务栏、不接受输入
+        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         PCWSTR(class_name.as_ptr()),
         PCWSTR(class_name.as_ptr()),
-        WINDOW_STYLE::default(),
-        CW_USEDEFAULT,
-        CW_USEDEFAULT,
-        CW_USEDEFAULT,
-        CW_USEDEFAULT,
+        // WS_POPUP + 0 尺寸：不显示任何内容
+        WS_POPUP,
+        0,
+        0,
+        0,
+        0,
         None,
         None,
         h_instance,

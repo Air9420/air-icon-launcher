@@ -17,6 +17,7 @@ const SettingsStats = () => import('../views/settings/Stats.vue')
 const SettingsDisplay = () => import('../views/settings/Display.vue')
 const ClipboardHistory = () => import('../components/ClipboardHistory.vue')
 const Plugins = () => import('../views/plugins.vue')
+const PluginDetail = () => import('../views/plugins/PluginDetail.vue')
 
 // 设置页面子路由
 const settingsChildren: RouteRecordRaw[] = [
@@ -52,6 +53,12 @@ const routes = [
     },
     { path: '/clipboard', name: 'clipboard', component: ClipboardHistory },
     { path: '/plugins', name: 'plugins', component: Plugins },
+    {
+        path: '/plugins/:pluginId',
+        name: 'plugin-detail',
+        component: PluginDetail,
+        props: true,
+    },
 ]
 
 const router = createRouter({

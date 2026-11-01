@@ -1,51 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import RustPluginPanel from "./plugins/RustPluginPanel.vue";
-import { showToast } from "../composables/useGlobalToast";
-import { useCordis } from "../kernel";
 
 const router = useRouter();
-const ctx = useCordis();
-const pluginHost = ctx.pluginHost;
-
-const loading = ref(false);
-
-onMounted(async () => {
-    if (!pluginHost) return;
-    loading.value = true;
-    try {
-        const result = await pluginHost.refresh();
-        if (!result.ok) {
-            showToast(pluginHost.formatError(result.error), { type: "error" });
-        }
-    } finally {
-        loading.value = false;
-    }
-});
 
 function onBack() {
     router.back();
-}
-
-async function onRefresh() {
-    if (!pluginHost) {
-        showToast("PluginHostService 未注册（ctx.pluginHost 缺失）", { type: "error" });
-        return;
-    }
-    loading.value = true;
-    try {
-        const result = await pluginHost.refresh();
-        if (result.ok) {
-            showToast("插件列表已刷新", { type: "success" });
-        } else {
-            showToast(pluginHost.formatError(result.error), { type: "error" });
-        }
-    } catch (e) {
-        showToast("刷新插件失败：" + (e instanceof Error ? e.message : String(e)), { type: "error" });
-    } finally {
-        loading.value = false;
-    }
 }
 </script>
 
@@ -64,31 +24,11 @@ async function onRefresh() {
             >
                 返回
             </button>
-            <div class="title" data-tauri-drag-region>扩展插件（Rust）</div>
-            <button
-                class="refresh-btn"
-                type="button"
-                @click="onRefresh"
-                @mousedown.stop
-            >
-                刷新
-            </button>
+            <div class="title" data-tauri-drag-region>扩展插件</div>
         </header>
 
         <div class="content">
-            <div v-if="loading" class="loading">加载中...</div>
-
-            <div class="section">
-                <RustPluginPanel />
-            </div>
-
-            <div class="section">
-                <div class="section-title">说明</div>
-                <div class="hint">
-                    旧 iframe JS 插件系统已下线。菜单扩展请使用 <code>ctx.menus</code> 贡献点；
-                    宿主能力调用走 <code>ctx.pluginHost</code>。
-                </div>
-            </div>
+            <RustPluginPanel />
         </div>
     </div>
 </template>
@@ -124,8 +64,7 @@ async function onRefresh() {
     color: var(--text-color);
 }
 
-.back-btn:hover,
-.refresh-btn:hover {
+.back-btn:hover {
     background: var(--hover-bg-strong);
 }
 
@@ -136,53 +75,15 @@ async function onRefresh() {
     color: var(--text-color);
 }
 
+/* 去掉外层卡片与多余 padding，交给列表组件自己排 */
 .content {
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    height: calc(100vh - 52px - 32px);
-    overflow-y: scroll;
+    padding: 12px;
+    height: calc(100vh - 52px - 24px);
+    overflow-y: auto;
     -ms-overflow-style: none;
-    &::-webkit-scrollbar {
-        display: none;
-    }
 }
 
-.section {
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 16px;
-    padding: 14px;
-}
-
-.section-title {
-    font-size: 13px;
-    font-weight: 700;
-    color: var(--text-secondary);
-    margin-bottom: 8px;
-}
-
-.loading {
-    text-align: center;
-    padding: 24px;
-    color: var(--text-hint);
-    font-size: 13px;
-}
-
-.hint {
-    margin-top: 4px;
-    margin-bottom: 10px;
-    font-size: 12px;
-    color: var(--text-hint);
-    -webkit-app-region: no-drag;
-}
-
-.hint code {
-    font-family: monospace;
-    font-size: 11px;
-    background: var(--hover-bg);
-    padding: 1px 4px;
-    border-radius: 4px;
+.content::-webkit-scrollbar {
+    display: none;
 }
 </style>

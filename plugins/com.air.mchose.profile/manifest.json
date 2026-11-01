@@ -1,0 +1,103 @@
+{
+  "manifest_version": 2,
+  "id": "com.air.mchose.profile",
+  "name": "迈从板载配置切换",
+  "version": "0.2.0",
+  "runtime": "rust",
+  "entry": "air_mchose_profile.dll",
+  "description": "切换 MCHOSE 鼠标板载配置，并把状态推送到远端屏幕显示。",
+  "author": "Air",
+  "capabilities": ["log", "events.emit"],
+  "contributes": {
+    "commands": [
+      {
+        "id": "mchose.profile.next",
+        "title": "切换到下一个",
+        "method": "next"
+      },
+      {
+        "id": "mchose.profile.status",
+        "title": "读取鼠标状态",
+        "method": "status"
+      },
+      {
+        "id": "mchose.profile.testOsd",
+        "title": "测试远端 OSD",
+        "method": "test_osd"
+      }
+    ],
+    "menus": [],
+    "settings": [
+      {
+        "key": "hotkey",
+        "title": "轮换热键",
+        "type": "hotkey",
+        "description": "按一下在板载配置间切换。支持 ctrl / shift / alt / win 组合，如 ctrl+shift+m、alt+f9",
+        "default": "ctrl+shift+m"
+      },
+      {
+        "key": "hotkey_enabled",
+        "title": "启用热键",
+        "type": "bool",
+        "description": "关闭后热键不再响应",
+        "default": true
+      },
+      {
+        "key": "mode",
+        "title": "切换模式",
+        "type": "select",
+        "description": "轮换=在多个配置间循环；两选一=只在两个配置间来回切",
+        "default": "cycle",
+        "options": [
+          { "value": "cycle", "label": "轮换（多个配置循环）" },
+          { "value": "pair", "label": "两选一（两个配置来回切）" }
+        ]
+      },
+      {
+        "key": "active_slots",
+        "title": "参与轮换的配置",
+        "type": "multiselect",
+        "description": "轮换模式下会在这几个配置间循环",
+        "default": [0, 1, 2],
+        "options": [
+          { "value": 0, "label": "配置 1" },
+          { "value": 1, "label": "配置 2" },
+          { "value": 2, "label": "配置 3" }
+        ]
+      },
+      {
+        "key": "pair",
+        "title": "两选一的配置对",
+        "type": "multiselect",
+        "description": "两选一模式下只在这两个之间切换（选两个）",
+        "default": [0, 1],
+        "options": [
+          { "value": 0, "label": "配置 1" },
+          { "value": 1, "label": "配置 2" },
+          { "value": 2, "label": "配置 3" }
+        ]
+      },
+      {
+        "key": "osd_url",
+        "title": "OSD 服务地址",
+        "type": "text",
+        "description": "远端显示服务地址，如 http://192.168.31.66:8766",
+        "default": "http://192.168.31.66:8766"
+      },
+      {
+        "key": "duration",
+        "title": "显示时长（秒）",
+        "type": "number",
+        "description": "提示在屏幕上停留的时间",
+        "default": 2.5
+      },
+      {
+        "key": "show_battery",
+        "title": "显示电量",
+        "type": "bool",
+        "description": "在提示中一并显示鼠标电量",
+        "default": true
+      }
+    ]
+  }
+}
