@@ -162,9 +162,13 @@ bun tauri build
 > `.env.local` 不存在时：向项目所有者索取密码与 Token，自行创建该文件（格式见 §11.2）。
 > **不要**把凭据写进任何被跟踪的文件。
 
-- 耗时约 **3 分钟**（release profile 开了 LTO，属正常）
+- 耗时约 **6 分钟**（release profile 开了 fat-LTO + codegen-units=1，属正常）
+- 产物约 **13.3 MB**（`strip = true` + `panic = "abort"` 生效后）
 - 产物在 `src-tauri\target\release\bundle\nsis\`
 - 不设这两个环境变量 → 不会生成 `.sig`，自动更新会失效
+
+> 💡 **嫌本机编译卡？** 可以丢给局域网 Linux 主机交叉编译，产物等价：
+> `bash scripts/build-remote.sh`，详见 [`BUILD-REMOTE.md`](BUILD-REMOTE.md)。
 
 ### 产物清单
 

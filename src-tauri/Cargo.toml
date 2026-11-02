@@ -84,6 +84,13 @@ lcms2 = "6.1.1"
 libloading = "0.8"
 
 [profile.dev]
-incremental = true # 浠ヨ緝灏忕殑姝ラ缂栬瘧鎮ㄧ殑浜岃繘鍒舵枃浠躲€?
+incremental = true
+
+# Release profile：LTO + 单 CU 追求极致优化；strip / panic=abort 减小体积。
+# 日常迭代可临时覆盖：CARGO_PROFILE_RELEASE_LTO=false 等环境变量，或用 scripts/build-remote.sh。
 [profile.release]
-codegen-units = 1 # 鍏佽 LLVM 鎵ц鏇村ソ鐨勪紭鍖栥€?lto = true        # 鍚敤閾炬帴鏃朵紭鍖栥€?opt-level = 3     # 浼樺厛鑰冭檻灏忕殑浜岃繘鍒舵枃浠跺ぇ灏忋€傚鏋滄偍鏇村枩娆㈤€熷害锛岃浣跨敤 `3`銆?panic = "abort"   # 閫氳繃绂佺敤 panic 澶勭悊绋嬪簭鏉ユ彁楂樻€ц兘銆?strip = true      # 纭繚绉婚櫎璋冭瘯绗﹀彿銆?
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

@@ -26,6 +26,8 @@ dist-ssr
 
 # Tauri 构建产物
 src-tauri/target/
+# 远程交叉编译产物（scripts/build-remote.sh）
+src-tauri/target-remote/
 
 # 环境变量
 .env
