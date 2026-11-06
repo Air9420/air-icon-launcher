@@ -56,15 +56,12 @@ async fn check_update(
     logger.log(
         "INFO",
         format!(
-            "当前版本 {} / 首选源 {} / 允许回退 {} / 断点续传 {}",
-            current_version, prefs.preferred_source, prefs.allow_fallback, prefs.resume_download
+            "当前版本 {} / 更新源 {}",
+            current_version, prefs.preferred_source
         ),
     );
 
-    let mut manager = crate::updater::UpdateSourceManager::from_prefs(
-        &prefs,
-        crate::updater::UpdateSourceConfig::default(),
-    );
+    let mut manager = crate::updater::UpdateSourceManager::from_prefs(&prefs);
 
     let resolved = match manager.check_update().await {
         Ok(r) => r,
@@ -153,7 +150,6 @@ async fn apply_and_restart(
     use tauri_plugin_updater::UpdaterExt;
 
     let logger = crate::updater_logger(&app);
-    let prefs = crate::updater::UpdatePrefs::load();
 
     logger.log("INFO", "开始下载更新");
     let _ = window.emit("update-log", "开始下载更新...");
@@ -195,13 +191,8 @@ async fn apply_and_restart(
         let _ = window.emit("update-log", "使用已缓存的安装包");
     }
 
-    // 续传偏移
-    let resume = if prefs.resume_download {
-        crate::updater::resume_offset(&version, &latest_json_url)
-    } else {
-        crate::updater::clear_partial(&version);
-        0
-    };
+    // 续传偏移：断点续传始终开启，有残留就接着下，没有就从头开始
+    let resume = crate::updater::resume_offset(&version, &latest_json_url);
     if resume > 0 {
         logger.log(
             "INFO",
@@ -299,28 +290,11 @@ async fn set_update_prefs(
     let mut current = crate::updater::UpdatePrefs::load();
 
     if let Some(s) = prefs.get("preferred_source").and_then(|v| v.as_str()) {
-        let allowed = ["github", "gitee", "custom"];
+        let allowed = ["github", "gitee"];
         if !allowed.contains(&s) {
             return Err(format!("不支持的更新源: {}", s));
         }
         current.preferred_source = s.to_string();
-    }
-    if let Some(u) = prefs.get("custom_url").and_then(|v| v.as_str()) {
-        current.custom_url = u.trim().to_string();
-    }
-    if let Some(b) = prefs.get("allow_fallback").and_then(|v| v.as_bool()) {
-        current.allow_fallback = b;
-    }
-    if let Some(b) = prefs.get("resume_download").and_then(|v| v.as_bool()) {
-        current.resume_download = b;
-    }
-
-    if current.preferred_source == "custom" && current.custom_url.is_empty() {
-        return Err("选择自定义源时必须填写地址".to_string());
-    }
-    if !current.custom_url.is_empty() {
-        tauri::Url::parse(&current.custom_url)
-            .map_err(|e| format!("自定义地址无效: {}", e))?;
     }
 
     current.save()?;
@@ -408,6 +382,8 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             let handle = app.handle();
+            // 启动自检：确认更新日志器可用
+            updater_logger(&handle).log("INFO", format!("应用启动 v{}", env!("CARGO_PKG_VERSION")));
             let _tray = tray::create_tray(&handle);
             app.manage(TrayState { tray: _tray });
             drag::setup_drag_drop(&handle);

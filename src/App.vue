@@ -9,8 +9,8 @@ import GlobalToast from "./components/common/GlobalToast.vue";
 import FocusIndicator from "./components/common/FocusIndicator.vue";
 import CountdownRing from "./components/common/CountdownRing.vue";
 const OnboardingGuide = defineAsyncComponent(() => import("./components/OnboardingGuide.vue"));
-// PERF-A: UpdateDialog is not needed for first paint; marked loads inside it on open.
-const UpdateDialog = defineAsyncComponent(() => import("./components/UpdateDialog.vue"));
+// PERF-A: 更新提示只是个小弹窗，按需加载。
+const UpdatePrompt = defineAsyncComponent(() => import("./components/UpdatePrompt.vue"));
 
 import { Store, useCategoryStore, useSettingsStore } from "./stores";
 import { useUIStore } from "./stores/uiStore";
@@ -175,7 +175,7 @@ const hasCurrentCategoryCustomIcon = computed(() => {
     />
     <OnboardingGuide />
     <FocusIndicator v-if="isDev" />
-    <UpdateDialog />
+    <UpdatePrompt />
 </template>
 
 <style lang="scss" scoped>

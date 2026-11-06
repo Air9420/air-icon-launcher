@@ -15,6 +15,7 @@ const SettingsData = () => import('../views/settings/Data.vue')
 const SettingsAbout = () => import('../views/settings/About.vue')
 const SettingsStats = () => import('../views/settings/Stats.vue')
 const SettingsDisplay = () => import('../views/settings/Display.vue')
+const UpdatePage = () => import('../views/Update.vue')
 const ClipboardHistory = () => import('../components/ClipboardHistory.vue')
 const Plugins = () => import('../views/plugins.vue')
 const PluginDetail = () => import('../views/plugins/PluginDetail.vue')
@@ -52,6 +53,7 @@ const routes = [
         children: settingsChildren
     },
     { path: '/clipboard', name: 'clipboard', component: ClipboardHistory },
+    { path: '/update', name: 'update', component: UpdatePage },
     { path: '/plugins', name: 'plugins', component: Plugins },
     {
         path: '/plugins/:pluginId',

@@ -1,89 +1,62 @@
 <template>
     <div class="about-settings">
+        <!-- 应用信息 -->
         <div class="app-info">
             <div class="app-icon">
                 <img :src="appIcon" alt="Air Icon Launcher" />
             </div>
-            <div class="app-name">Air Launch</div>
-            <div class="app-version">v{{ version }}</div>
-            <button 
-                class="check-update-btn" 
-                @click="onCheckUpdate"
-                :disabled="isChecking"
-            >
-                {{ isChecking ? '检查中...' : '检查更新' }}
-            </button>
-            <button 
-                v-if="isDev"
-                class="test-update-btn" 
-                @click="onTestUpdate"
-            >
-                测试更新弹窗
-            </button>
-        </div>
-
-        <div class="section">
-            <div class="section-title">应用描述</div>
-            <div class="description">
-                一款简洁高效的桌面应用程序启动器，帮助您收纳、分类和管理桌面应用程序图标。
+            <div class="app-meta">
+                <div class="app-name">
+                    Air Launch
+                    <span class="app-version">v{{ version }}</span>
+                </div>
+                <div class="app-desc">简洁高效的桌面启动器，收纳、分类、管理你的应用图标。</div>
+                <div class="app-actions">
+                    <button
+                        class="check-update-btn"
+                        type="button"
+                        :disabled="isChecking"
+                        @click="onCheckUpdate"
+                    >
+                        {{ isChecking ? '检查中...' : '检查更新' }}
+                    </button>
+                    <button
+                        v-if="isDev"
+                        class="test-update-btn"
+                        type="button"
+                        @click="onTestUpdate"
+                    >
+                        测试更新弹窗
+                    </button>
+                </div>
             </div>
         </div>
 
-        <div class="section">
-            <div class="section-title">作者</div>
-            <div class="author-info">
-                <span class="author-name">Air</span>
-            </div>
-        </div>
-
+        <!-- 技术栈 -->
         <div class="section">
             <div class="section-title">技术栈</div>
-            <div class="tech-stack">
-                <div class="tech-item">
-                    <span class="tech-name">Tauri</span>
-                    <span class="tech-desc">跨平台桌面应用框架</span>
-                </div>
-                <div class="tech-item">
-                    <span class="tech-name">Rust</span>
-                    <span class="tech-desc">高性能系统编程语言</span>
-                </div>
-                <div class="tech-item">
-                    <span class="tech-name">Vue 3</span>
-                    <span class="tech-desc">渐进式 JavaScript 框架</span>
-                </div>
-                <div class="tech-item">
-                    <span class="tech-name">TypeScript</span>
-                    <span class="tech-desc">类型安全的 JavaScript</span>
-                </div>
-                <div class="tech-item">
-                    <span class="tech-name">Pinia</span>
-                    <span class="tech-desc">状态管理</span>
+            <div class="tech-grid">
+                <div class="tech-item" v-for="t in techStack" :key="t.name">
+                    <span class="tech-name">{{ t.name }}</span>
+                    <span class="tech-desc">{{ t.desc }}</span>
                 </div>
             </div>
         </div>
 
+        <!-- 链接 + 版权 -->
         <div class="section">
-            <div class="section-title">链接</div>
-            <div class="links">
-                <button
-                    class="link-btn"
-                    type="button"
-                    @click="onOpenGitHub"
-                    @mousedown.stop
-                >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-                    </svg>
-                    <span>GitHub</span>
-                </button>
-            </div>
-            <div class="hint">开源不易，如果项目对你有帮助，欢迎点个 Star</div>
-        </div>
-
-        <div class="section">
-            <div class="section-title">版权信息</div>
-            <div class="copyright">
-                © {{ currentYear }} Air. All rights reserved.
+            <div class="section-title">项目主页</div>
+            <button class="link-row" type="button" @click="onOpenGitHub" @mousedown.stop>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                </svg>
+                <span class="link-text">GitHub · Air9420/air-icon-launcher</span>
+                <span class="link-arrow">↗</span>
+            </button>
+            <div class="footer-line">
+                <span>© {{ currentYear }} Air</span>
+                <span class="dot">·</span>
+                <span>开源不易，欢迎点个 Star</span>
             </div>
         </div>
     </div>
@@ -91,17 +64,28 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
+import { useRouter } from "vue-router";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { showToast } from "../../composables/useGlobalToast";
-import { checkForUpdate } from "../../utils/updater";
+import { applyCheckResult, checkForUpdate, parseCheckError } from "../../utils/updater";
 import { useUpdateStore } from "../../stores/update";
 
+const router = useRouter();
 const version = ref("...");
 const currentYear = computed(() => new Date().getFullYear());
 const appIcon = ref("/icon.png");
 const isChecking = ref(false);
 const updateStore = useUpdateStore();
+
+const techStack = [
+    { name: "Tauri 2", desc: "桌面应用框架" },
+    { name: "Rust", desc: "后端与系统能力" },
+    { name: "Vue 3", desc: "界面层" },
+    { name: "TypeScript", desc: "类型安全" },
+    { name: "Pinia", desc: "状态管理" },
+    { name: "SQLite", desc: "本地数据存储" },
+];
 
 // 开发模式判断
 const isDev = import.meta.env.DEV;
@@ -128,40 +112,35 @@ async function onCheckUpdate() {
     isChecking.value = true;
     try {
         const result = await checkForUpdate();
-        if (result.available) {
-            updateStore.updateInfo = {
-                version: result.version!,
-                notes: result.notes || '',
-                pub_date: result.pub_date || new Date().toISOString(),
-                source: result.source,
-                latestJsonUrl: result.latest_json_url || '',
-                platforms: {
-                    'windows-x86_64': {
-                        signature: '',
-                        url: result.url || ''
-                    }
-                }
-            };
-            updateStore.showUpdateDialog = true;
+        if (applyCheckResult(result)) {
+            // 手动检查：直接进更新页，不再多问一次
+            updateStore.dismissUpdatePrompt();
+            router.push('/update');
         } else {
             showToast("当前已是最新版本", { type: "success" });
         }
     } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        console.error("检查更新失败:", errorMsg);
-        showToast(`检查更新失败: ${errorMsg}`, { type: "error" });
+        const { message } = parseCheckError(error);
+        console.error("检查更新失败:", message);
+        showToast(`检查更新失败: ${message}`, { type: "error" });
     } finally {
         isChecking.value = false;
     }
 }
 
 function onTestUpdate() {
+    // 演示用：伪造一个比当前高的版本号，走真实的「发现更新」提示流程
+    updateStore.downloadComplete = false
+    updateStore.updateProgress = null
+    updateStore.updatePhase = 'idle'
+    updateStore.error = null
     updateStore.updateInfo = {
-        version: version.value,
-        notes: `## v${version.value}\n\n### 新增\n- 测试更新弹窗功能\n- 支持 Markdown 渲染\n\n### 修复\n- 修复了更新检查的并发问题\n- 优化错误日志输出\n\n**感谢使用 Air Launch！**`,
+        version: nextPatchVersion(version.value),
+        notes: `## 测试更新\n\n### 新增\n- 更新页支持 Markdown 渲染\n- 更新源在页面顶部直接切换\n\n### 修复\n- 修复了更新检查的并发问题\n- 优化错误日志输出\n\n**感谢使用 Air Launch！**`,
         pub_date: new Date().toISOString(),
         source: 'github',
         latestJsonUrl: '',
+        resumableBytes: 12 * 1024 * 1024,
         platforms: {
             'windows-x86_64': {
                 signature: '',
@@ -169,7 +148,14 @@ function onTestUpdate() {
             }
         }
     };
-    updateStore.showUpdateDialog = true;
+    updateStore.showUpdatePrompt();
+}
+
+/** 取当前版本的下一个补丁号，仅用于测试提示 UI */
+function nextPatchVersion(current: string): string {
+    const m = /^(\d+)\.(\d+)\.(\d+)/.exec(current.trim());
+    if (!m) return current;
+    return `${m[1]}.${m[2]}.${Number(m[3]) + 1}`;
 }
 </script>
 
@@ -180,84 +166,108 @@ function onTestUpdate() {
     @include settings.page-stack();
 }
 
+/* ---- 应用信息 ---- */
+
 .app-info {
     display: flex;
-    flex-direction: column;
     align-items: center;
-    padding: 24px 0;
+    gap: 14px;
+    padding: 16px;
     background: var(--card-bg);
     border: 1px solid var(--border-color);
     border-radius: 16px;
 }
 
 .app-icon {
-    width: 80px;
-    height: 80px;
-    border-radius: 20px;
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
     overflow: hidden;
     background: var(--primary-bg);
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: 16px;
+    flex-shrink: 0;
+
+    img {
+        width: 42px;
+        height: 42px;
+        object-fit: contain;
+    }
 }
 
-.app-icon img {
-    width: 60px;
-    height: 60px;
-    object-fit: contain;
+.app-meta {
+    min-width: 0;
+    flex: 1;
 }
 
 .app-name {
-    font-size: 18px;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 16px;
     font-weight: 700;
     color: var(--text-color);
-    margin-bottom: 4px;
 }
 
 .app-version {
-    font-size: 13px;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-tertiary);
+}
+
+.app-desc {
+    margin-top: 4px;
+    font-size: 12px;
+    line-height: 1.5;
     color: var(--text-secondary);
 }
 
-.check-update-btn {
-    margin-top: 12px;
-    padding: 8px 24px;
-    border-radius: 8px;
-    border: 1px solid var(--border-color-strong);
-    background: var(--input-bg);
-    color: var(--text-color);
-    font-size: 13px;
+.app-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+}
+
+.check-update-btn,
+.test-update-btn {
+    padding: 5px 14px;
+    border-radius: 7px;
+    font-size: 12px;
     cursor: pointer;
     transition: all 0.15s ease;
-    
-    &:hover:not(:disabled) {
-        background: var(--hover-bg);
-    }
-    
+    -webkit-app-region: no-drag;
+
     &:disabled {
         opacity: 0.6;
         cursor: not-allowed;
     }
 }
 
-.test-update-btn {
-    margin-top: 8px;
-    padding: 6px 16px;
-    border-radius: 6px;
-    border: 1px dashed var(--primary-color);
-    background: transparent;
+.check-update-btn {
+    border: 1px solid var(--primary-color);
+    background: var(--primary-bg);
     color: var(--primary-color);
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    opacity: 0.7;
-    
-    &:hover {
-        opacity: 1;
-        background: var(--primary-bg);
+
+    &:hover:not(:disabled) {
+        background: var(--primary-color);
+        color: #fff;
     }
 }
+
+.test-update-btn {
+    border: 1px dashed var(--border-color-strong);
+    background: transparent;
+    color: var(--text-tertiary);
+
+    &:hover {
+        border-color: var(--primary-color);
+        color: var(--primary-color);
+    }
+}
+
+/* ---- 技术栈 ---- */
 
 .section {
     @include settings.section-card();
@@ -267,107 +277,83 @@ function onTestUpdate() {
     @include settings.section-title();
 }
 
-.description {
-    font-size: 13px;
-    color: var(--text-color);
-    line-height: 1.6;
-}
-
-.author-info {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.author-name {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-color);
-}
-
-.contact-info {
-    margin-top: 10px;
-}
-
-.contact-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.contact-label {
-    font-size: 13px;
-    color: var(--text-secondary);
-}
-
-.contact-value {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-color);
-}
-
-.tech-stack {
-    display: flex;
-    flex-direction: column;
+.tech-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
 }
 
 .tech-item {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 12px;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 10px;
+    border-radius: 9px;
     background: var(--input-bg);
-    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    min-width: 0;
 }
 
 .tech-name {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--text-color);
 }
 
 .tech-desc {
-    font-size: 12px;
-    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--text-tertiary);
 }
 
-.links {
-    display: flex;
-    gap: 10px;
-}
+/* ---- 链接 ---- */
 
-.link-btn {
-    flex: 1;
+.link-row {
+    width: 100%;
     display: flex;
     align-items: center;
-    justify-content: center;
     gap: 8px;
-    height: 40px;
+    padding: 9px 12px;
     border-radius: 10px;
-    border: 1px solid var(--border-color-strong);
+    border: 1px solid var(--border-color);
     background: var(--input-bg);
-    cursor: pointer;
-    -webkit-app-region: no-drag;
     color: var(--text-color);
-    font-size: 14px;
+    font-size: 13px;
+    cursor: pointer;
     transition: all 0.15s ease;
+    -webkit-app-region: no-drag;
+
+    &:hover {
+        background: var(--hover-bg);
+        border-color: var(--border-color-strong);
+    }
+
+    svg {
+        opacity: 0.8;
+        flex-shrink: 0;
+    }
 }
 
-.link-btn:hover {
-    background: var(--hover-bg);
+.link-text {
+    font-weight: 500;
 }
 
-.link-btn svg {
-    opacity: 0.8;
-}
-
-.hint {
-    @include settings.hint();
-}
-
-.copyright {
+.link-arrow {
+    margin-left: auto;
     font-size: 12px;
     color: var(--text-tertiary);
+}
+
+.footer-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    font-size: 11px;
+    color: var(--text-tertiary);
+}
+
+.dot {
+    opacity: 0.6;
 }
 </style>

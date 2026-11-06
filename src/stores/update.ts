@@ -52,7 +52,8 @@ export const useUpdateStore = defineStore('update', () => {
   const updateInfo = ref<UpdateInfo | null>(null)
   const updateProgress = ref<UpdateProgress | null>(null)
   const error = ref<string | null>(null)
-  const showUpdateDialog = ref(false)
+  /** 检查到更新时的小提示（只问「是否进入更新页」） */
+  const updatePromptVisible = ref(false)
   const downloadComplete = ref(false)
   const updateFilePath = ref<string | null>(null)
   const updatePhase = ref<UpdatePhase>('idle')
@@ -61,12 +62,9 @@ export const useUpdateStore = defineStore('update', () => {
   const logs = ref<string[]>([])
   const logsOpen = ref(false)
 
-  // 更新源偏好
+  // 更新源偏好：只有首选源，失败由用户自行切换
   const prefs = ref<UpdatePrefs>({
-    preferred_source: 'github',
-    custom_url: '',
-    allow_fallback: true,
-    resume_download: true
+    preferred_source: 'github'
   })
   const prefsLoaded = ref(false)
   const prefsSaving = ref(false)
@@ -224,10 +222,20 @@ export const useUpdateStore = defineStore('update', () => {
   }
 
   function skipUpdate() {
-    showUpdateDialog.value = false
+    updatePromptVisible.value = false
     downloadComplete.value = false
     updateFilePath.value = null
     updatePhase.value = 'idle'
+  }
+
+  /** 检查到更新时弹小提示：点是进入更新页，点否直接关掉 */
+  function showUpdatePrompt() {
+    if (!updateInfo.value) return
+    updatePromptVisible.value = true
+  }
+
+  function dismissUpdatePrompt() {
+    updatePromptVisible.value = false
   }
 
   function toggleLogs() {
@@ -241,7 +249,7 @@ export const useUpdateStore = defineStore('update', () => {
     updateInfo.value = null
     updateProgress.value = null
     error.value = null
-    showUpdateDialog.value = false
+    updatePromptVisible.value = false
     downloadComplete.value = false
     updateFilePath.value = null
     updatePhase.value = 'idle'
@@ -253,7 +261,7 @@ export const useUpdateStore = defineStore('update', () => {
     updateInfo,
     updateProgress,
     error,
-    showUpdateDialog,
+    updatePromptVisible,
     downloadComplete,
     updateFilePath,
     updatePhase,
@@ -277,6 +285,8 @@ export const useUpdateStore = defineStore('update', () => {
     startUpdate,
     confirmRestart,
     skipUpdate,
+    showUpdatePrompt,
+    dismissUpdatePrompt,
     toggleLogs,
     reset
   }

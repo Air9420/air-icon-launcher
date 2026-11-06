@@ -1,11 +1,11 @@
 {
-  "version": "0.9.2",
-  "notes": "## v0.9.2\n\n本次修复插件设置被意外重置的问题。\n\n### 修复\n\n- **修复修改任一设置项导致其他设置被重置**\n  - 宿主重复加载同一插件时，加载顺序有误：新实例初始化完成后，\n    旧实例的清理逻辑又把新实例刚载入的配置清空了，导致后续读取\n    退回默认值，改一项就把整套默认配置写回磁盘\n  - 改为先卸载旧实例、再加载新实例\n  - 插件侧增加实例计数，重复加载时保留内存中的配置，\n    仅在最后一个实例退出时才真正清理\n\n- **加固配置读写**（多个系统共用同一份配置文件的场景）\n  - 内存状态缺失时回退到磁盘配置，不再直接使用默认值\n  - 保存设置以磁盘最新内容为基准合并，避免覆盖其他系统刚做的修改\n  - 配置文件改为先写临时文件再替换，避免读到写了一半的内容\n  - 配置解析失败时先备份原文件，不会被下一次保存彻底覆盖\n\n### 说明\n\n- 该问题影响所有 Rust 插件，不只是迈从鼠标插件，建议更新\n- 已有配置不会丢失，升级后设置项保持原样",
-  "pub_date": "2026-11-06T20:33:59.368Z",
+  "version": "0.10.0",
+  "notes": "## v0.10.0\n\n### 更新模块重做\n\n- 更新界面由弹窗改为独立页面，可完整滚动查看版本、更新源、更新内容与日志\n- 检查到新版本时只弹一个小提示询问是否前往更新页，点「是」进入，点「否」直接关闭\n- 更新源设置移到页面顶部，横排切换 GitHub / Gitee，并显示本次检查的延迟或失败状态\n\n### 行为调整\n\n- 去掉「首选源失败时自动尝试另一个源」：源由你自行选择，失败会直接提示原因，换个源重试即可\n- 断点续传改为始终生效，不再需要手动开启；有未完成的下载会直接从断点继续\n\n### 界面优化\n\n- 设置-关于页精简：应用信息改为横排卡片，技术栈补充用途说明，项目主页合并版权信息",
+  "pub_date": "2026-11-07T00:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbUt3NUd3RVF4cUwwZS9wYVV6MXhCM1g3ZEcrY0tlL09veVVBVUo3ZUhWVm10WnZKOTZEeTY2S2tXTGl4UEpSckpJSUUzdDg1MHZHck9HdCtMQmFLNFNoYmZqT2FqcXd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzOTk3MjI3CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC45LjJfeDY0LXNldHVwLm5zaXMuemlwCm4xWFJaT0gyUk82MzdyZEQvb1R2QmdTS0tHNGFpVW5SNHJiQ1Y0K2JMcjg3bGordVdDQmNaZ2xrcXo4eDB0US9vMS9TUmpoaTdQT0FuTFJzMDZYaUR3PT0K",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.9.2/air-icon-launcher_0.9.2_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbUt3NUd3RVF4cU9JSUVzL0RGaHJsRFlNT1BJU1J6SlVMeFR4b08zZHZyRHd5N01Dek5YV3h0TnB2ZXkzM2szemhLTk5vWUUyT1VjVFduN3RWUnVqWDBCVG5wQ1h4a2dZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MDA0ODQ3CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC4xMC4wX3g2NC1zZXR1cC5uc2lzLnppcApQOFVQMmg5MXhlRjNQUHlNbUJUY2lhYXZpYWJEanJ6elZEVjd0QzBXMkM3Y1BzZVpUL1NqU3RNaFU5aktFVkJuTE44bCtiYjluZ09uSU9zaFQvZ0VDdz09Cg==",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.10.0/air-icon-launcher_0.10.0_x64-setup.nsis.zip"
     }
   }
 }

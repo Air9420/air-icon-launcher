@@ -10,43 +10,12 @@ pub const GITEE_LATEST_RELEASE_API_URL: &str =
 /// 可选的更新源标识。
 pub const SOURCE_GITHUB: &str = "github";
 pub const SOURCE_GITEE: &str = "gitee";
-pub const SOURCE_CUSTOM: &str = "custom";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateSource {
     pub url: String,
     pub timeout: Duration,
     pub retries: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateSourceConfig {
-    pub primary: UpdateSource,
-    pub fallback: UpdateSource,
-}
-
-impl UpdateSourceConfig {
-    pub fn new(version: &str) -> Self {
-        let _ = version;
-        Self {
-            primary: UpdateSource {
-                url: GITHUB_LATEST_JSON_URL.to_string(),
-                timeout: Duration::from_secs(10),
-                retries: 3,
-            },
-            fallback: UpdateSource {
-                url: GITEE_LATEST_RELEASE_API_URL.to_string(),
-                timeout: Duration::from_secs(15),
-                retries: 2,
-            },
-        }
-    }
-}
-
-impl Default for UpdateSourceConfig {
-    fn default() -> Self {
-        Self::new(env!("CARGO_PKG_VERSION"))
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,36 +36,24 @@ pub struct ResolvedUpdate {
 // ---------------------------------------------------------------- 用户偏好
 
 /// 用户可配置的更新偏好，持久化到 `%APPDATA%/com.air.icon-launcher/update-prefs.json`。
+///
+/// 只保留「首选源」：源由用户显式选择，失败就直接报错让用户自己换，
+/// 不再做自动回退。断点续传是下载流程的内建行为，没有开关。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdatePrefs {
-    /// 首选更新源：github | gitee | custom
+    /// 首选更新源：github | gitee
     #[serde(default = "default_source")]
     pub preferred_source: String,
-    /// 自定义 latest.json 地址（preferred_source == custom 时生效）
-    #[serde(default)]
-    pub custom_url: String,
-    /// 是否允许回退到其他源
-    #[serde(default = "default_true")]
-    pub allow_fallback: bool,
-    /// 是否启用断点续传
-    #[serde(default = "default_true")]
-    pub resume_download: bool,
 }
 
 fn default_source() -> String {
     SOURCE_GITHUB.to_string()
-}
-fn default_true() -> bool {
-    true
 }
 
 impl Default for UpdatePrefs {
     fn default() -> Self {
         Self {
             preferred_source: default_source(),
-            custom_url: String::new(),
-            allow_fallback: true,
-            resume_download: true,
         }
     }
 }
@@ -132,50 +89,23 @@ impl UpdatePrefs {
         Ok(())
     }
 
-    /// 按偏好构造有序的候选源列表（第一项为首选）。
+    /// 按偏好构造候选源列表。
+    ///
+    /// 只有一个候选：用户选哪个就用哪个。失败时把错误原样返回给界面，
+    /// 由用户自己切换更新源，不做静默回退。
     pub fn build_candidates(&self) -> Vec<UpdateSource> {
-        let mut list: Vec<UpdateSource> = Vec::new();
-
-        fn push(list: &mut Vec<UpdateSource>, url: String, timeout: u64, retries: u32) {
-            if !url.trim().is_empty() && !list.iter().any(|s| s.url == url) {
-                list.push(UpdateSource {
-                    url,
-                    timeout: Duration::from_secs(timeout),
-                    retries,
-                });
-            }
-        }
-
-        // 首选源排在最前
         match self.preferred_source.as_str() {
-            SOURCE_GITEE => {
-                push(&mut list, GITEE_LATEST_RELEASE_API_URL.to_string(), 15, 3);
-                if self.allow_fallback {
-                    push(&mut list, GITHUB_LATEST_JSON_URL.to_string(), 10, 2);
-                }
-            }
-            SOURCE_CUSTOM => {
-                if !self.custom_url.trim().is_empty() {
-                    push(&mut list, self.custom_url.trim().to_string(), 15, 3);
-                }
-                if self.allow_fallback {
-                    push(&mut list, GITHUB_LATEST_JSON_URL.to_string(), 10, 2);
-                    push(&mut list, GITEE_LATEST_RELEASE_API_URL.to_string(), 15, 2);
-                }
-            }
-            _ => {
-                push(&mut list, GITHUB_LATEST_JSON_URL.to_string(), 10, 3);
-                if self.allow_fallback {
-                    push(&mut list, GITEE_LATEST_RELEASE_API_URL.to_string(), 15, 2);
-                }
-            }
+            SOURCE_GITEE => vec![UpdateSource {
+                url: GITEE_LATEST_RELEASE_API_URL.to_string(),
+                timeout: Duration::from_secs(15),
+                retries: 3,
+            }],
+            _ => vec![UpdateSource {
+                url: GITHUB_LATEST_JSON_URL.to_string(),
+                timeout: Duration::from_secs(10),
+                retries: 3,
+            }],
         }
-
-        // 兜底：列表为空时至少给一个可用源
-        if list.is_empty() {
-            push(&mut list, GITHUB_LATEST_JSON_URL.to_string(), 10, 2);
-        }
-        list
     }
 }
 
@@ -206,21 +136,9 @@ pub struct SourceProbe {
 }
 
 impl UpdateSourceManager {
-    #[allow(dead_code)]
-    pub fn new(config: UpdateSourceConfig) -> Self {
-        Self::from_prefs(&UpdatePrefs::default(), config)
-    }
-
-    pub fn from_prefs(prefs: &UpdatePrefs, config: UpdateSourceConfig) -> Self {
-        let mut candidates = prefs.build_candidates();
-        // 保证默认配置里的源也在候选列表里
-        for s in [&config.primary, &config.fallback] {
-            if !candidates.iter().any(|c| c.url == s.url) {
-                candidates.push(s.clone());
-            }
-        }
+    pub fn from_prefs(prefs: &UpdatePrefs) -> Self {
         Self {
-            candidates,
+            candidates: prefs.build_candidates(),
             primary_status: UpdateSourceStatus {
                 source_type: "github".to_string(),
                 last_check: None,
@@ -237,10 +155,9 @@ impl UpdateSourceManager {
         }
     }
 
-    /// 按顺序尝试候选源，第一个成功即返回。
+    /// 只用用户选定的那个源检查更新。
     ///
-    /// 与旧实现不同：不再并发竞速，而是按用户偏好的顺序依次尝试。
-    /// 这样「首选 Gitee」才真正生效，且失败原因可逐条记录到日志。
+    /// 失败就把错误原样抛给界面（附带探测结果），由用户自己换源重试。
     pub async fn check_update(&mut self) -> Result<ResolvedUpdate, String> {
         self.probed.clear();
         let mut errors: Vec<String> = Vec::new();
@@ -283,7 +200,7 @@ impl UpdateSourceManager {
         Err(if errors.is_empty() {
             "没有可用的更新源".to_string()
         } else {
-            format!("所有更新源均失败 -> {}", errors.join(" | "))
+            format!("{} 源不可用 -> {}", source_label(&self.candidates), errors.join(" | "))
         })
     }
 
@@ -387,11 +304,21 @@ impl UpdateSourceManager {
 fn source_kind(url: &str) -> String {
     if url == GITEE_LATEST_RELEASE_API_URL || url.contains("gitee.com") {
         "gitee".to_string()
-    } else if url.contains("github.com") || url.contains("githubusercontent.com") {
-        "github".to_string()
     } else {
-        SOURCE_CUSTOM.to_string()
+        "github".to_string()
     }
+}
+
+/// 给错误提示用的源名称。
+fn source_label(candidates: &[UpdateSource]) -> String {
+    candidates
+        .first()
+        .map(|s| match source_kind(&s.url).as_str() {
+            "gitee" => "Gitee",
+            _ => "GitHub",
+        })
+        .unwrap_or("更新")
+        .to_string()
 }
 
 pub fn extract_gitee_latest_json_url(result: &Value) -> Option<String> {
@@ -643,12 +570,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn update_source_config_uses_gitee_latest_api_for_fallback() {
-        let config = UpdateSourceConfig::new("0.5.8");
-        assert_eq!(config.fallback.url, GITEE_LATEST_RELEASE_API_URL);
-    }
-
-    #[test]
     fn extract_gitee_latest_json_url_builds_release_asset_path_from_tag() {
         let release = serde_json::json!({ "tag_name": "v0.5.9" });
         assert_eq!(
@@ -693,50 +614,41 @@ mod tests {
     fn prefs_default_prefers_github() {
         let p = UpdatePrefs::default();
         let c = p.build_candidates();
+        assert_eq!(c.len(), 1, "只应有一个候选源");
         assert_eq!(c[0].url, GITHUB_LATEST_JSON_URL);
-        assert!(c.iter().any(|s| s.url == GITEE_LATEST_RELEASE_API_URL));
     }
 
     #[test]
     fn prefs_gitee_first_when_selected() {
         let p = UpdatePrefs {
             preferred_source: SOURCE_GITEE.to_string(),
-            ..Default::default()
         };
         let c = p.build_candidates();
+        assert_eq!(c.len(), 1, "只应有一个候选源");
         assert_eq!(c[0].url, GITEE_LATEST_RELEASE_API_URL);
     }
 
     #[test]
-    fn prefs_custom_first_and_dedup() {
-        let p = UpdatePrefs {
-            preferred_source: SOURCE_CUSTOM.to_string(),
-            custom_url: "https://example.com/latest.json".to_string(),
-            allow_fallback: true,
-            resume_download: true,
-        };
-        let c = p.build_candidates();
-        assert_eq!(c[0].url, "https://example.com/latest.json");
-        let uniq: std::collections::HashSet<_> = c.iter().map(|s| s.url.clone()).collect();
-        assert_eq!(uniq.len(), c.len(), "候选源不应重复");
-    }
-
-    #[test]
-    fn prefs_no_fallback_yields_single_source() {
-        let p = UpdatePrefs {
-            preferred_source: SOURCE_GITHUB.to_string(),
-            allow_fallback: false,
-            ..Default::default()
-        };
-        let c = p.build_candidates();
-        assert_eq!(c.len(), 1);
-        assert_eq!(c[0].url, GITHUB_LATEST_JSON_URL);
+    fn prefs_never_falls_back_to_other_source() {
+        // 源由用户显式选择，失败后由用户自己换，不做自动回退
+        for (src, expected) in [
+            (SOURCE_GITHUB, GITHUB_LATEST_JSON_URL),
+            (SOURCE_GITEE, GITEE_LATEST_RELEASE_API_URL),
+        ] {
+            let p = UpdatePrefs {
+                preferred_source: src.to_string(),
+            };
+            let c = p.build_candidates();
+            assert_eq!(c.len(), 1, "不应出现第二个候选源（{}）", src);
+            assert_eq!(c[0].url, expected);
+        }
     }
 
     #[test]
     fn source_kind_detects_hosts() {
         assert_eq!(source_kind(GITHUB_LATEST_JSON_URL), "github");
         assert_eq!(source_kind(GITEE_LATEST_RELEASE_API_URL), "gitee");
-        assert_eq!(source_kind("https://example.com/x.json"), SOURCE_CUSTOM);
+        // 未知域名按 github 处理（只有两个源了）
+        assert_eq!(source_kind("https://example.com/x.json"), "github");
     }
 }

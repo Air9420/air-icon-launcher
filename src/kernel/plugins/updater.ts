@@ -2,6 +2,7 @@ import type { Context, Plugin } from "cordis";
 import { useUpdateStore } from "../../stores/update";
 import type { UpdateProgress } from "../../stores/update";
 import type { Disposer } from "../types";
+import type { SourceProbe } from "../../utils/updater";
 
 type UpdateCheckResult = {
   available: boolean;
@@ -12,6 +13,9 @@ type UpdateCheckResult = {
   signature?: string;
   source?: string;
   latest_json_url?: string;
+  resumable_bytes?: number;
+  current_version?: string;
+  probes?: SourceProbe[];
 };
 
 type UpdateDownloadCompletePayload = {
@@ -28,8 +32,10 @@ export const updaterPlugin: Plugin.Object<void> = {
   apply(ctx: Context) {
     const disposers: Disposer[] = [];
 
+    // 日志同时进入 store，供更新对话框的日志面板展示
     const offLog = ctx.ipc.on<string>("update-log", (event) => {
-      console.log("[更新]", event.payload);
+      const updateStore = useUpdateStore();
+      updateStore.appendLog(event.payload);
     });
     disposers.push(offLog);
 
@@ -42,8 +48,8 @@ export const updaterPlugin: Plugin.Object<void> = {
     const offComplete = ctx.ipc.on<UpdateDownloadCompletePayload>(
       "update-download-complete",
       (event) => {
-        console.log("[更新] 安装完成:", event.payload);
         const updateStore = useUpdateStore();
+        updateStore.appendLog(`安装完成: v${event.payload.version}`);
         updateStore.downloadComplete = true;
         updateStore.updateFilePath = null;
       },
@@ -53,8 +59,16 @@ export const updaterPlugin: Plugin.Object<void> = {
     const doCheck = async () => {
       const updateStore = useUpdateStore();
       try {
+        console.log("[updater] 开始自动检查更新");
         const result = await ctx.ipc.invoke<UpdateCheckResult>("check_update");
+        console.log("[updater] check_update 返回:", result);
         if (!result.ok) {
+          const detail =
+            typeof result.error === "object" && result.error
+              ? (result.error as { message?: string }).message ||
+                JSON.stringify(result.error)
+              : String(result.error);
+          updateStore.appendLog(`检查更新失败: ${detail}`);
           console.error("自动检查更新失败:", result.error);
           return;
         }
@@ -72,10 +86,16 @@ export const updaterPlugin: Plugin.Object<void> = {
             },
             source: check.source,
             latestJsonUrl: check.latest_json_url || "",
+            resumableBytes: check.resumable_bytes || 0,
+            probes: check.probes || [],
           };
-          updateStore.showUpdateDialog = true;
+          // 只弹一个小提示问「是否进入更新页」，不再直接开完整弹窗
+          updateStore.showUpdatePrompt();
         }
       } catch (error) {
+        updateStore.appendLog(
+          `检查更新异常: ${error instanceof Error ? error.message : String(error)}`,
+        );
         console.error("自动检查更新失败:", error);
       }
     };
