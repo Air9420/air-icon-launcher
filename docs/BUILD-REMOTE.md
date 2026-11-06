@@ -1,9 +1,46 @@
 # 远程交叉编译（Linux → Windows）
 
-本机打游戏时不想被 `cargo build` 占满 CPU，可以把 Windows 安装包的构建丢给局域网
-Linux 主机 `air-ubuntu`（`192.168.31.66`，32 核 / 30G）。产物与本机原生构建等价，可直接发布。
+本机打游戏时不想被 `cargo build` 占满 CPU，可以把 Windows 安装包的 Rust 编译丢给局域网
+Linux 主机 `air-ubuntu`（`192.168.31.66`，32 核 / 30G）。
 
-## 快速开始
+> ⚠️ **2026-11-07 更新（v0.10.0 实测）**：tauri-cli 2.12 起 `--no-bundle` 不再生成
+> `installer.nsi`，脚本里那套「改 nsi 路径再 makensis」的绕过路径**已失效**。
+> 现在改为：**远端只编译 exe，回传本机后用 `tauri bundle` 打包 + 签名**。
+> 详见下方「当前推荐流程」。
+
+## 当前推荐流程（v0.10.0 起）
+
+```bash
+cd Z:\VScodeProject\air-icon-launcher
+
+# 1) 载入凭据
+set -a && . ./.env.local && set +a
+
+# 2) 远端只编译 exe（--no-sign 跳过远端签名，签名改在本机做）
+bash scripts/build-remote.sh --no-sign
+
+# 3) 取回 exe 覆盖本机产物
+scp air-ubuntu:/root/air-build/src-tauri/target/x86_64-pc-windows-msvc/release/air-icon-launcher.exe \
+    src-tauri/target/release/air-icon-launcher.exe
+
+# 4) 本机打包 + 签名
+export TAURI_SIGNING_PRIVATE_KEY="$(cat private-new.key)"
+bun tauri bundle --bundles nsis
+```
+
+产物在 `src-tauri/target/release/bundle/nsis/`（不是 `target-remote/`）。
+
+> 实测耗时：远端编译 **2 分 21 秒**（14.4 MB exe），本机 bundle + 签名约 10 秒。
+
+> ⚠️ **同步前必须清远端源码目录**：`build-remote.sh` 用 tar 覆盖，**不删除**远端已有文件。
+> 删掉或重命名的源文件会残留，导致类型检查报「已删文件里的旧引用」。
+> 构建异常时先清一次：
+>
+> ```bash
+> ssh air-ubuntu "rm -rf /root/air-build/src /root/air-build/src-tauri/src"
+> ```
+
+## 快速开始（旧流程，仅 tauri-cli < 2.12 可用）
 
 ```bash
 cd Z:\VScodeProject\air-icon-launcher
@@ -30,13 +67,13 @@ bash scripts/build-remote.sh
 |---|---|
 | 交叉编译产物 | PE32+ GUI x86-64，合法 |
 | 在本机实际运行 | ✅ 窗口正常，46 MB 内存 |
-| NSIS 安装包 | ✅ 6.0 MB（原生 6.13 MB） |
-| 签名校验 | ✅ `Signature and comment signature verified`，绑定 `version:0.9.1` |
-| 全量耗时 | 约 2–4 分钟（32 核，比本机快） |
+| NSIS 安装包 | ✅ v0.10.0：4.99 MB（本机 `tauri bundle` 生成） |
+| 签名校验 | ✅ `Signature and comment signature verified`，绑定 `version:0.10.0` |
+| 全量耗时 | 远端编译 2m21s + 本机打包 10s |
 
 ## 关键约束与坑位
 
-### 1. `tauri build` 在 Linux 上拒绝 `nsis` 打包
+### 1. Linux 宿主不能打 NSIS 包
 
 ```
 error: invalid value 'nsis' for '--bundles [<BUNDLES>...]'
@@ -45,8 +82,16 @@ error: invalid value 'nsis' for '--bundles [<BUNDLES>...]'
 
 tauri-cli 按**宿主平台**决定可用 bundle 类型，Linux 宿主只认 deb/rpm/appimage。
 
-**绕过办法**（脚本已实现）：先 `--no-bundle` 只编译出 exe，再拿 tauri 生成的
-`installer.nsi` 直接调 `makensis`：
+**当前解法**：远端 `--no-bundle` 只出 exe → 回传本机 → 本机 `tauri bundle --bundles nsis`。
+见文档顶部「当前推荐流程」。
+
+> ⚠️ **旧解法已失效**（tauri-cli < 2.12 时代）：以前 `--no-bundle` 仍会生成
+> `src-tauri/target/<target>/release/nsis/x64/installer.nsi`，可以改路径后直接 `makensis`。
+> 2.12 起该文件不再生成，`scripts/build-remote.sh` 里的 `sed ... installer.nsi` 会报
+> `没有那个文件或目录`。**不要再依赖这条路径。**
+
+<details>
+<summary>旧解法留档（tauri-cli &lt; 2.12）</summary>
 
 ```bash
 bun tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --no-bundle
@@ -62,6 +107,23 @@ makensis installer.nsi
 | `MAINBINARYSRCPATH` | `Z:\...\air-icon-launcher.exe` | 远端绝对路径 |
 | `ADDITIONALPLUGINSPATH` | `C:\Users\...\NSIS\Plugins\...` | `$HOME/.local/share/tauri/...` |
 | `!include "...\SimpChinese.nsh"` | Windows 绝对路径 | `SimpChinese.nsh` |
+
+</details>
+
+### 1b. 远端源码残留导致构建失败
+
+`build-remote.sh` 用 `tar -czf - | ssh tar -xzf -` 同步，**只覆盖、不删除**。
+本地删掉或重命名的文件会残留在远端，典型症状：
+
+```
+src/components/UpdateDialog.vue(12,25): error TS2339: Property 'showUpdateDialog' does not exist
+```
+
+该文件本地已删除，远端还留着旧版。**解法**：构建前清远端源码目录。
+
+```bash
+ssh air-ubuntu "rm -rf /root/air-build/src /root/air-build/src-tauri/src"
+```
 
 ### 2. `Can't detect any appindicator library` 崩溃
 
@@ -95,15 +157,20 @@ scp "$LOCALAPPDATA/tauri/NSIS/Plugins/x86-unicode/additional/nsis_tauri_utils.dl
 ### 6. 签名要带 `--app-version`
 
 ```bash
-cargo tauri signer sign --app-version 0.9.1 <file>
+cargo tauri signer sign --app-version 0.10.0 <file>
 ```
 
 不加会警告 `Signing without an app version`，且配了 `requireSignedVersion` 的 updater
 会拒绝该签名。
 
+> 现在签名在本机 `tauri bundle --bundles nsis` 阶段自动完成，版本号取自
+> `src-tauri/Cargo.toml`，不需要手动调 signer。只有旧流程（`build-remote.sh` 带签名）才用到这条。
+
 ### 7. 私钥不要落盘到远端
 
-脚本通过 stdin 把私钥内容传过去，远端读入环境变量后立即签名，不在文件系统留痕。
+旧流程脚本通过 stdin 把私钥内容传过去，远端读入环境变量后立即签名，不在文件系统留痕。
+
+新流程（推荐）签名在本机做，私钥根本不出本机。
 
 ## 首次部署远端环境
 
@@ -126,16 +193,19 @@ curl -fsSL https://bun.sh/install | bash
 
 再把 `nsis_tauri_utils.dll` 拷过去（见上）。
 
+> 新流程下远端只跑 `tauri build --no-bundle`（不出 NSIS 包），`nsis_tauri_utils.dll`
+> 和 `nsis` 包其实已不是必需；保留是为了兼容旧流程。
+
 ## 与本机构建的取舍
 
 | | 本机（Windows） | 远端（Linux 交叉） |
 |---|---|---|
-| 占用本机 CPU | 是，3–5 分钟满载 | 几乎为零 |
-| 耗时 | 约 3.5 分钟（fat-LTO） | 约 2–4 分钟（32 核） |
+| 占用本机 CPU | 是，5–6 分钟满载 | 几乎为零 |
+| Rust 编译耗时 | 约 6 分钟（fat-LTO） | 约 2.5 分钟（32 核） |
+| 需要额外步骤 | 无 | 回传 exe + 本机 bundle（约 10 秒） |
 | 适合场景 | 需要调试、快速迭代 | 发版打包、打游戏时 |
 
-> 注：`docs/RELEASE.md` §4 里“耗时约 3 分钟（release profile 开了 LTO）”的说法已过时——
-> 当时 `Cargo.toml` 的 `lto` 因换行损坏实际未生效。修好后本机全量约 3.5 分钟。
+> v0.10.0 实测：本机全量 `bun tauri build` 6 分钟；远端编译 2m21s + 本机 bundle 10s ≈ 2.5 分钟。
 
 ## 已知未解决
 

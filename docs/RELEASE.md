@@ -2,7 +2,7 @@
 
 > 面向：接手本项目的 AI 会话 / 开发者。
 > 目标：一次走通，不踩凭证、签名、上传的坑。
-> 最近验证：v0.7.3（2026-10-30）
+> 最近验证：v0.10.0（2026-11-07，远程交叉编译 + 本机打包）
 
 ---
 
@@ -14,20 +14,22 @@
 bun run check
 
 # 3) 编译（凭据从 .env.local 加载，见 §4）
-Get-Content .env.local | Where-Object { $_ -match '^\s*[A-Z_]+=' } | ForEach-Object {
-  $k, $v = $_ -split '=', 2; Set-Item -Path "env:$($k.Trim())" -Value $v.Trim()
-}
-$env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content "Z:\VScodeProject\air-icon-launcher\private-new.key" -Raw)
-bun tauri build
+#    推荐远程交叉编译（§4.3），本机只负责 NSIS 打包
+set -a && . ./.env.local && set +a
+bash scripts/build-remote.sh          # 远程只出 exe
+# 取回 exe 覆盖 target/release/ 后，本机打包 + 签名：
+bun tauri bundle --bundles nsis
 
 # 4) 提交 + 打标签
 git add -A
 git commit -m "chore(release): 发布 x.y.z"
 git tag -a vx.y.z -m "Release vx.y.z"
 
-# 5) 推送（关键：helper 必须指定 manager，否则弹窗卡死，见 §6）
+# 5) 推送（关键：helper 必须清空累积列表，见 §6）
 #    首次使用先执行一次（仓库级，长期生效）：
-#    git config --local credential.helper manager
+#    git config --local --unset-all credential.helper
+#    git config --local --add credential.helper ""
+#    git config --local --add credential.helper manager
 git push origin main
 git push origin vx.y.z
 git push gitee main
@@ -149,34 +151,52 @@ Get-Content .env.local | Where-Object { $_ -match '^\s*[A-Z_]+=' } | ForEach-Obj
 }
 ```
 
-然后编译：
+### 4.1 本机编译（慢，6 分钟）
 
 ```powershell
 $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content "Z:\VScodeProject\air-icon-launcher\private-new.key" -Raw)
 bun tauri build
 ```
 
-> ⚠️ 签名私钥为 `private-new.key`（v0.8.1 起启用）。该文件已在 `.gitignore` 中，**必须本地妥善备份**，
-> 丢失后将无法再签发更新包。旧的 `private.key` 已弃用（已泄露，见 §11.1）。
-
-> `.env.local` 不存在时：向项目所有者索取密码与 Token，自行创建该文件（格式见 §11.2）。
-> **不要**把凭据写进任何被跟踪的文件。
-
 - 耗时约 **6 分钟**（release profile 开了 fat-LTO + codegen-units=1，属正常）
-- 产物约 **13.3 MB**（`strip = true` + `panic = "abort"` 生效后）
+- 产物约 **14.4 MB**（`strip = true` + `panic = "abort"` 生效后）
 - 产物在 `src-tauri\target\release\bundle\nsis\`
 - 不设这两个环境变量 → 不会生成 `.sig`，自动更新会失效
 
-> 💡 **嫌本机编译卡？** 可以丢给局域网 Linux 主机交叉编译，产物等价：
-> `bash scripts/build-remote.sh`，详见 [`BUILD-REMOTE.md`](BUILD-REMOTE.md)。
+### 4.2 推荐：远程交叉编译 + 本机打包（快，约 2.5 分钟）
+
+局域网 Linux 主机 `air-ubuntu`（32 核）只负责 Rust 编译，NSIS 打包和签名回本机做。
+详见 [`BUILD-REMOTE.md`](BUILD-REMOTE.md)。
+
+```powershell
+# 1) 远程编译（只出 exe）
+set -a && . ./.env.local && set +a
+bash scripts/build-remote.sh --no-sign
+
+# 2) 取回 exe 覆盖本机产物
+scp air-ubuntu:/root/air-build/src-tauri/target/x86_64-pc-windows-msvc/release/air-icon-launcher.exe \
+    src-tauri/target/release/air-icon-launcher.exe
+
+# 3) 本机打包 + 签名（tauri bundle 只打包，不重新编译）
+$env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content "Z:\VScodeProject\air-icon-launcher\private-new.key" -Raw)
+bun tauri bundle --bundles nsis
+```
+
+> ⚠️ **tauri-cli 2.12 起 `build-remote.sh` 里的 makensis 绕过路径已失效**：
+> `tauri build --no-bundle` 不再生成 `installer.nsi`，且 Linux 宿主的 `tauri bundle --bundles nsis`
+> 直接拒绝 nsis 类型（只认 deb/rpm/appimage）。所以必须走上面这条「远程编译 exe → 回传 → 本机 bundle」。
+>
+> ⚠️ **远程同步是 tar 覆盖，不删文件**：删掉/重命名的源文件会残留在远端，导致类型检查或编译失败。
+> 构建异常时先清远端源码目录再重跑：
+> `ssh air-ubuntu "rm -rf /root/air-build/src /root/air-build/src-tauri/src"`
 
 ### 产物清单
 
 | 文件 | 用途 |
 |---|---|
-| `air-icon-launcher_x.y.z_x64-setup.exe` | 手动安装包（约 5.8 MB） |
-| `air-icon-launcher_x.y.z_x64-setup.nsis.zip` | **自动更新包**（约 5.8 MB） |
-| `...nsis.zip.sig` | 更新包签名（约 436 B） |
+| `air-icon-launcher_x.y.z_x64-setup.exe` | 手动安装包（约 5.0 MB） |
+| `air-icon-launcher_x.y.z_x64-setup.nsis.zip` | **自动更新包**（约 5.0 MB） |
+| `...nsis.zip.sig` | 更新包签名（约 440 B） |
 | `latest.json` | 更新清单 |
 
 ---
@@ -196,13 +216,27 @@ $sig = (Get-Content "...\.sig" -Raw).Trim()
 [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($sig))
 ```
 
+把签名写进 `latest.json`（避免手改出错，推荐用脚本合并）：
+
+```powershell
+$dir = 'src-tauri\target\release\bundle\nsis'
+$sig = (Get-Content "$dir\air-icon-launcher_x.y.z_x64-setup.nsis.zip.sig" -Raw).Trim()
+$obj = Get-Content latest.json -Raw | ConvertFrom-Json
+$obj.platforms.'windows-x86_64'.signature = $sig
+$out = $obj | ConvertTo-Json -Depth 10
+[IO.File]::WriteAllText((Join-Path (Get-Location) 'latest.json'), $out, (New-Object Text.UTF8Encoding($false)))
+```
+
+> ⚠️ 必须用 `UTF8Encoding($false)` 写回（无 BOM）。PowerShell 默认的 `Out-File -Encoding utf8`
+> 在旧版本会带 BOM，导致 updater 解析失败。
+
 ---
 
 ## 6. 推送（凭证坑集中区）
 
 ### 6.1 为什么新会话会卡死 / 弹窗
 
-本机**系统级**配置是 `credential.helper = helper-selector`：
+本机 `credential.helper` 在 **system 层**被设成 `helper-selector`：
 
 ```powershell
 git config --system --get-regexp '^credential'
@@ -216,15 +250,25 @@ git config --system --get-regexp '^credential'
 > **都拦不住这个弹窗**——它发生在「选择 helper」阶段，早于任何密码交互。
 > 只设这些环境变量会继续弹窗，必须从配置层绕开 selector。
 
-### 6.2 正确做法（仓库级指定 manager）
+### 6.2 正确做法（清空 helper 列表后只留 manager）
 
-在仓库里直接把 helper 指定为 `manager`，跳过 selector：
+> ⚠️ **最大的坑**：`credential.helper` 是**多值配置**。
+> Git 会把所有层级的值**累加起来依次执行**，`--local` 再设一个 `manager` 并**不会**覆盖
+> system 层的 `helper-selector`——两个 helper 都会跑，selector 先弹窗。
+>
+> 这就是为什么「照文档设了 `git config --local credential.helper manager`，结果还是弹窗」。
+
+**正确做法：先用空值清空累积列表，再追加 manager。**
 
 ```powershell
 cd Z:\VScodeProject\air-icon-launcher
-git config --local credential.helper manager
+git config --local --unset-all credential.helper
+git config --local --add credential.helper ""
+git config --local --add credential.helper manager
 git config --local credential.interactive false
 ```
+
+`credential.helper = ""` 是 Git 的官方重置手段，空字符串会清掉之前累积的所有 helper。
 
 验证（应 1 秒内返回 username / password，**不弹窗**）：
 
@@ -238,17 +282,32 @@ $env:GIT_TERMINAL_PROMPT = "0"
 
 ### 6.3 如果仍然弹窗
 
-说明存在更高优先级的配置把 helper 又指回 selector。逐级排查：
+**必须用 `--show-origin --get-all` 排查**，只看 `--get` 会误判：
 
 ```powershell
-git config --local  --get-regexp '^credential'
-git config --global --get-regexp '^credential'
-git config --system --get-regexp '^credential'
+git config --show-origin --get-all credential.helper
 ```
 
+正常输出应该是这样（system 层的 selector 仍在列表里，但被 local 的空值清掉了）：
+
+```
+file:C:/Users/Air/.dsh/profiles/desktop/node_modules/@dsh-ops/bash-win32-x64/etc/gitconfig   helper-selector
+file:.git/config
+file:.git/config                                                                            manager
+```
+
+> ⚠️ `git config --local --get credential.helper` 只会显示 `manager`，**看起来没问题**，
+> 但 selector 其实还在生效。这是最容易误判的地方。
+
+排查要点：
+
+- `--system` 层不一定来自 `C:\Program Files\Git\etc\gitconfig`。
+  在本项目的 DSH 会话里，它是 **DSH 自带的 bash 运行时**注入的：
+  `C:/Users/Air/.dsh/profiles/desktop/node_modules/@dsh-ops/bash-win32-x64/etc/gitconfig`
+  这个文件**不要去改**（会被 node_modules 重装覆盖），只能在仓库 local 层用空值覆盖。
 - `credential.helperselector.selected` 是 selector 记住的选择，**删掉它**：
   `git config --local --unset credential.helperselector.selected`
-- 确认 `credential.helper` 最终解析为 `manager` 而非 `helper-selector`
+- 若 `--get-all` 里 local 层没有那个空值行，说明清空步骤没生效，重做 §6.2。
 
 ### 6.4 凭证真的缺失时
 
@@ -271,12 +330,13 @@ git push gitee main  && git push gitee vx.y.z     # Gitee
 ```powershell
 git fetch origin --tags -q
 git fetch gitee  --tags -q
-git rev-parse --short HEAD origin/main gitee/main
+git rev-parse --short HEAD origin/main refs/remotes/gitee/main
 # 三个应相同
 ```
 
 > ⚠️ `gitee/main` 若报 `fatal: Needed a single revision`，说明该远程引用还没拉取到本地，
 > 先执行 `git fetch gitee`；必要时用全名 `git rev-parse --short refs/remotes/gitee/main`。
+> 注意 `gitee/main` 这个简写有时解析失败，直接用 `refs/remotes/gitee/main` 最稳。
 
 ---
 
@@ -389,16 +449,20 @@ $sig -eq $j.platforms.'windows-x86_64'.signature   # 应为 True
 
 | 现象 | 原因 | 解法 |
 |---|---|---|
-| `git push` 卡死无输出 | `helper-selector` 弹 GUI 窗口等人点 | 仓库级 `git config --local credential.helper manager`（**仅设 `GIT_TERMINAL_PROMPT=0` 无效**，见 §6.1） |
-| 弹出「Select a credential helper」窗口 | 系统级 `credential.helper=helper-selector` | 同上；并 `git config --local --unset credential.helperselector.selected` |
-| `git credential fill` 报 `unable to get password from user` | 该配置下无可用凭证 | 确认 helper 为 `manager`；仍失败则 `gh auth login` |
+| `git push` 卡死无输出 | `helper-selector` 弹 GUI 窗口等人点 | 见 §6.2（**仅设 `GIT_TERMINAL_PROMPT=0` 无效**） |
+| 弹出「Select a credential helper」窗口 | `credential.helper` 是**多值配置**，`--local manager` 只追加不覆盖 system 层 | `--unset-all` + 加空值 `""` + 追加 `manager`（§6.2） |
+| 设了 `--local credential.helper manager` 还是弹窗 | 同上；`--get` 只看单值会误判成 `manager` | 用 `git config --show-origin --get-all credential.helper` 核对（§6.3） |
+| `git credential fill` 报 `unable to get password from user` | 该配置下无可用凭证 | 确认 helper 列表已清空重设；仍失败则 `gh auth login` |
 | 打包后没有 `.sig` | 没设签名环境变量 | 设 `TAURI_SIGNING_PRIVATE_KEY` / `_PASSWORD` |
 | `latest.json` 读到空 | curl 没加 `-L`，停在 302 | 加 `-L` |
 | Gitee release 中文乱码 | `ConvertTo-Json` 编码问题 | 写 JSON 文件 + `curl --data-binary @file` |
 | 编译报文件占用 | dev 服务还在跑 | 先 `Stop-Process` 掉 `air-icon-launcher.exe` |
 | 自动更新提示签名无效 | `latest.json` 里 signature 与 zip 不匹配 | 从 `.nsis.zip.sig` 原样复制，别手改 |
 | 新会话 `gh` 未登录 | keyring 与 shell 会话不同 | `gh auth status` 确认，必要时 `gh auth login` |
-| `gitee/main` 报 `Needed a single revision` | 该远程引用尚未 fetch | `git fetch gitee` 后再 `rev-parse` |
+| `gitee/main` 报 `Needed a single revision` | 该远程引用尚未 fetch，或简写解析失败 | `git fetch gitee` 后用全名 `refs/remotes/gitee/main` |
+| 远程构建报 `UpdateDialog.vue` 之类已删文件不存在 | tar 同步只覆盖不删除，远端残留旧文件 | 清远端 `src/`、`src-tauri/src/` 后重跑（§4.2） |
+| 远程 `tauri build --no-bundle` 后找不到 `installer.nsi` | tauri-cli 2.12 起不再生成该文件 | 改用「远程出 exe → 本机 `tauri bundle`」（§4.2） |
+| Linux 上 `tauri bundle --bundles nsis` 报 invalid value | tauri-cli 按宿主平台限制 bundle 类型 | 同上，NSIS 打包必须回 Windows 做 |
 
 ---
 
