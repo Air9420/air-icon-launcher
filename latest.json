@@ -1,11 +1,11 @@
 {
-  "version": "0.9.1",
-  "notes": "## v0.9.1\n\n本次为修复版本，解决托盘唤起后快捷键号标残留的问题。\n\n### 修复\n\n- 修复 Ctrl+右键隐藏窗口后用托盘图标唤起时，固定启动项右上角的快捷键号标一直显示的问题\n- 号标现在在窗口隐藏时即被清除，托盘 / 快捷键 / 热角三种唤起方式的首帧都不再残留号标\n",
-  "pub_date": "2026-11-01T06:41:19.733Z",
+  "version": "0.9.2",
+  "notes": "## v0.9.2\n\n本次修复插件设置被意外重置的问题。\n\n### 修复\n\n- **修复修改任一设置项导致其他设置被重置**\n  - 宿主重复加载同一插件时，加载顺序有误：新实例初始化完成后，\n    旧实例的清理逻辑又把新实例刚载入的配置清空了，导致后续读取\n    退回默认值，改一项就把整套默认配置写回磁盘\n  - 改为先卸载旧实例、再加载新实例\n  - 插件侧增加实例计数，重复加载时保留内存中的配置，\n    仅在最后一个实例退出时才真正清理\n\n- **加固配置读写**（多个系统共用同一份配置文件的场景）\n  - 内存状态缺失时回退到磁盘配置，不再直接使用默认值\n  - 保存设置以磁盘最新内容为基准合并，避免覆盖其他系统刚做的修改\n  - 配置文件改为先写临时文件再替换，避免读到写了一半的内容\n  - 配置解析失败时先备份原文件，不会被下一次保存彻底覆盖\n\n### 说明\n\n- 该问题影响所有 Rust 插件，不只是迈从鼠标插件，建议更新\n- 已有配置不会丢失，升级后设置项保持原样",
+  "pub_date": "2026-11-06T20:16:15.810Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbUt3NUd3RVF4cUQxRzJvVFZrOURwZ2NndmxQS1hQbHVEZFpUbTY2a0ZJR2tlUE0xbTBmR28vRS9MUHhKOTVCVGU2d2VZTmc3TWo1ZmlibVVOcXhjTU5zM3crZDhDandRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNTE1MjY3CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC45LjFfeDY0LXNldHVwLm5zaXMuemlwCkw5WE9aZHpJZkQ0cWJDQmFPZDEyaVl4MVJLYW9BUWxCM0dsTmFaTG4wU0JxREV3bGhEVjFyUGRKVzBUaEZPVWYzVVdFNElzNC8yT2FNTzFqd2JVS0F3PT0K",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.9.1/air-icon-launcher_0.9.1_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbUt3NUd3RVF4cUFTSEVoVnVtSFhoN040d09IcHREM2lqUHRLdTRvV0ZFUWExVzl2R3dVUEx0MkcvN1BUY2lsRmpVTmQvUlZhY0cvU1FrVW9vNDl2T2dPVjBGOU9ZYndvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzOTk2MTYxCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC45LjJfeDY0LXNldHVwLm5zaXMuemlwCXZlcnNpb246MC45LjIKOVplSXlvMjJuY2x4a3ZGMUx4L0tHeHBoMzdxbVBqN2M0REtOR0dnVGtwb1dXZ2dMZ0dWYkJyL2diRWdGWC93Z3pSY0Rrdm9QVFFxQWtTNDVOVmxwQmc9PQo=",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.9.2/air-icon-launcher_0.9.2_x64-setup.nsis.zip"
     }
   }
 }
