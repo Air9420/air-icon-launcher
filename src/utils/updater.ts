@@ -12,6 +12,29 @@ export interface UpdateCheckResult {
   signature?: string
   source?: string
   latest_json_url?: string
+  resumable_bytes?: number
+  current_version?: string
+  probes?: SourceProbe[]
+}
+
+export interface SourceProbe {
+  url: string
+  kind: string
+  ok: boolean
+  latency_ms: number
+  error?: string | null
+}
+
+export interface UpdatePrefs {
+  preferred_source: 'github' | 'gitee' | 'custom'
+  custom_url: string
+  allow_fallback: boolean
+  resume_download: boolean
+}
+
+export interface UpdateCacheInfo {
+  total: number
+  files: { name: string; size: number }[]
 }
 
 export interface UpdateDownloadCompletePayload {
@@ -20,8 +43,7 @@ export interface UpdateDownloadCompletePayload {
 
 export async function checkForUpdate(): Promise<UpdateCheckResult> {
   try {
-    const result = await invokeOrThrow<UpdateCheckResult>('check_update')
-    return result
+    return await invokeOrThrow<UpdateCheckResult>('check_update')
   } catch (error) {
     console.error('检查更新失败:', error)
     throw error
@@ -46,14 +68,35 @@ export async function restartApplication(): Promise<void> {
   }
 }
 
+export async function getUpdatePrefs(): Promise<UpdatePrefs> {
+  return await invokeOrThrow<UpdatePrefs>('get_update_prefs')
+}
+
+export async function setUpdatePrefs(prefs: Partial<UpdatePrefs>): Promise<UpdatePrefs> {
+  return await invokeOrThrow<UpdatePrefs>('set_update_prefs', { prefs })
+}
+
+export async function getUpdateLog(): Promise<string[]> {
+  return await invokeOrThrow<string[]>('get_update_log')
+}
+
+export async function clearUpdateLog(): Promise<void> {
+  await invokeOrThrow('clear_update_log')
+}
+
+export async function clearUpdateCache(): Promise<number> {
+  return await invokeOrThrow<number>('clear_update_cache')
+}
+
+export async function getUpdateCacheInfo(): Promise<UpdateCacheInfo> {
+  return await invokeOrThrow<UpdateCacheInfo>('get_update_cache_info')
+}
+
 export function setupUpdateCheck() {
   const updateStore = useUpdateStore()
-  
-  // 监听更新日志
+
   listenUpdateLog()
-  // 监听更新进度
   listenUpdateProgress()
-  // 监听下载完成
   listenDownloadComplete()
 
   const doCheck = async () => {
@@ -72,7 +115,9 @@ export function setupUpdateCheck() {
             }
           },
           source: result.source,
-          latestJsonUrl: result.latest_json_url || ''
+          latestJsonUrl: result.latest_json_url || '',
+          resumableBytes: result.resumable_bytes || 0,
+          probes: result.probes || []
         }
         updateStore.showUpdateDialog = true
       }
@@ -97,14 +142,16 @@ export function listenUpdateProgress() {
 
 export function listenUpdateLog() {
   listen<string>('update-log', (event) => {
-    console.log('[更新]', event.payload)
+    // 同时进入 store，供对话框展示
+    const updateStore = useUpdateStore()
+    updateStore.appendLog(event.payload)
   })
 }
 
 export function listenDownloadComplete() {
   listen<UpdateDownloadCompletePayload>('update-download-complete', (event) => {
-    console.log('[更新] 安装完成:', event.payload)
     const updateStore = useUpdateStore()
+    updateStore.appendLog(`安装完成: v${event.payload.version}`)
     updateStore.downloadComplete = true
     updateStore.updateFilePath = null
   })

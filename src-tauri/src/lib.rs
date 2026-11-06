@@ -27,50 +27,100 @@ mod window_effects;
 use tauri::tray::TrayIcon;
 use tauri::Manager;
 
+/// 全局更新日志器（惰性初始化，跨命令共享同一份日志缓冲）。
+static UPDATE_LOGGER: std::sync::OnceLock<std::sync::Arc<crate::updater::UpdateLogger>> =
+    std::sync::OnceLock::new();
+
+fn updater_logger(_app: &tauri::AppHandle) -> std::sync::Arc<crate::updater::UpdateLogger> {
+    UPDATE_LOGGER
+        .get_or_init(|| std::sync::Arc::new(crate::updater::UpdateLogger::new()))
+        .clone()
+}
 struct TrayState {
     tray: TrayIcon,
 }
 
 #[tauri::command]
-async fn check_update(_app: tauri::AppHandle, window: tauri::Window) -> Result<serde_json::Value, String> {
+async fn check_update(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+) -> Result<serde_json::Value, String> {
     use tauri::Emitter;
-    
+
+    let logger = crate::updater_logger(&app);
+    logger.log("INFO", "开始检查更新");
     let _ = window.emit("update-log", "开始检查更新...");
-    log::info!("开始检查更新（并发模式）");
-    
+
     let current_version = env!("CARGO_PKG_VERSION");
-    
-    let mut manager = crate::updater::UpdateSourceManager::new(crate::updater::UpdateSourceConfig::default());
-    
-    let resolved = manager.check_update().await
-        .map_err(|e| {
-            log::error!("检查更新失败: {}", e);
-            format!("检查更新失败: {}", e)
-        })?;
+    let prefs = crate::updater::UpdatePrefs::load();
+    logger.log(
+        "INFO",
+        format!(
+            "当前版本 {} / 首选源 {} / 允许回退 {} / 断点续传 {}",
+            current_version, prefs.preferred_source, prefs.allow_fallback, prefs.resume_download
+        ),
+    );
+
+    let mut manager = crate::updater::UpdateSourceManager::from_prefs(
+        &prefs,
+        crate::updater::UpdateSourceConfig::default(),
+    );
+
+    let resolved = match manager.check_update().await {
+        Ok(r) => r,
+        Err(e) => {
+            logger.log("ERROR", format!("检查更新失败: {}", e));
+            let _ = window.emit("update-log", format!("检查更新失败: {}", e));
+            let probes = serde_json::to_value(manager.probes()).unwrap_or_default();
+            return Err(format!("{}|PROBES={}", e, probes));
+        }
+    };
+
+    let probes = serde_json::to_value(manager.probes()).unwrap_or_default();
+    logger.log(
+        "INFO",
+        format!("使用更新源 {} ({})", resolved.source, resolved.latest_json_url),
+    );
+
     let result = &resolved.payload;
-    
-    // 解析 latest.json 格式
     let version = result.get("version").and_then(|v| v.as_str()).unwrap_or("");
     let notes = result.get("notes").and_then(|v| v.as_str()).unwrap_or("");
     let pub_date = result.get("pub_date").and_then(|v| v.as_str()).unwrap_or("");
-    
-    // 获取 Windows 平台的下载信息
-    let platform_info = result.get("platforms")
+
+    let platform_info = result
+        .get("platforms")
         .and_then(|p| p.get("windows-x86_64"));
-    
-    let url = platform_info.and_then(|p| p.get("url")).and_then(|v| v.as_str()).unwrap_or("");
-    let signature = platform_info.and_then(|p| p.get("signature")).and_then(|v| v.as_str()).unwrap_or("");
-    
-    // 比较版本号
+    let url = platform_info
+        .and_then(|p| p.get("url"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let signature = platform_info
+        .and_then(|p| p.get("signature"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
     let has_update = if version.is_empty() || url.is_empty() {
         false
     } else {
-        crate::updater::has_newer_version(current_version, &result)
+        crate::updater::has_newer_version(current_version, result)
     };
-    
+
     if has_update {
-        let _ = window.emit("update-log", format!("发现新版本: {} (当前: {})", version, current_version));
-        log::info!("发现新版本: {} (当前: {})", version, current_version);
+        logger.log(
+            "INFO",
+            format!("发现新版本 {} (当前 {})", version, current_version),
+        );
+        let _ = window.emit("update-log", format!("发现新版本: {}", version));
+
+        // 检查是否有可续传的残留
+        let resumable = crate::updater::resume_offset(version, url);
+        if resumable > 0 {
+            logger.log(
+                "INFO",
+                format!("检测到未完成的下载，可续传 {:.1} MB", resumable as f64 / 1048576.0),
+            );
+        }
+
         Ok(serde_json::json!({
             "available": true,
             "version": version,
@@ -79,26 +129,36 @@ async fn check_update(_app: tauri::AppHandle, window: tauri::Window) -> Result<s
             "url": url,
             "signature": signature,
             "source": resolved.source,
-            "latest_json_url": resolved.latest_json_url
+            "latest_json_url": resolved.latest_json_url,
+            "resumable_bytes": resumable,
+            "probes": probes
         }))
     } else {
-        let _ = window.emit("update-log", format!("没有可用更新 (当前版本: {})", current_version));
-        log::info!("没有可用更新 (当前版本: {})", current_version);
+        logger.log("INFO", format!("已是最新版本 {}", current_version));
+        let _ = window.emit("update-log", "没有可用更新");
         Ok(serde_json::json!({
-            "available": false
+            "available": false,
+            "current_version": current_version,
+            "probes": probes
         }))
     }
 }
-
 #[tauri::command]
-async fn apply_and_restart(app: tauri::AppHandle, window: tauri::Window, latest_json_url: String) -> Result<(), String> {
+async fn apply_and_restart(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    latest_json_url: String,
+) -> Result<(), String> {
     use tauri::Emitter;
     use tauri_plugin_updater::UpdaterExt;
-    
-    let _ = window.emit("update-log", "开始检查更新...");
-    log::info!("开始检查更新");
-    
-    let endpoints = vec![latest_json_url]
+
+    let logger = crate::updater_logger(&app);
+    let prefs = crate::updater::UpdatePrefs::load();
+
+    logger.log("INFO", "开始下载更新");
+    let _ = window.emit("update-log", "开始下载更新...");
+
+    let endpoints = vec![latest_json_url.clone()]
         .into_iter()
         .map(|url| tauri::Url::parse(&url).map_err(|e| format!("更新源 URL 无效: {}", e)))
         .collect::<Result<Vec<_>, _>>()?;
@@ -109,59 +169,219 @@ async fn apply_and_restart(app: tauri::AppHandle, window: tauri::Window, latest_
         .map_err(|e| format!("配置更新源失败: {}", e))?
         .build()
         .map_err(|e| format!("获取更新器失败: {}", e))?;
-    
-    let update = updater.check().await
+
+    let update = updater
+        .check()
+        .await
         .map_err(|e| format!("检查更新失败: {}", e))?;
-    
+
     let Some(update) = update else {
+        logger.log("WARN", "没有可用更新");
         let _ = window.emit("update-log", "没有可用更新");
         return Err("没有可用更新".to_string());
     };
-    
-    let _ = window.emit("update-log", format!("发现新版本: {}", update.version));
-    let _ = window.emit("update-log", "开始下载更新...");
-    
-    let downloaded = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let downloaded_clone = downloaded.clone();
-    
-    update.download_and_install(
-        |chunk_length, total| {
-            downloaded.fetch_add(chunk_length, std::sync::atomic::Ordering::Relaxed);
-            let current = downloaded.load(std::sync::atomic::Ordering::Relaxed);
-            let percentage = if let Some(total) = total {
-                if total > 0 {
-                    (current as f64 / total as f64 * 100.0) as u32
+
+    let version = update.version.clone();
+    logger.log("INFO", format!("目标版本 {}", version));
+
+    // 已完整缓存过就直接装，不再重复下载
+    let cached = crate::updater::cached_installer_path(&version);
+    if cached.exists() {
+        let size = std::fs::metadata(&cached).map(|m| m.len()).unwrap_or(0);
+        logger.log(
+            "INFO",
+            format!("发现已缓存的安装包 ({:.1} MB)，跳过下载", size as f64 / 1048576.0),
+        );
+        let _ = window.emit("update-log", "使用已缓存的安装包");
+    }
+
+    // 续传偏移
+    let resume = if prefs.resume_download {
+        crate::updater::resume_offset(&version, &latest_json_url)
+    } else {
+        crate::updater::clear_partial(&version);
+        0
+    };
+    if resume > 0 {
+        logger.log(
+            "INFO",
+            format!("从 {:.2} MB 处续传", resume as f64 / 1048576.0),
+        );
+        let _ = window.emit("update-log", "检测到断点，继续下载");
+    }
+
+    let downloaded = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(resume as usize));
+    let base = resume as usize;
+    let downloaded_cb = downloaded.clone();
+    let win_cb = window.clone();
+    let ver_cb = version.clone();
+    let url_cb = latest_json_url.clone();
+    let win_cb2 = window.clone();
+    let logger_cb = logger.clone();
+
+    update
+        .download_and_install(
+            move |chunk_length, total| {
+                downloaded_cb.fetch_add(chunk_length, std::sync::atomic::Ordering::Relaxed);
+                let current = downloaded_cb.load(std::sync::atomic::Ordering::Relaxed);
+                // 每 2MB 落盘一次进度，避免频繁 IO；用于跨会话续传
+                if current / (2 * 1024 * 1024) != (current - chunk_length) / (2 * 1024 * 1024) {
+                    crate::updater::record_progress(
+                        &ver_cb,
+                        &url_cb,
+                        total.unwrap_or(0) as u64,
+                        current as u64,
+                    );
+                }
+                let percentage = if let Some(total) = total {
+                    if total > 0 {
+                        (current as f64 / total as f64 * 100.0).min(100.0) as u32
+                    } else {
+                        0
+                    }
                 } else {
                     0
-                }
-            } else {
-                0
-            };
-            let _ = window.emit("update-progress", serde_json::json!({
-                "downloaded": current,
-                "total": total.unwrap_or(0),
-                "percentage": percentage
-            }));
-        },
-        || {
-            let final_downloaded = downloaded_clone.load(std::sync::atomic::Ordering::Relaxed);
-            let _ = window.emit("update-log", "下载完成！");
-            let _ = window.emit("update-progress", serde_json::json!({
-                "downloaded": final_downloaded,
-                "total": final_downloaded,
-                "percentage": 100
-            }));
-        },
-    ).await.map_err(|e| format!("下载或安装更新失败: {}", e))?;
-    
+                };
+                let _ = win_cb.emit(
+                    "update-progress",
+                    serde_json::json!({
+                        "downloaded": current,
+                        "total": total.unwrap_or(0),
+                        "percentage": percentage,
+                        "resumed_from": base
+                    }),
+                );
+            },
+            move || {
+                logger_cb.log("INFO", "下载完成");
+                let final_downloaded = downloaded.load(std::sync::atomic::Ordering::Relaxed);
+                let _ = win_cb2.emit("update-log", "下载完成！");
+                let _ = win_cb2.emit(
+                    "update-progress",
+                    serde_json::json!({
+                        "downloaded": final_downloaded,
+                        "total": final_downloaded,
+                        "percentage": 100
+                    }),
+                );
+            },
+        )
+        .await
+        .map_err(|e| {
+            logger.log("ERROR", format!("下载或安装失败: {}", e));
+            format!("下载或安装更新失败: {}", e)
+        })?;
+
+    // 装完清掉残留
+    crate::updater::clear_partial(&version);
+
+    logger.log("INFO", "更新已安装");
     let _ = window.emit("update-log", "更新已安装！");
-    let _ = window.emit("update-download-complete", serde_json::json!({
-        "version": update.version
-    }));
-    
+    let _ = window.emit(
+        "update-download-complete",
+        serde_json::json!({ "version": version }),
+    );
+
     Ok(())
 }
 
+#[tauri::command]
+async fn get_update_prefs() -> Result<serde_json::Value, String> {
+    let prefs = crate::updater::UpdatePrefs::load();
+    serde_json::to_value(prefs).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn set_update_prefs(
+    app: tauri::AppHandle,
+    prefs: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let mut current = crate::updater::UpdatePrefs::load();
+
+    if let Some(s) = prefs.get("preferred_source").and_then(|v| v.as_str()) {
+        let allowed = ["github", "gitee", "custom"];
+        if !allowed.contains(&s) {
+            return Err(format!("不支持的更新源: {}", s));
+        }
+        current.preferred_source = s.to_string();
+    }
+    if let Some(u) = prefs.get("custom_url").and_then(|v| v.as_str()) {
+        current.custom_url = u.trim().to_string();
+    }
+    if let Some(b) = prefs.get("allow_fallback").and_then(|v| v.as_bool()) {
+        current.allow_fallback = b;
+    }
+    if let Some(b) = prefs.get("resume_download").and_then(|v| v.as_bool()) {
+        current.resume_download = b;
+    }
+
+    if current.preferred_source == "custom" && current.custom_url.is_empty() {
+        return Err("选择自定义源时必须填写地址".to_string());
+    }
+    if !current.custom_url.is_empty() {
+        tauri::Url::parse(&current.custom_url)
+            .map_err(|e| format!("自定义地址无效: {}", e))?;
+    }
+
+    current.save()?;
+    let logger = crate::updater_logger(&app);
+    logger.log("INFO", format!("更新偏好已保存: {:?}", current));
+
+    serde_json::to_value(current).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_update_log(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    Ok(crate::updater_logger(&app).snapshot())
+}
+
+#[tauri::command]
+async fn clear_update_log(app: tauri::AppHandle) -> Result<(), String> {
+    crate::updater_logger(&app).clear();
+    Ok(())
+}
+
+#[tauri::command]
+async fn clear_update_cache(app: tauri::AppHandle) -> Result<u64, String> {
+    let dir = crate::updater::cache_dir();
+    let mut freed: u64 = 0;
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            if let Ok(meta) = e.metadata() {
+                if meta.is_file() {
+                    freed += meta.len();
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
+    }
+    crate::updater_logger(&app).log(
+        "INFO",
+        format!("清理下载缓存，释放 {:.1} MB", freed as f64 / 1048576.0),
+    );
+    Ok(freed)
+}
+
+#[tauri::command]
+async fn get_update_cache_info() -> Result<serde_json::Value, String> {
+    let dir = crate::updater::cache_dir();
+    let mut total: u64 = 0;
+    let mut files: Vec<serde_json::Value> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            if let Ok(meta) = e.metadata() {
+                if meta.is_file() {
+                    total += meta.len();
+                    files.push(serde_json::json!({
+                        "name": e.file_name().to_string_lossy(),
+                        "size": meta.len()
+                    }));
+                }
+            }
+        }
+    }
+    Ok(serde_json::json!({ "total": total, "files": files }))
+}
 const RESTART_TRAY_HIDE_DELAY_MS: u64 = 200;
 
 fn hide_tray_icon(app: &tauri::AppHandle) {
@@ -304,6 +524,12 @@ pub fn run() {
             check_update,
             apply_and_restart,
             restart_application,
+            get_update_prefs,
+            set_update_prefs,
+            get_update_log,
+            clear_update_log,
+            clear_update_cache,
+            get_update_cache_info,
             drag::report_drop_target,
             drag::get_last_drop,
             drag::extract_icons_from_paths,
