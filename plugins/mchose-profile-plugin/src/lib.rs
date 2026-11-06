@@ -35,6 +35,15 @@ struct PluginState {
 
 static STATE: Mutex<Option<PluginState>> = Mutex::new(None);
 
+/// 存活实例计数。
+///
+/// 同一个 DLL 被宿主加载两次时，Windows 的 `LoadLibraryW` 返回的是**同一个模块句柄**，
+/// 两个「实例」其实是同一份静态变量。此时若旧实例的 `air_plugin_shutdown`
+/// 无条件清空 `STATE`，就会把新实例刚 init 好的配置一起抹掉——
+/// 表现为「改任一设置项就把其他设置重置成默认值」。
+/// 用计数保证只有最后一个实例退出时才真正清理。
+static LIVE_INSTANCES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 // ---------------------------------------------------------------- 配置
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -425,22 +434,51 @@ fn config_path() -> std::path::PathBuf {
 
 fn load_config() -> Config {
     let path = config_path();
-    match std::fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str::<Config>(&text).unwrap_or_else(|e| {
-            host_log(0, &format!("[config] 解析失败，用默认值: {e}"));
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        // 文件不存在 = 首次运行，用默认值合理
+        Err(_) => return Config::default(),
+    };
+    match serde_json::from_str::<Config>(&text) {
+        Ok(c) => c,
+        Err(e) => {
+            // 文件存在但解析失败（写坏 / 被截断）：先备份，避免下次保存把它彻底覆盖掉
+            let bak = path.with_extension("json.corrupt");
+            let _ = std::fs::write(&bak, &text);
+            host_log(
+                0,
+                &format!(
+                    "[config] 解析失败，用默认值: {e}（原文已备份到 {}）",
+                    bak.display()
+                ),
+            );
             Config::default()
-        }),
-        Err(_) => Config::default(),
+        }
     }
 }
 
+/// 原子写入配置。
+///
+/// 先写临时文件再 `rename` 覆盖：两个系统共用同一个 config.json 时，
+/// 直接 `write` 存在被读到半截内容的窗口，读到坏 JSON 会退回默认值，
+/// 随后再保存就把整套配置重置了。
 fn save_config(cfg: &Config) -> Result<(), String> {
     let path = config_path();
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
     }
     let text = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
-    std::fs::write(&path, text).map_err(|e| format!("写入配置失败: {e}"))?;
+
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, &text).map_err(|e| format!("写入临时文件失败: {e}"))?;
+    // Windows 上 rename 目标已存在时失败，先删再改名；失败就退回直接写。
+    if std::fs::rename(&tmp, &path).is_err() {
+        let _ = std::fs::remove_file(&path);
+        if std::fs::rename(&tmp, &path).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+            std::fs::write(&path, &text).map_err(|e| format!("写入配置失败: {e}"))?;
+        }
+    }
     Ok(())
 }
 
@@ -515,6 +553,29 @@ pub extern "C" fn air_plugin_init(host: *const AirHostVTable, _user_data: *mut c
     if vt.abi_version != ABI_VERSION {
         return -2;
     }
+
+    // 已初始化过（宿主重复加载同一 DLL）：只更新宿主回调，保留内存中的配置，
+    // 避免用磁盘值覆盖掉尚未落盘的修改。
+    let already = {
+        let guard = match STATE.lock() {
+            Ok(g) => g,
+            Err(_) => return -3,
+        };
+        guard.is_some()
+    };
+    if already {
+        if let Ok(mut guard) = STATE.lock() {
+            if let Some(st) = guard.as_mut() {
+                st.user_data = vt.user_data as usize;
+                st.log_fn = Some(vt.log);
+                st.host_invoke_fn = Some(vt.host_invoke);
+            }
+        }
+        LIVE_INSTANCES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        host_log(2, "[init] 重复加载同一实例，保留现有配置");
+        return 0;
+    }
+
     // 从磁盘加载配置（首次运行用默认值）
     let cfg = load_config();
 
@@ -526,6 +587,7 @@ pub extern "C" fn air_plugin_init(host: *const AirHostVTable, _user_data: *mut c
             config: cfg.clone(),
         });
     }
+    LIVE_INSTANCES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     host_log(2, &format!("air_mchose_profile initialized, config: {cfg:?}"));
 
     // 自动注册全局热键
@@ -554,9 +616,18 @@ pub extern "C" fn air_plugin_invoke(
         serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null)
     };
 
+    // 内存态优先；万一 STATE 为空（例如宿主重复加载导致被清理），
+    // 回退到磁盘配置而不是 Config::default()。
+    // 用默认值兜底会把整套默认配置写回磁盘，表现为「改一项就重置全部」。
     let cfg = match STATE.lock() {
-        Ok(g) => g.as_ref().map(|s| s.config.clone()).unwrap_or_default(),
-        Err(_) => Config::default(),
+        Ok(g) => match g.as_ref() {
+            Some(s) => s.config.clone(),
+            None => {
+                host_log(1, "[invoke] STATE 为空，回退到磁盘配置");
+                load_config()
+            }
+        },
+        Err(_) => load_config(),
     };
 
     let result = match method.as_str() {
@@ -670,8 +741,10 @@ pub extern "C" fn air_plugin_invoke(
         "settings.get" => Ok(serde_json::to_value(&cfg).unwrap_or_default()),
 
         // ---- 设置界面：写入单项或多项 ----
+        // 以磁盘上的最新配置为基准做合并：多系统共用同一份 config.json 时，
+        // 内存里的旧值可能已被另一个系统改过，用内存值当基准会互相覆盖。
         "settings.set" => {
-            let mut new_cfg = cfg.clone();
+            let mut new_cfg = load_config();
             if let Some(h) = args.get("hotkey").and_then(|v| v.as_str()) {
                 if hotkey::parse_hotkey(h).is_none() {
                     return err_envelope(
@@ -790,7 +863,20 @@ pub extern "C" fn air_plugin_free_string(ptr: *mut c_char) {
 
 #[no_mangle]
 pub extern "C" fn air_plugin_shutdown() {
+    // 只有最后一个实例退出时才真正清理。
+    // 宿主重复加载同一 DLL 时两个「实例」共用同一份静态变量，
+    // 旧实例的 shutdown 不能把新实例的状态抹掉。
+    let prev = LIVE_INSTANCES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    if prev > 1 {
+        host_log(
+            2,
+            &format!("air_mchose_profile shutdown（仍有 {} 个实例存活，保留状态）", prev - 1),
+        );
+        return;
+    }
+    LIVE_INSTANCES.store(0, std::sync::atomic::Ordering::SeqCst);
     host_log(2, "air_mchose_profile shutdown");
+    hotkey::stop();
     if let Ok(mut g) = STATE.lock() {
         *g = None;
     }

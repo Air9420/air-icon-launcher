@@ -228,15 +228,22 @@ fn load_plugin_inner(state: &State<'_, PluginHostState>, id: &str) -> AppResult<
         (plugin_dir, manifest, enabled, state.app_handle())
     };
 
+    // 关键顺序：必须**先卸载旧实例再加载新实例**。
+    // 反过来的话，新实例 init 会写入自己的全局状态，
+    // 紧接着旧实例 shutdown 又把它清空，插件随后只能退回默认配置，
+    // 表现为「改任意设置项就把其他设置重置」。
+    {
+        let mut reg = state_registry(state)?;
+        if let Some(old) = reg.get_mut(id) {
+            if old.loaded {
+                let _ = loader::unload_plugin(old);
+            }
+        }
+    }
+
     let loaded = loader::load_plugin_dll(&plugin_dir, &manifest, enabled, app)?;
 
     let mut reg = state_registry(state)?;
-    // 若已有旧实例，先卸载
-    if let Some(old) = reg.get_mut(id) {
-        if old.loaded {
-            let _ = loader::unload_plugin(old);
-        }
-    }
     reg.insert(loaded);
     reg.persist_enabled()?;
     Ok(())
