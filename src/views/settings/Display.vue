@@ -7,7 +7,7 @@
       <div class="monitor-selector">
         <div class="selector-header">
           <div class="selector-label">选择显示器：</div>
-          <button class="refresh-btn" @click="refreshMonitors()" title="刷新显示器列表">
+          <button class="refresh-btn" :disabled="isBusy" @click="refreshMonitors()" title="刷新显示器列表">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
               <path d="M3 3v5h5"></path>
@@ -23,6 +23,7 @@
             :key="monitor.name"
             class="monitor-chip"
             :class="{ active: selectedMonitor?.name === monitor.name }"
+            :disabled="isBusy"
             @click="selectMonitor(monitor)"
           >
             <span class="chip-index">{{ index + 1 }}</span>
@@ -49,7 +50,8 @@
             v-for="profile in monitorProfiles"
             :key="profile.id"
             class="icc-item"
-            :class="{ active: profile.enabled }"
+            :class="{ active: profile.enabled, busy: isBusy }"
+            :aria-busy="isBusy"
             @click="onSelect(profile.id)"
           >
             <div class="icc-radio">
@@ -59,12 +61,12 @@
               <span class="icc-name">{{ getFileName(profile.iccPath) }}</span>
               <span class="icc-path" :title="profile.iccPath">{{ profile.iccPath }}</span>
             </div>
-            <button class="action-btn danger" @click.stop="onRemove(profile.id)">删除</button>
+            <button class="action-btn danger" :disabled="isBusy" @click.stop="onRemove(profile.id)">删除</button>
           </div>
         </div>
 
         <!-- 添加 ICC 配置按钮 -->
-        <button class="add-btn" @click="onAdd">
+        <button class="add-btn" :disabled="isBusy" @click="onAdd">
           + 添加 ICC 配置文件
         </button>
       </div>
@@ -77,7 +79,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import { listen } from "@tauri-apps/api/event";
 import { useIccStore } from "../../stores/iccStore";
@@ -90,14 +92,69 @@ const { profiles, monitors } = storeToRefs(iccStore);
 const { confirm } = useConfirmDialog();
 
 const selectedMonitor = ref<MonitorInfo | null>(null);
+const isBusy = ref(false);
+const activeOperationTicket = ref(0);
+let switchRequestSeq = 0;
+// 仅在组件卸载时置真，作为“结果不再写回”的终态标记；
+// 切换/刷新造成的失效一律走 switchRequestSeq 递增，不能永久关停整页操作。
+let unmounted = false;
+let pendingSelectTimer: number | undefined;
 
 // 监听显示器变化事件（Windows系统事件）
 let unlistenDisplayChanged: (() => void) | null = null;
+
+function isStale(requestSeq: number, signal?: AbortSignal): boolean {
+  return unmounted
+    || requestSeq !== switchRequestSeq
+    || signal?.aborted === true;
+}
+
+function isSupersededError(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && (error as { code?: string }).code === "OPERATION_SUPERSEDED";
+}
+
+function snapshotEnabledState(): { id: string; enabled: boolean }[] {
+  return profiles.value.map((p) => ({ id: p.id, enabled: p.enabled }));
+}
+
+function restoreEnabledState(snapshot: { id: string; enabled: boolean }[]) {
+  const byId = new Map(snapshot.map((item) => [item.id, item.enabled]));
+  profiles.value = profiles.value.map((p) =>
+    byId.has(p.id) ? { ...p, enabled: byId.get(p.id)! } : p,
+  );
+}
+
+function applyEnabledState(profileId: string, enabled: boolean) {
+  const profile = profiles.value.find((p) => p.id === profileId);
+  if (!profile) return;
+  profiles.value = profiles.value.map((p) => ({
+    ...p,
+    enabled: p.monitorName === profile.monitorName ? p.id === profileId && enabled : p.enabled,
+  }));
+}
+
+/** 让正在跑或排队中的切换失效，但不影响之后的点击。 */
+function invalidatePendingSwitch() {
+  switchRequestSeq += 1;
+  iccStore.cancelPendingOperations();
+}
+
+watch(
+  () => selectedMonitor.value?.name,
+  () => {
+    // 换了显示器，旧配置的操作结果不再写回当前页。
+    if (isBusy.value) invalidatePendingSwitch();
+  },
+);
 
 // 刷新显示器列表
 // forceReselect: 当收到 display-changed 事件时强制重新选择主显示器
 // 因为 Windows 编号会在切换投影模式时重新分配
 async function refreshMonitors(forceReselect = false) {
+  if (isBusy.value) return;
   await iccStore.fetchMonitors();
 
   if (forceReselect) {
@@ -134,12 +191,15 @@ onMounted(async () => {
     const primary = monitors.value.find((m) => m.isPrimary) || monitors.value[0];
     selectedMonitor.value = primary;
   }
-
   // 后台预热 WCS 服务（不阻塞页面）
   iccStore.warmupWcs();
 
   // 监听Windows显示器变化事件
   unlistenDisplayChanged = await listen("display-changed", async () => {
+    if (isBusy.value) {
+      invalidatePendingSwitch();
+      return;
+    }
     // 强制重新选择主显示器，因为 Windows 编号会被重新分配
     await refreshMonitors(true);
     showToast("检测到显示器变化，已自动刷新", { type: "info" });
@@ -147,6 +207,10 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  unmounted = true;
+  switchRequestSeq += 1;
+  window.clearTimeout(pendingSelectTimer);
+  iccStore.cancelPendingOperations();
   // 清理事件监听器
   if (unlistenDisplayChanged) {
     unlistenDisplayChanged();
@@ -162,6 +226,7 @@ const monitorProfiles = computed(() => {
 });
 
 function selectMonitor(monitor: MonitorInfo) {
+  if (isBusy.value) return;
   selectedMonitor.value = monitor;
 }
 
@@ -171,78 +236,78 @@ function getFileName(path: string): string {
   return parts[parts.length - 1] || "";
 }
 
-async function onSelect(profileId: string) {
+function onSelect(profileId: string) {
+  // 真防抖：连点时只保留最后一次，单点不额外等待。
+  window.clearTimeout(pendingSelectTimer);
+  pendingSelectTimer = window.setTimeout(() => {
+    void runSelect(profileId);
+  }, 90);
+}
+
+async function runSelect(profileId: string) {
   const profile = profiles.value.find((p) => p.id === profileId);
-  if (!profile) return;
+  if (!profile || unmounted) return;
 
+  const requestSeq = ++switchRequestSeq;
+  const shouldEnable = !profile.enabled;
+  const prevEnabled = snapshotEnabledState();
   const startTime = performance.now();
-  console.log(`[ICC] 开始切换配置: ${getFileName(profile.iccPath)}`);
+  const label = getFileName(profile.iccPath);
 
-  // 如果已经启用，则禁用（取消选中）
-  if (profile.enabled) {
-    // 乐观更新 UI
-    profile.enabled = false;
-    showToast("已恢复默认颜色", { type: "info" });
+  console.log(`[ICC] 收到切换: ${label}, enable=${shouldEnable}`);
 
-    // 并行执行，不阻塞
-    Promise.all([
-      iccStore.toggleProfile(profileId, false),
-      iccStore.restoreDefault(profileId),
-    ]).then(() => {
-      console.log(`[ICC] 禁用完成: ${(performance.now() - startTime).toFixed(0)}ms`);
-    }).catch((e) => {
-      // 回滚
-      profile.enabled = true;
-      console.error(`[ICC] 禁用失败: ${(performance.now() - startTime).toFixed(0)}ms`, e);
-      showToast("禁用 ICC 配置失败", { type: "error" });
-    });
+  let operationTicket = 0;
+  try {
+    operationTicket = await iccStore.beginOperation();
+    if (isStale(requestSeq)) return;
+  } catch (e) {
+    console.error(`[ICC] 领取操作序列失败: ${label}`, e);
+    showToast("应用 ICC 配置失败", { type: "error" });
     return;
   }
 
-  // 乐观更新 UI：立即禁用其他配置，启用当前配置
-  const prevEnabled = profiles.value.map((p) => ({ id: p.id, enabled: p.enabled }));
-  profiles.value.forEach((p) => {
-    if (p.monitorName === profile.monitorName) {
-      p.enabled = p.id === profileId;
-    }
-  });
-  showToast("ICC 配置已应用", { type: "success" });
+  activeOperationTicket.value = operationTicket;
+  isBusy.value = true;
+  applyEnabledState(profileId, shouldEnable);
 
-  // 双阶段策略：
-  // 阶段1：立即应用 LUT（1ms），用户立即看到效果
-  // 阶段2：后台执行 Associate + SetDefault（系统级配置）
-  
-  // 阶段1：快速 LUT 更新
-  iccStore.toggleProfile(profileId, true).then(() => {
-    console.log(`[ICC] toggleProfile 完成: ${(performance.now() - startTime).toFixed(0)}ms`);
-    return iccStore.applyLutOnly(profileId);
-  }).then(() => {
-    console.log(`[ICC] LUT 应用完成（颜色已变化）: ${(performance.now() - startTime).toFixed(0)}ms`);
-    // 阶段2：后台执行完整的 Associate（完全不阻塞，不等待）
-    iccStore.applyProfile(profileId).then(() => {
-      console.log(`[ICC] 系统配置同步完成: ${(performance.now() - startTime).toFixed(0)}ms`);
-    }).catch((e) => {
-      console.error(`[ICC] 系统配置同步失败: ${(performance.now() - startTime).toFixed(0)}ms`, e);
-    });
+  const result = await iccStore.runSwitchOperation(operationTicket, async (signal) => {
+    if (shouldEnable) {
+      await iccStore.activateProfile(profileId, operationTicket);
+    } else {
+      await iccStore.deactivateProfile(profileId, operationTicket);
+    }
+    if (isStale(requestSeq, signal)) return;
   }).catch((e) => {
-    // 回滚
-    prevEnabled.forEach(({ id, enabled }) => {
-      const p = profiles.value.find((pp) => pp.id === id);
-      if (p) p.enabled = enabled;
-    });
-    console.error(`[ICC] 启用失败: ${(performance.now() - startTime).toFixed(0)}ms`, e);
-    showToast("应用 ICC 配置失败", { type: "error" });
+    if (isSupersededError(e) || isStale(requestSeq)) return "superseded";
+    console.error(`[ICC] 切换失败: ${(performance.now() - startTime).toFixed(0)}ms`, e);
+    // 回滚到操作前的完整快照：只翻当前项会把同显示器其他配置一起清掉。
+    restoreEnabledState(prevEnabled);
+    showToast(shouldEnable ? "应用 ICC 配置失败" : "禁用 ICC 配置失败", { type: "error" });
+    return "failed";
   });
+
+  if (result === "done") {
+    console.log(`[ICC] 切换完成: ${(performance.now() - startTime).toFixed(0)}ms`);
+    showToast(shouldEnable ? "ICC 配置已应用" : "已恢复默认颜色", {
+      type: shouldEnable ? "success" : "info",
+    });
+  }
+
+  if (activeOperationTicket.value === operationTicket) {
+    isBusy.value = false;
+    activeOperationTicket.value = 0;
+  }
 }
 
 async function onAdd() {
+  if (isBusy.value) return;
   if (!selectedMonitor.value) {
     showToast("请先选择显示器", { type: "error" });
     return;
   }
 
   const filePath = await iccStore.selectIccFile();
-  if (!filePath) return;
+  if (!filePath || isBusy.value) return;
 
   const profile: IccProfile = {
     id: crypto.randomUUID(),
@@ -261,6 +326,7 @@ async function onAdd() {
 }
 
 async function onRemove(profileId: string) {
+  if (isBusy.value) return;
   const profile = profiles.value.find((p) => p.id === profileId);
   if (!profile) return;
 
@@ -273,11 +339,14 @@ async function onRemove(profileId: string) {
   });
 
   if (!confirmed) return;
+  // 确认框期间用户可能已发起切换，此时再抢操作票会把对方踢成 SUPERSEDED。
+  if (isBusy.value) return;
 
   // 如果删除的是启用的配置，先恢复默认
   if (profile.enabled) {
     try {
-      await iccStore.restoreDefault(profileId);
+      const operationSeq = await iccStore.beginOperation();
+      await iccStore.restoreDefault(profileId, operationSeq);
     } catch (e) {
       console.error("Failed to restore default before remove:", e);
     }
@@ -352,10 +421,18 @@ async function onRemove(profileId: string) {
   transition: all 0.2s;
 }
 
-.refresh-btn:hover {
+.refresh-btn:hover:not(:disabled) {
   border-color: var(--primary-color);
   color: var(--primary-color);
   background: var(--primary-bg);
+}
+
+.refresh-btn:disabled,
+.monitor-chip:disabled,
+.action-btn:disabled,
+.add-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .monitor-chips {
@@ -378,7 +455,7 @@ async function onRemove(profileId: string) {
   width: 100%;
 }
 
-.monitor-chip:hover {
+.monitor-chip:hover:not(:disabled) {
   border-color: var(--primary-color);
   background: var(--hover-bg);
 }
@@ -473,8 +550,13 @@ async function onRemove(profileId: string) {
   border: 2px solid transparent;
 }
 
-.icc-item:hover {
+.icc-item:hover:not(.busy) {
   background: var(--hover-bg-strong);
+}
+
+.icc-item.busy {
+  cursor: progress;
+  opacity: 0.72;
 }
 
 .icc-item.active {
@@ -537,7 +619,7 @@ async function onRemove(profileId: string) {
   font-size: 12px;
 }
 
-.action-btn:hover {
+.action-btn:hover:not(:disabled) {
   background: var(--border-color-strong);
 }
 
@@ -545,7 +627,7 @@ async function onRemove(profileId: string) {
   color: var(--error-color);
 }
 
-.action-btn.danger:hover {
+.action-btn.danger:hover:not(:disabled) {
   background: rgba(255, 0, 0, 0.1);
 }
 
@@ -560,7 +642,7 @@ async function onRemove(profileId: string) {
   font-size: 14px;
 }
 
-.add-btn:hover {
+.add-btn:hover:not(:disabled) {
   opacity: 0.9;
 }
 

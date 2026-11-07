@@ -1,6 +1,8 @@
 use crate::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use tauri::Manager;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +29,110 @@ pub struct IccState {
     pub app_handle: Mutex<Option<tauri::AppHandle>>,
 }
 
+static MONITOR_NAME_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+static ICC_SYSTEM_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static ICC_WCS_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static ICC_LATEST_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn monitor_name_cache() -> &'static Mutex<HashMap<String, String>> {
+    MONITOR_NAME_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn refresh_monitor_name_cache(monitors: &[MonitorInfo]) {
+    let mut cache = match monitor_name_cache().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    cache.clear();
+    for monitor in monitors {
+        cache.insert(monitor.friendly_name.clone(), monitor.name.clone());
+    }
+}
+
+fn system_lock() -> &'static Mutex<()> {
+    ICC_SYSTEM_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn wcs_lock() -> &'static Mutex<()> {
+    ICC_WCS_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IccOperationTicket {
+    pub operation_seq: u64,
+}
+
+#[tauri::command]
+pub fn begin_icc_operation() -> IccOperationTicket {
+    let seq = next_system_operation();
+    IccOperationTicket { operation_seq: seq }
+}
+
+fn next_system_operation() -> u64 {
+    ICC_LATEST_SEQ.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+fn is_current_system_operation(seq: u64) -> bool {
+    ICC_LATEST_SEQ.load(Ordering::SeqCst) == seq
+}
+
+fn superseded_error() -> AppError {
+    AppError::new("OPERATION_SUPERSEDED", "A newer ICC operation superseded this one")
+}
+
+fn run_system_operation<T, F>(seq: u64, operation: F) -> AppResult<T>
+where
+    F: FnOnce() -> AppResult<T>,
+{
+    if !is_current_system_operation(seq) {
+        return Err(superseded_error());
+    }
+    let _guard = match system_lock().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if !is_current_system_operation(seq) {
+        return Err(superseded_error());
+    }
+    operation()
+}
+
+fn with_wcs_lock<F, R>(operation: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let _guard = match wcs_lock().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    operation()
+}
+
+fn schedule_wcs(seq: u64, device_name: String, icc_path: String) {
+    std::thread::spawn(move || {
+        if !is_current_system_operation(seq) {
+            return;
+        }
+        with_wcs_lock(|| {
+            if !is_current_system_operation(seq) {
+                return;
+            }
+            apply_wcs_background(&device_name, &icc_path);
+        });
+    });
+}
+
+async fn run_blocking<T, F>(operation: F) -> AppResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> AppResult<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(operation)
+        .await
+        .map_err(|e| AppError::internal(format!("ICC blocking task failed: {}", e)))?
+}
+
 impl Default for IccState {
     fn default() -> Self {
         Self {
@@ -38,28 +144,75 @@ impl Default for IccState {
 
 impl IccState {
     pub fn set_app_handle(&self, handle: tauri::AppHandle) {
-        if let Ok(mut h) = self.app_handle.lock() {
-            *h = Some(handle);
-        }
+        let mut stored = match self.app_handle.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *stored = Some(handle);
     }
 
     fn save_profiles_to_config(&self) -> AppResult<()> {
-        let profiles = self.profiles.lock()
-            .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
+        let profiles = lock_profiles(self).clone();
 
-        let app_handle = self.app_handle.lock()
-            .map_err(|_| AppError::internal("Failed to lock app handle"))?;
+        let app_handle = match self.app_handle.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
 
         if let Some(handle) = app_handle.as_ref() {
             let config_manager = handle.state::<crate::config::ConfigManager>();
             let mut current_config = config_manager.load_config();
-            current_config.icc_profiles = profiles.clone();
+            current_config.icc_profiles = profiles;
             config_manager.save_config(&current_config)
                 .map_err(|e| AppError::internal(format!("Failed to save config: {}", e)))?;
         }
 
         Ok(())
     }
+}
+
+fn lock_profiles(state: &IccState) -> MutexGuard<'_, Vec<IccProfile>> {
+    match state.profiles.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn snapshot_profiles(state: &IccState) -> Vec<IccProfile> {
+    lock_profiles(state).clone()
+}
+
+fn clone_app_handle(state: &IccState) -> AppResult<tauri::AppHandle> {
+    let stored = match state.app_handle.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    stored
+        .clone()
+        .ok_or_else(|| AppError::internal("ICC app handle is not initialized"))
+}
+
+fn set_profile_enabled(state: &IccState, profile_id: &str, enabled: bool) -> AppResult<String> {
+    let mut profiles = lock_profiles(state);
+    let monitor_name = profiles
+        .iter()
+        .find(|p| p.id == profile_id)
+        .map(|p| p.monitor_name.clone())
+        .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
+
+    if enabled {
+        for profile in profiles.iter_mut() {
+            if profile.monitor_name == monitor_name && profile.id != profile_id {
+                profile.enabled = false;
+            }
+        }
+    }
+
+    if let Some(profile) = profiles.iter_mut().find(|p| p.id == profile_id) {
+        profile.enabled = enabled;
+    }
+
+    Ok(monitor_name)
 }
 
 #[cfg(windows)]
@@ -183,17 +336,20 @@ pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
         });
     }
 
+    refresh_monitor_name_cache(&monitors);
     Ok(monitors)
 }
 
 #[cfg(not(windows))]
 pub fn get_connected_monitors() -> AppResult<Vec<MonitorInfo>> {
-    Ok(vec![MonitorInfo {
+    let monitors = vec![MonitorInfo {
         name: "Display 1".to_string(),
         friendly_name: "Display 1".to_string(),
         device_id: String::new(),
         is_primary: true,
-    }])
+    }];
+    refresh_monitor_name_cache(&monitors);
+    Ok(monitors)
 }
 
 /// 从 EDID 二进制数据解析显示器名称（tag 0xFC = Monitor Name Descriptor）
@@ -428,114 +584,109 @@ fn extract_display_name_from_id(device_id: &str) -> String {
 }
 
 #[tauri::command]
-pub fn get_monitors() -> AppResult<Vec<MonitorInfo>> {
-    get_connected_monitors()
+pub async fn get_monitors() -> AppResult<Vec<MonitorInfo>> {
+    run_blocking(get_connected_monitors).await
 }
 
 #[tauri::command]
-pub fn get_icc_profiles(state: tauri::State<'_, IccState>) -> AppResult<Vec<IccProfile>> {
-    let profiles = state.profiles.lock()
-        .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
-    Ok(profiles.clone())
+pub async fn get_icc_profiles(state: tauri::State<'_, IccState>) -> AppResult<Vec<IccProfile>> {
+    let handle = clone_app_handle(&state)?;
+    run_blocking(move || {
+        handle
+            .try_state::<IccState>()
+            .map(|icc| snapshot_profiles(&icc))
+            .ok_or_else(|| AppError::internal("ICC state is not managed"))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn add_icc_profile(
+pub async fn add_icc_profile(
     state: tauri::State<'_, IccState>,
     profile: IccProfile,
 ) -> AppResult<()> {
-    {
-        let mut profiles = state.profiles.lock()
-            .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
-        
-        if profiles.iter().any(|p| p.id == profile.id) {
-            return Err(AppError::invalid_input("Profile with this ID already exists"));
+    let handle = clone_app_handle(&state)?;
+    run_blocking(move || {
+        let icc = handle
+            .try_state::<IccState>()
+            .ok_or_else(|| AppError::internal("ICC state is not managed"))?;
+        {
+            let mut profiles = lock_profiles(&icc);
+            if profiles.iter().any(|p| p.id == profile.id) {
+                return Err(AppError::invalid_input("Profile with this ID already exists"));
+            }
+            profiles.push(profile);
         }
-        
-        profiles.push(profile);
-    }
-    
-    state.save_profiles_to_config()?;
-    Ok(())
+        icc.save_profiles_to_config()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn remove_icc_profile(
+pub async fn remove_icc_profile(
     state: tauri::State<'_, IccState>,
     profile_id: String,
 ) -> AppResult<()> {
-    {
-        let mut profiles = state.profiles.lock()
-            .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
-        
-        profiles.retain(|p| p.id != profile_id);
-    }
-    
-    state.save_profiles_to_config()?;
-    Ok(())
+    let handle = clone_app_handle(&state)?;
+    run_blocking(move || {
+        let icc = handle
+            .try_state::<IccState>()
+            .ok_or_else(|| AppError::internal("ICC state is not managed"))?;
+        {
+            let mut profiles = lock_profiles(&icc);
+            profiles.retain(|p| p.id != profile_id);
+        }
+        icc.save_profiles_to_config()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn toggle_icc_profile(
+pub async fn toggle_icc_profile(
     state: tauri::State<'_, IccState>,
     profile_id: String,
     enabled: bool,
+    operation_seq: Option<u64>,
 ) -> AppResult<()> {
-    let monitor_name = {
-        let mut profiles = state.profiles.lock()
-            .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
-        
-        // 找到当前配置的显示器名称
-        let monitor_name = profiles.iter()
-            .find(|p| p.id == profile_id)
-            .map(|p| p.monitor_name.clone())
-            .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
-        
-        if enabled {
-            // 启用时，禁用同一显示器的其他配置
-            for profile in profiles.iter_mut() {
-                if profile.monitor_name == monitor_name && profile.id != profile_id {
-                    profile.enabled = false;
-                }
-            }
-        }
-        
-        // 设置当前配置的状态
-        if let Some(profile) = profiles.iter_mut().find(|p| p.id == profile_id) {
-            profile.enabled = enabled;
-        }
-        
-        monitor_name
-    };
-    
-    state.save_profiles_to_config()?;
-    
-    // 如果是禁用，恢复线性 Gamma Ramp
-    if !enabled {
-        let _ = restore_default_icc_for_monitor(&monitor_name);
-    }
-    
-    Ok(())
+    let handle = clone_app_handle(&state)?;
+    let seq = operation_seq.unwrap_or_else(next_system_operation);
+    run_blocking(move || {
+        let icc = handle
+            .try_state::<IccState>()
+            .ok_or_else(|| AppError::internal("ICC state is not managed"))?;
+        run_system_operation(seq, || {
+            set_profile_enabled(&icc, &profile_id, enabled)?;
+            icc.save_profiles_to_config()?;
+            Ok(())
+        })
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn select_icc_file() -> AppResult<Option<String>> {
-    let dialog = rfd::FileDialog::new()
-        .add_filter("ICC Profile", &["icc", "icm"])
-        .set_title("Select ICC Profile");
-    
-    Ok(dialog.pick_file().map(|p| p.to_string_lossy().to_string()))
+pub async fn select_icc_file() -> AppResult<Option<String>> {
+    run_blocking(|| {
+        let dialog = rfd::FileDialog::new()
+            .add_filter("ICC Profile", &["icc", "icm"])
+            .set_title("Select ICC Profile");
+        Ok(dialog.pick_file().map(|p| p.to_string_lossy().to_string()))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn get_system_icc_profiles() -> AppResult<Vec<String>> {
+pub async fn get_system_icc_profiles() -> AppResult<Vec<String>> {
+    run_blocking(get_system_icc_profiles_blocking).await
+}
+
+fn get_system_icc_profiles_blocking() -> AppResult<Vec<String>> {
     #[cfg(windows)]
     {
         use std::path::PathBuf;
         use windows::Win32::UI::Shell::{SHGetFolderPathW, CSIDL_SYSTEM};
-        
+
         let mut profiles = Vec::new();
-        
+
         let mut path_buf = [0u16; 260];
         unsafe {
             if SHGetFolderPathW(None, CSIDL_SYSTEM as i32, None, 0, &mut path_buf).is_ok() {
@@ -543,7 +694,7 @@ pub fn get_system_icc_profiles() -> AppResult<Vec<String>> {
                     &path_buf[..path_buf.iter().position(|&c| c == 0).unwrap_or(260)]
                 );
                 let color_dir = PathBuf::from(system_path).join("spool").join("drivers").join("color");
-                
+
                 if let Ok(entries) = std::fs::read_dir(&color_dir) {
                     for entry in entries.flatten() {
                         let path = entry.path();
@@ -556,11 +707,11 @@ pub fn get_system_icc_profiles() -> AppResult<Vec<String>> {
                 }
             }
         }
-        
+
         profiles.sort();
         Ok(profiles)
     }
-    
+
     #[cfg(not(windows))]
     {
         Ok(Vec::new())
@@ -656,51 +807,170 @@ pub fn restore_default_icc_for_monitor(_device_name: &str) -> AppResult<()> {
     Err(AppError::internal("ICC profile management is only supported on Windows"))
 }
 
+/// 原子启用：LUT → 状态落盘 → 后台 WCS 调度，全在同一张操作票内完成。
+///
+/// 拆成 `toggle` + `apply` 两次 IPC 会留下“配置已改、屏幕没变”的窗口，
+/// 并且第二次调用失败时磁盘状态无法回滚，因此启用/禁用必须各用一条命令。
 #[tauri::command]
-pub fn apply_icc_profile(
+pub async fn activate_icc_profile(
     state: tauri::State<'_, IccState>,
     profile_id: String,
+    operation_seq: Option<u64>,
 ) -> AppResult<()> {
-    let (monitor_name, icc_path) = {
-        let profiles = state.profiles.lock()
-            .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
-        
-        let profile = profiles.iter().find(|p| p.id == profile_id)
-            .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
-        
-        (profile.monitor_name.clone(), profile.icc_path.clone())
-    };
-    
-    // 1. 立即执行 LUT 更新（1ms，用户立即看到效果）
-    let result = apply_lut_only(&monitor_name, &icc_path);
-    
-    // 2. 后台执行 WCS 系统配置（不阻塞前端）
-    let monitor = monitor_name.clone();
-    let icc = icc_path.clone();
-    std::thread::spawn(move || {
-        apply_wcs_background(&monitor, &icc);
-    });
-    
-    result
+    let handle = clone_app_handle(&state)?;
+    let seq = operation_seq.unwrap_or_else(next_system_operation);
+    run_blocking(move || {
+        let icc = handle
+            .try_state::<IccState>()
+            .ok_or_else(|| AppError::internal("ICC state is not managed"))?;
+        run_system_operation(seq, || {
+            let snapshot = snapshot_profiles(&icc);
+            let (monitor_name, icc_path) = {
+                let profile = snapshot
+                    .iter()
+                    .find(|p| p.id == profile_id)
+                    .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
+                (profile.monitor_name.clone(), profile.icc_path.clone())
+            };
+
+            // 先写 LUT：失败时内存与磁盘状态都保持不变，不会留下“已启用但屏幕没变”。
+            with_wcs_lock(|| apply_lut_only(&monitor_name, &icc_path))?;
+
+            if !is_current_system_operation(seq) {
+                return Err(superseded_error());
+            }
+
+            let committed = (|| -> AppResult<()> {
+                set_profile_enabled(&icc, &profile_id, true)?;
+                icc.save_profiles_to_config()
+            })();
+            if let Err(e) = committed {
+                *lock_profiles(&icc) = snapshot;
+                return Err(e);
+            }
+
+            schedule_wcs(seq, monitor_name, icc_path);
+            Ok(())
+        })
+    })
+    .await
+}
+
+/// 原子禁用：先恢复线性 Gamma Ramp，再落盘状态。
+///
+/// 顺序与 `activate_icc_profile` 一致——副作用在前、状态提交在后，
+/// 这样任一步失败时磁盘状态都停留在原值，前端回滚快照即可保持一致。
+#[tauri::command]
+pub async fn deactivate_icc_profile(
+    state: tauri::State<'_, IccState>,
+    profile_id: String,
+    operation_seq: Option<u64>,
+) -> AppResult<()> {
+    let handle = clone_app_handle(&state)?;
+    let seq = operation_seq.unwrap_or_else(next_system_operation);
+    run_blocking(move || {
+        let icc = handle
+            .try_state::<IccState>()
+            .ok_or_else(|| AppError::internal("ICC state is not managed"))?;
+        run_system_operation(seq, || {
+            let snapshot = snapshot_profiles(&icc);
+            let monitor_name = snapshot
+                .iter()
+                .find(|p| p.id == profile_id)
+                .map(|p| p.monitor_name.clone())
+                .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
+
+            with_wcs_lock(|| restore_default_icc_for_monitor(&monitor_name))?;
+
+            if !is_current_system_operation(seq) {
+                return Err(superseded_error());
+            }
+
+            let committed = (|| -> AppResult<()> {
+                set_profile_enabled(&icc, &profile_id, false)?;
+                icc.save_profiles_to_config()
+            })();
+            if let Err(e) = committed {
+                *lock_profiles(&icc) = snapshot;
+                return Err(e);
+            }
+
+            Ok(())
+        })
+    })
+    .await
+}
+
+/// 底层原语：写 LUT 并调度后台 WCS，但不改配置启用状态。
+/// 设置页已改用 `activate_icc_profile`，此命令保留给需要单独刷新 LUT 的调用方。
+#[tauri::command]
+pub async fn apply_icc_profile(
+    state: tauri::State<'_, IccState>,
+    profile_id: String,
+    operation_seq: Option<u64>,
+) -> AppResult<()> {
+    let handle = clone_app_handle(&state)?;
+    let seq = operation_seq.unwrap_or_else(next_system_operation);
+    run_blocking(move || {
+        let icc = handle
+            .try_state::<IccState>()
+            .ok_or_else(|| AppError::internal("ICC state is not managed"))?;
+        run_system_operation(seq, || {
+            let (monitor_name, icc_path) = {
+                let profiles = snapshot_profiles(&icc);
+                let profile = profiles.iter().find(|p| p.id == profile_id)
+                    .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
+                (profile.monitor_name.clone(), profile.icc_path.clone())
+            };
+
+            // LUT 与 WCS 共用系统操作锁，旧请求不再排队覆盖新请求。
+            let result = with_wcs_lock(|| apply_lut_only(&monitor_name, &icc_path));
+            if result.is_ok() {
+                schedule_wcs(seq, monitor_name, icc_path);
+            }
+            result
+        })
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn apply_icc_lut_only(
+pub async fn apply_icc_lut_only(
     state: tauri::State<'_, IccState>,
     profile_id: String,
+    operation_seq: Option<u64>,
 ) -> AppResult<()> {
-    let profiles = state.profiles.lock()
-        .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
-    
-    let profile = profiles.iter().find(|p| p.id == profile_id)
-        .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
-    
-    // 只执行 LUT 更新，跳过 Associate
-    apply_lut_only(&profile.monitor_name, &profile.icc_path)
+    let handle = clone_app_handle(&state)?;
+    let seq = operation_seq.unwrap_or_else(next_system_operation);
+    run_blocking(move || {
+        let icc = handle
+            .try_state::<IccState>()
+            .ok_or_else(|| AppError::internal("ICC state is not managed"))?;
+        run_system_operation(seq, || {
+            let (monitor_name, icc_path) = {
+                let profiles = snapshot_profiles(&icc);
+                let profile = profiles.iter().find(|p| p.id == profile_id)
+                    .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
+                (profile.monitor_name.clone(), profile.icc_path.clone())
+            };
+            with_wcs_lock(|| apply_lut_only(&monitor_name, &icc_path))
+        })
+    })
+    .await
 }
 
-/// 根据 friendlyName 查找对应的 Windows 设备名称
+/// 根据 friendlyName 查找对应的 Windows 设备名称。
+/// 优先使用 `get_monitors` 刷新过的缓存，避免每次应用 LUT 都做完整枚举。
 fn find_device_name_by_friendly_name(friendly_name: &str) -> Option<String> {
+    let cache = match monitor_name_cache().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if let Some(device_name) = cache.get(friendly_name) {
+        return Some(device_name.clone());
+    }
+    drop(cache);
+
     let monitors = get_connected_monitors().ok()?;
     monitors.iter()
         .find(|m| m.friendly_name == friendly_name)
@@ -797,40 +1067,58 @@ fn apply_wcs_background(_device_name: &str, _icc_path: &str) {
 #[tauri::command]
 pub fn warmup_wcs() {
     std::thread::spawn(|| {
-        #[cfg(windows)]
-        {
-            use windows::Win32::UI::ColorSystem::{
-                WcsAssociateColorProfileWithDevice, WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
-            };
-            
-            // 使用系统自带的 sRGB 配置触发 WCS 初始化
-            let dummy_icc = "C:\\Windows\\System32\\spool\\drivers\\color\\sRGB Color Space Profile.icm";
-            let dummy_device = "\\\\.\\DISPLAY1";
-            
-            let icc_wide: Vec<u16> = dummy_icc.encode_utf16().chain(std::iter::once(0)).collect();
-            let device_wide: Vec<u16> = dummy_device.encode_utf16().chain(std::iter::once(0)).collect();
-            
-            unsafe {
-                let _ = WcsAssociateColorProfileWithDevice(
-                    WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
-                    windows::core::PCWSTR(icc_wide.as_ptr()),
-                    windows::core::PCWSTR(device_wide.as_ptr()),
-                );
+        with_wcs_lock(|| {
+            #[cfg(windows)]
+            {
+                use windows::Win32::UI::ColorSystem::{
+                    WcsAssociateColorProfileWithDevice, WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+                };
+
+                // 使用系统自带的 sRGB 配置触发 WCS 初始化
+                let dummy_icc = "C:\\Windows\\System32\\spool\\drivers\\color\\sRGB Color Space Profile.icm";
+                let dummy_device = "\\\\.\\DISPLAY1";
+
+                let icc_wide: Vec<u16> = dummy_icc.encode_utf16().chain(std::iter::once(0)).collect();
+                let device_wide: Vec<u16> = dummy_device.encode_utf16().chain(std::iter::once(0)).collect();
+
+                unsafe {
+                    let _ = WcsAssociateColorProfileWithDevice(
+                        WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+                        windows::core::PCWSTR(icc_wide.as_ptr()),
+                        windows::core::PCWSTR(device_wide.as_ptr()),
+                    );
+                }
             }
-        }
+        });
     });
 }
 
 #[tauri::command]
-pub fn restore_default_icc(
+pub async fn restore_default_icc(
     state: tauri::State<'_, IccState>,
     profile_id: String,
+    operation_seq: Option<u64>,
 ) -> AppResult<()> {
-    let profiles = state.profiles.lock()
-        .map_err(|_| AppError::internal("Failed to lock ICC state"))?;
-    
-    let profile = profiles.iter().find(|p| p.id == profile_id)
-        .ok_or_else(|| AppError::not_found("ICC profile not found"))?;
-    
-    restore_default_icc_for_monitor(&profile.monitor_name)
+    let handle = clone_app_handle(&state)?;
+    let seq = operation_seq.unwrap_or_else(next_system_operation);
+    run_blocking(move || {
+        let icc = handle
+            .try_state::<IccState>()
+            .ok_or_else(|| AppError::internal("ICC state is not managed"))?;
+        run_system_operation(seq, || {
+            let monitor_name = {
+                let profiles = snapshot_profiles(&icc);
+                profiles
+                    .iter()
+                    .find(|p| p.id == profile_id)
+                    .map(|p| p.monitor_name.clone())
+                    .ok_or_else(|| AppError::not_found("ICC profile not found"))?
+            };
+            if !is_current_system_operation(seq) {
+                return Err(superseded_error());
+            }
+            with_wcs_lock(|| restore_default_icc_for_monitor(&monitor_name))
+        })
+    })
+    .await
 }

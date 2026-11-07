@@ -1,13 +1,39 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { invokeOrThrow } from "../utils/invoke-wrapper";
+import { createIccOperationQueue, type IccOperationResult } from "./icc-operation-queue";
 import type { IccProfile, MonitorInfo } from "../types/icc";
+
+interface OperationTicket {
+  operationSeq: number;
+}
+
+const operationQueue = createIccOperationQueue();
 
 export const useIccStore = defineStore("icc", () => {
   const profiles = ref<IccProfile[]>([]);
   const monitors = ref<MonitorInfo[]>([]);
   const loading = ref<boolean>(false);
   const error = ref<string>("");
+
+  async function beginOperation(): Promise<number> {
+    const ticket = await invokeOrThrow<OperationTicket>("begin_icc_operation");
+    return ticket.operationSeq;
+  }
+
+  async function runSwitchOperation(
+    operationSeq: number,
+    operation: (signal: AbortSignal) => Promise<void>,
+  ): Promise<IccOperationResult<"done">> {
+    return operationQueue.enqueue(
+      `switch:${operationSeq}`,
+      async (signal) => {
+        if (signal.aborted) return "superseded";
+        await operation(signal);
+        return "done";
+      },
+    );
+  }
 
   async function fetchMonitors() {
     try {
@@ -26,111 +52,68 @@ export const useIccStore = defineStore("icc", () => {
   }
 
   async function addProfile(profile: IccProfile) {
-    try {
-      await invokeOrThrow("add_icc_profile", { profile });
-      profiles.value.push(profile);
-    } catch (e) {
-      console.error("Failed to add ICC profile:", e);
-      throw e;
-    }
+    await invokeOrThrow("add_icc_profile", { profile });
+    profiles.value.push(profile);
   }
 
   async function removeProfile(profileId: string) {
-    try {
-      await invokeOrThrow("remove_icc_profile", { profileId });
-      profiles.value = profiles.value.filter((p) => p.id !== profileId);
-    } catch (e) {
-      console.error("Failed to remove ICC profile:", e);
-      throw e;
-    }
+    await invokeOrThrow("remove_icc_profile", { profileId });
+    profiles.value = profiles.value.filter((p) => p.id !== profileId);
   }
 
-  async function toggleProfile(profileId: string, enabled: boolean) {
-    const startTime = performance.now();
-    try {
-      await invokeOrThrow("toggle_icc_profile", { profileId, enabled });
-      console.log(`[ICC Store] toggle_icc_profile IPC 完成: ${(performance.now() - startTime).toFixed(0)}ms`);
-      // 本地更新状态，避免额外的 IPC 调用
-      if (enabled) {
-        // 禁用同一显示器的其他配置
-        const profile = profiles.value.find((p) => p.id === profileId);
-        if (profile) {
-          profiles.value = profiles.value.map((p) => ({
-            ...p,
-            enabled: p.monitorName === profile.monitorName ? p.id === profileId : p.enabled,
-          }));
-        }
-      } else {
-        const idx = profiles.value.findIndex((p) => p.id === profileId);
-        if (idx !== -1) {
-          profiles.value[idx] = { ...profiles.value[idx], enabled: false };
-        }
-      }
-    } catch (e) {
-      console.error(`[ICC Store] toggle_icc_profile 失败: ${(performance.now() - startTime).toFixed(0)}ms`, e);
-      throw e;
-    }
+  /**
+   * 启用配置：一次 IPC 完成 LUT 写入、状态落盘与后台 WCS 调度。
+   * 失败时后端会回滚内存与磁盘状态，调用方只需回滚本地快照。
+   */
+  async function activateProfile(profileId: string, operationSeq: number) {
+    await invokeOrThrow("activate_icc_profile", { profileId, operationSeq });
   }
 
-  async function applyProfile(profileId: string) {
-    const startTime = performance.now();
-    try {
-      await invokeOrThrow("apply_icc_profile", { profileId });
-      console.log(`[ICC Store] apply_icc_profile IPC 完成: ${(performance.now() - startTime).toFixed(0)}ms`);
-    } catch (e) {
-      console.error(`[ICC Store] apply_icc_profile 失败: ${(performance.now() - startTime).toFixed(0)}ms`, e);
-      throw e;
-    }
+  /** 禁用配置：一次 IPC 完成状态落盘与线性 Gamma Ramp 恢复。 */
+  async function deactivateProfile(profileId: string, operationSeq: number) {
+    await invokeOrThrow("deactivate_icc_profile", { profileId, operationSeq });
   }
 
-  async function applyLutOnly(profileId: string) {
-    const startTime = performance.now();
-    try {
-      await invokeOrThrow("apply_icc_lut_only", { profileId });
-      console.log(`[ICC Store] apply_icc_lut_only IPC 完成: ${(performance.now() - startTime).toFixed(0)}ms`);
-    } catch (e) {
-      console.error(`[ICC Store] apply_icc_lut_only 失败: ${(performance.now() - startTime).toFixed(0)}ms`, e);
-      throw e;
-    }
+  /**
+   * 底层原语：只写 LUT 并调度后台 WCS，不改启用状态。
+   * 设置页的开关走 activate/deactivate，这里留给需要单独刷新 LUT 的调用方。
+   */
+  async function applyProfile(profileId: string, operationSeq: number) {
+    await invokeOrThrow("apply_icc_profile", { profileId, operationSeq });
   }
 
-  async function restoreDefault(profileId: string) {
-    const startTime = performance.now();
-    try {
-      await invokeOrThrow("restore_default_icc", { profileId });
-      console.log(`[ICC Store] restore_default_icc IPC 完成: ${(performance.now() - startTime).toFixed(0)}ms`);
-    } catch (e) {
-      console.error(`[ICC Store] restore_default_icc 失败: ${(performance.now() - startTime).toFixed(0)}ms`, e);
-      throw e;
-    }
+  async function applyLutOnly(profileId: string, operationSeq: number) {
+    await invokeOrThrow("apply_icc_lut_only", { profileId, operationSeq });
+  }
+
+  async function restoreDefault(profileId: string, operationSeq: number) {
+    await invokeOrThrow("restore_default_icc", { profileId, operationSeq });
+  }
+
+  async function toggleProfile(
+    profileId: string,
+    enabled: boolean,
+    operationSeq: number,
+  ) {
+    await invokeOrThrow("toggle_icc_profile", { profileId, enabled, operationSeq });
   }
 
   async function selectIccFile(): Promise<string | null> {
-    try {
-      return await invokeOrThrow<string | null>("select_icc_file");
-    } catch (e) {
-      console.error("Failed to select ICC file:", e);
-      return null;
-    }
+    return await invokeOrThrow<string | null>("select_icc_file");
   }
 
   async function getSystemProfiles(): Promise<string[]> {
-    try {
-      return await invokeOrThrow<string[]>("get_system_icc_profiles");
-    } catch (e) {
-      console.error("Failed to get system ICC profiles:", e);
-      return [];
-    }
+    return await invokeOrThrow<string[]>("get_system_icc_profiles");
   }
 
-  // 预热 WCS 服务（后台执行，不阻塞）
+  function cancelPendingOperations() {
+    operationQueue.cancelPending();
+  }
+
   function warmupWcs() {
-    try {
-      invokeOrThrow("warmup_wcs");
-      console.log("[ICC Store] WCS 预热已启动（后台）");
-    } catch (e) {
+    void invokeOrThrow("warmup_wcs").catch((e) => {
       console.warn("[ICC Store] WCS 预热失败:", e);
-    }
+    });
   }
 
   return {
@@ -138,12 +121,17 @@ export const useIccStore = defineStore("icc", () => {
     monitors,
     loading,
     error,
+    beginOperation,
+    runSwitchOperation,
+    cancelPendingOperations,
     fetchMonitors,
     fetchProfiles,
     warmupWcs,
     addProfile,
     removeProfile,
     toggleProfile,
+    activateProfile,
+    deactivateProfile,
     applyProfile,
     applyLutOnly,
     restoreDefault,
