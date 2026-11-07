@@ -1,11 +1,11 @@
 {
-  "version": "0.10.0",
-  "notes": "## v0.10.0\n\n### 更新模块重做\n\n- 更新界面由弹窗改为独立页面，可完整滚动查看版本、更新源、更新内容与日志\n- 检查到新版本时只弹一个小提示询问是否前往更新页，点「是」进入，点「否」直接关闭\n- 更新源设置移到页面顶部，横排切换 GitHub / Gitee，并显示本次检查的延迟或失败状态\n\n### 行为调整\n\n- 去掉「首选源失败时自动尝试另一个源」：源由你自行选择，失败会直接提示原因，换个源重试即可\n- 断点续传改为始终生效，不再需要手动开启；有未完成的下载会直接从断点继续\n\n### 界面优化\n\n- 设置-关于页精简：应用信息改为横排卡片，技术栈补充用途说明，项目主页合并版权信息",
-  "pub_date": "2026-11-07T00:00:00Z",
+  "version": "0.10.1",
+  "notes": "## v0.10.1\n\n### 修复\n\n- 修复快速连点 ICC 配置时旧请求覆盖新请求的问题：后端为每次切换分配操作序列，过期请求在拿锁前后各校验一次，直接返回 OPERATION_SUPERSEDED 而不再写屏\n- 修复 LUT 与 WCS 系统配置乱序执行：两者共用同一把锁，旧请求不会在新请求之后才落地\n- 修复切换失败时把同显示器其他配置一并取消勾选：改用操作前的完整状态快照回滚，只还原受影响项\n- 修复切换失败后界面与实际状态不一致：启用/禁用各自合并为一条原子命令，副作用在前、状态提交在后，任一步失败磁盘状态都停在原值\n- 修复切换过程中切换显示器或收到显示器变更事件后，ICC 列表整页点不动的问题：失效标记改为一次性序号，不再永久置真\n\n### 优化\n\n- ICC 切换加入串行队列，切换类操作只保留最后一次，避免连点后逐个回放\n- 连点防抖改为真正的定时器覆盖，单次点击不再固定等待\n- 显示设置页在操作进行中禁用相关按钮并显示忙碌态，避免并发操作互相干扰\n- 删除确认框返回后重新校验忙碌状态，不再抢走正在进行的切换\n- ICC 相关命令改为异步执行，耗时的 WCS 调用与文件对话框不再阻塞 IPC 线程\n- 缓存显示器 friendlyName 到设备名映射，应用 LUT 时不再重复枚举显示设备",
+  "pub_date": "2026-11-07T01:57:00.000Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbUt3NUd3RVF4cU9JSUVzL0RGaHJsRFlNT1BJU1J6SlVMeFR4b08zZHZyRHd5N01Dek5YV3h0TnB2ZXkzM2szemhLTk5vWUUyT1VjVFduN3RWUnVqWDBCVG5wQ1h4a2dZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MDA0ODQ3CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC4xMC4wX3g2NC1zZXR1cC5uc2lzLnppcApQOFVQMmg5MXhlRjNQUHlNbUJUY2lhYXZpYWJEanJ6elZEVjd0QzBXMkM3Y1BzZVpUL1NqU3RNaFU5aktFVkJuTE44bCtiYjluZ09uSU9zaFQvZ0VDdz09Cg==",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.10.0/air-icon-launcher_0.10.0_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbUt3NUd3RVF4cUxNRmF4cCtpUzcrUWJOZTNSY1YyL1VSTUwzK1QxM0sySDM1WjM5Y2JUaGpCYm0wbmwrb0xlR2lTTTZaQTl4VDVOanNGMy8zMkI2a2Q3emNHUExHU2dNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MDE2NDE0CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC4xMC4xX3g2NC1zZXR1cC5uc2lzLnppcApXSmxtTkZaQ201R2ZMNEZ5UlgyM3hOK2hrbGxhVW11eUVlY1VjS2lVY1lhUmxUT3hkRjBJOGlJbGtxTlZWOXNFcDRyczFoZWhldk9sOU9LbllrNUhEQT09Cg==",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.10.1/air-icon-launcher_0.10.1_x64-setup.nsis.zip"
     }
   }
 }
