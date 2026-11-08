@@ -71,3 +71,4 @@ plugins/*/target/
 
 # 回归工具（tools/host-sim）的构建产物
 tools/*/target/
+release_notes.md

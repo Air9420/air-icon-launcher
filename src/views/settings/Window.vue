@@ -64,6 +64,29 @@
         </div>
 
         <div class="section">
+            <div class="section-title">权限</div>
+            <div class="hint" :class="{ ok: elevatedDraft }">
+                <template v-if="elevatedDraft">当前以管理员权限运行，全局热键可在受保护的游戏窗口内生效。</template>
+                <template v-else>当前以普通权限运行。三角洲等带 ACE 反作弊的游戏会把游戏进程提到高完整性级别，
+                    普通权限下 Windows 的 UIPI 会拦掉所有热键通道，表现为游戏里按热键没反应、切出游戏才正常。</template>
+            </div>
+            <div v-if="!elevatedDraft" class="row-actions">
+                <button class="btn-inline" type="button" :disabled="elevationBusy" @click="onRelaunchAsAdmin">
+                    立即以管理员重启
+                </button>
+            </div>
+            <label class="check" style="margin-top: 8px;">
+                <input v-model="runAsAdminDraft" type="checkbox" :disabled="elevationBusy"
+                    @change="onRunAsAdminChange" />
+                <span>每次启动自动请求管理员权限</span>
+            </label>
+            <div class="hint compact">
+                勾选后写入 HKCU 兼容性标记，启动时会弹一次 UAC。随时可取消。
+            </div>
+            <div v-if="elevationError" class="hint error">{{ elevationError }}</div>
+        </div>
+
+        <div class="section">
             <div class="section-title">启动项</div>
             <label class="check">
                 <input v-model="autoHideAfterLaunchDraft" type="checkbox" @change="onAutoHideAfterLaunchChange" />
@@ -177,7 +200,7 @@
 import { storeToRefs } from "pinia";
 import { markRaw, onMounted, ref, watchEffect, computed } from "vue";
 import { useSettingsStore, type AutostartType } from "../../stores";
-import { safeInvoke } from "../../utils/invoke-wrapper";
+import { invoke, safeInvoke } from "../../utils/invoke-wrapper";
 import { DangerSquare, Clipboard, Alarm, Settings } from "@solar-icons/vue";
 
 const settingsStore = useSettingsStore();
@@ -212,6 +235,17 @@ const autoHideEnabledDraft = ref<boolean>(true);
 const autoHideCountdownDraft = ref<number>(30);
 const showModeDraft = ref<number>(0);
 const isDev = import.meta.env.DEV;
+
+// ---- 权限（UAC）----
+interface ElevationStatus {
+    elevated: boolean;
+    run_as_admin_flagged: boolean;
+    exe_path: string;
+}
+const elevatedDraft = ref<boolean>(false);
+const runAsAdminDraft = ref<boolean>(false);
+const elevationBusy = ref<boolean>(false);
+const elevationError = ref<string>("");
 
 const autostartMethods = [
     {
@@ -257,9 +291,39 @@ watchEffect(() => {
 
 onMounted(async () => {
     settingsStore.refreshAutostartStatus();
+    refreshElevationStatus();
     const mode = await safeInvoke<number>("get_show_mode");
     showModeDraft.value = mode ?? 0;
 });
+
+async function refreshElevationStatus() {
+    const status = await safeInvoke<ElevationStatus>("get_elevation_status");
+    if (!status) return;
+    elevatedDraft.value = status.elevated;
+    runAsAdminDraft.value = status.run_as_admin_flagged;
+}
+
+async function onRelaunchAsAdmin() {
+    elevationBusy.value = true;
+    elevationError.value = "";
+    const result = await invoke<null>("relaunch_as_admin");
+    if (!result.ok) {
+        elevationError.value = result.error.message;
+    }
+    // 成功时进程会直接退出，不会走到这里
+    elevationBusy.value = false;
+}
+
+async function onRunAsAdminChange() {
+    elevationBusy.value = true;
+    elevationError.value = "";
+    const result = await invoke<null>("set_run_as_admin", { enabled: runAsAdminDraft.value });
+    if (!result.ok) {
+        elevationError.value = result.error.message;
+        runAsAdminDraft.value = !runAsAdminDraft.value;
+    }
+    elevationBusy.value = false;
+}
 
 async function onApplyFollowMouse() {
     await settingsStore.setFollowMouseOnShow(!!followMouseDraft.value);
@@ -379,6 +443,37 @@ async function onSetShowMode(mode: number) {
 
 .hint.error {
     color: var(--error-color);
+}
+
+.hint.ok {
+    color: var(--primary-color);
+}
+
+.row-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.btn-inline {
+    height: 26px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color-strong);
+    background: var(--input-bg);
+    color: var(--text-color);
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.btn-inline:hover:not(:disabled) {
+    background: var(--hover-bg);
+}
+
+.btn-inline:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 
 

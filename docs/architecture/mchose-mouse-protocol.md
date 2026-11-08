@@ -42,6 +42,10 @@
    这解释了「游戏内按热键没反应、切出游戏才行」：ACE 反作弊接管内核 HID
    校验后对长度零容忍，短帧根本到不了设备。
 
+   > **注意：HID 帧长只是这条链路的其中一环。** 即使帧长完全正确，
+   > 如果启动器以普通权限运行，游戏内的热键仍然收不到——那是输入侧的
+   > UIPI 权限门槛，与 HID 无关。详见下一节。
+
 3. **响应帧头是 `0x12` / `0x11`，不是 `0xED` / `0xEE`**。
    `0xED = 0x12 ^ 0xFF`、`0xEE = 0x11 ^ 0xFF`，所以「全字节 XOR」的记法里
    帧头会写成 0xED/0xEE，但用 hidapi 读出来时 **`buf[0]` 是未取反的 report id**，
@@ -60,13 +64,38 @@
 所以只清一条残留不够，要在 `xfer` 内循环读到「帧头对得上 **且** 命令码回显对得上」
 的响应为止，再交给上层解析。
 
+### 输入侧的第二道门槛：UIPI 权限对等
+
+HID 帧长修好之后，还有一层**与 HID 完全无关**的门槛：进程完整性级别。
+
+ACE 反作弊把 `DeltaForceClient-Win64-Shipping.exe` 托管为**高完整性级别**
+（受保护进程）。Windows 的 UIPI（用户界面特权隔离）规定：低完整性进程
+**收不到**高完整性进程的输入。
+
+启动器以普通权限运行时，插件 `hotkey.rs` 的四条通道全被拦：
+
+| 通道 | 普通权限 | 管理员权限 |
+|---|---|---|
+| `WH_KEYBOARD_LL` 低级钩子 | ❌ UIPI 拦截 | ✅ |
+| `RegisterHotKey` 系统热键 | ❌ UIPI 拦截 | ✅ |
+| Raw Input `RIDEV_INPUTSINK` | ❌ UIPI 拦截 | ✅ |
+| `GetAsyncKeyState` 轮询 | ❌ UIPI 拦截 | ✅ |
+
+「切出游戏再按就正常」正是这个机制：切出后焦点回到普通窗口，权限对等，通道恢复。
+
+**判定方法**：`Get-Process DeltaForceClient-Win64-Shipping | Select-Object Path`
+返回 null 就是受保护进程。启动器提权后，日志应出现 `[hotkey] 触发切换（来源: XXX）`。
+
+**解法**：以管理员权限运行启动器（`src-tauri/src/elevation.rs` 提供
+即时提权重启与 RUNASADMIN 兼容层标记两种方式）。**不要**再往「加通道」「换组合键」
+方向查——再强的通道也穿不过 UIPI。
+
 ### 帧格式
 
 ```
 payload[0] = 命令码
 payload[1..] = 参数
 ```
-
 发送时 `send_feature_report([rid] + payload)`，其中 payload 已逐字节取反。
 
 响应（XOR 还原后）：

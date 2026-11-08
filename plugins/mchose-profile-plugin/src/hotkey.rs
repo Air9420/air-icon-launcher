@@ -245,6 +245,8 @@ fn stop_polling() {
     }
 }
 
+// ---------------------------------------------------------------- 通道诊断
+
 /// 最近一次真正触发的通道名
 pub fn last_channel_name() -> &'static str {
     match LAST_CHANNEL.load(Ordering::SeqCst) {

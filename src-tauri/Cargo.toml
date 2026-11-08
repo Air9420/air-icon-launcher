@@ -1,6 +1,6 @@
 [package]
 name = "air-icon-launcher"
-version = "0.11.1"
+version = "0.11.2"
 description = "A Windows desktop launcher for organizing and launching apps"
 authors = ["Air"]
 license = "MIT"
@@ -21,6 +21,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+# `tauri build` 会自动加上这个 feature；裸 `cargo build --release` 不会。
+# 缺了它，tauri 的 build.rs 里 `dev = !custom_protocol` 判成 dev 模式，
+# 产物会去加载 devUrl（localhost:1420）而不是内嵌前端资源，
+# 结果就是打开后显示「无法访问此网页」。显式声明后可以直接用
+# `cargo build --release --features custom-protocol` 得到可分发产物。
+[features]
+custom-protocol = ["tauri/custom-protocol"]
 
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }

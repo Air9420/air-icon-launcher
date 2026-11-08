@@ -9,6 +9,7 @@ mod db;
 mod display;
 mod display_monitor;
 mod drag;
+mod elevation;
 mod error;
 mod icc;
 mod keyboard_hook;
@@ -633,6 +634,9 @@ pub fn run() {
             restart_application,
             memory_manager::start_memory_release,
             memory_manager::stop_memory_release,
+            elevation::get_elevation_status,
+            elevation::relaunch_as_admin,
+            elevation::set_run_as_admin,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

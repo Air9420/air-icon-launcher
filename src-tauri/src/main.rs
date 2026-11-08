@@ -46,15 +46,21 @@ fn main() {
 
     #[cfg(all(windows, not(debug_assertions)))]
     {
-        ensure_single_instance_or_wake();
+        // `--replace` 由 `elevation::relaunch_elevated` 传入：旧实例在
+        // ShellExecuteW 返回后才 exit(0)，新实例可能先到，需要等它放锁。
+        let replacing = args.iter().any(|a| a == "--replace");
+        ensure_single_instance_or_wake(replacing);
     }
 
     air_icon_launcher_lib::run();
 }
 
 /// 确保 GUI 只启动一个实例；如果已存在，则唤起主窗口并退出当前进程。
+///
+/// `wait_for_previous` 为 true 时（提权重启场景），会先等旧实例退出最多 5 秒，
+/// 而不是直接把新进程当成「第二个实例」自杀。
 #[cfg(all(windows, not(debug_assertions)))]
-fn ensure_single_instance_or_wake() {
+fn ensure_single_instance_or_wake(wait_for_previous: bool) {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
@@ -68,21 +74,46 @@ fn ensure_single_instance_or_wake() {
     }
 
     let mutex_name = to_wide(OsStr::new(SINGLE_INSTANCE_MUTEX_NAME));
-    let _mutex = unsafe { CreateMutexW(None, false, windows::core::PCWSTR(mutex_name.as_ptr())) };
-    let last_error = unsafe { GetLastError() };
 
-    if last_error == ERROR_ALREADY_EXISTS {
-        let title = to_wide(OsStr::new(MAIN_WINDOW_TITLE));
-        let hwnd = unsafe { FindWindowW(None, windows::core::PCWSTR(title.as_ptr())) };
-        if hwnd.0 != 0 {
-            unsafe {
-                let _ = ShowWindow(hwnd, SW_RESTORE);
-                let _ = ShowWindow(hwnd, SW_SHOW);
-                let _ = SetForegroundWindow(hwnd);
+    // 尝试拿锁；`--replace` 场景下旧实例可能还没退出，先等它。
+    //
+    // 注意 windows 0.54 的 `CreateMutexW` 返回 `Result<HANDLE>`，
+    // 且 `ERROR_ALREADY_EXISTS` 必须紧接着用 `GetLastError` 读，
+    // 中间不能插别的 Win32 调用（`GetLastError` 会被覆盖）。
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mutex = loop {
+        let handle = unsafe { CreateMutexW(None, false, windows::core::PCWSTR(mutex_name.as_ptr())) };
+        let already = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+
+        match handle {
+            Ok(h) if !already => break h,
+            Ok(h) => {
+                let _ = unsafe { windows::Win32::Foundation::CloseHandle(h) };
+            }
+            Err(_) => {
+                // 拿不到互斥量（极少数权限场景）：当作已有实例处理
             }
         }
-        std::process::exit(0);
-    }
+
+        if !wait_for_previous || std::time::Instant::now() >= deadline {
+            // 已有实例在跑：唤起它然后自己退出
+            let title = to_wide(OsStr::new(MAIN_WINDOW_TITLE));
+            let hwnd = unsafe { FindWindowW(None, windows::core::PCWSTR(title.as_ptr())) };
+            if hwnd.0 != 0 {
+                unsafe {
+                    let _ = ShowWindow(hwnd, SW_RESTORE);
+                    let _ = ShowWindow(hwnd, SW_SHOW);
+                    let _ = SetForegroundWindow(hwnd);
+                }
+            }
+            std::process::exit(0);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+
+    // HANDLE 是 Copy 且无 Drop，丢弃不会关闭句柄；
+    // 绑到带下划线的变量上，明确表示「进程整个生命周期持有这把锁」。
+    let _mutex_guard = mutex;
 }
 
 /// 安装开机自启服务，并配置为系统启动时启动（AUTO_START）。

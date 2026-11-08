@@ -363,12 +363,12 @@ impl Mouse {
     /// 读电量（0x11 0x06）
     ///
     /// 响应结构（XOR 还原后，数据从 dec[2] 开始）：
-    /// ```
+    /// ```text
     /// [0..2]  vid          uint16 LE
     /// [2..4]  pid          uint16 LE
     /// [4..8]  fwVersion    uint32 LE
     /// [8]     connectMode(bit3) | connectStatus(bit1) | inReserved(bit4)
-    /// [9]     batteryLevel uint8   ← 电量百分比
+    /// [9]     batteryLevel uint8   <- 电量百分比
     /// [10]    chargeStatus uint8
     /// ```
     /// 实测 `0x11 0x06` 返回 `37 38 21 40 05 2e 02 04 09 56 00 ...`

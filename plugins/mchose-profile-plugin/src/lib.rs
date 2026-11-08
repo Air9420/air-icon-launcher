@@ -164,7 +164,26 @@ fn debug_file_log(level: i32, msg: &str) {
     }
 }
 
-/// 极简时间戳（避免引入 chrono 依赖）
+/// 本地时间戳 `YYYY-MM-DD HH:MM:SS.mmm`。
+///
+/// 早期版本写的是 Unix 秒（UTC），排查问题时和系统时间差 8 小时，
+/// 「日志时间是 10:19、现在是 18:19」会让人误以为插件没工作。
+/// 这里改用 Windows 本地时间 API（`GetLocalTime`），零额外依赖，
+/// 也与宿主 `plugin_host` 日志的观感一致。
+#[cfg(target_os = "windows")]
+fn chrono_like_now() -> String {
+    use windows::Win32::Foundation::SYSTEMTIME;
+    use windows::Win32::System::SystemInformation::GetLocalTime;
+
+    let st: SYSTEMTIME = unsafe { GetLocalTime() };
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}",
+        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds
+    )
+}
+
+/// 非 Windows 回退：仍用 Unix 秒（插件仅支持 Windows，此分支只为编译通过）
+#[cfg(not(target_os = "windows"))]
 fn chrono_like_now() -> String {
     let d = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

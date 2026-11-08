@@ -302,9 +302,13 @@ fn host_state_path(handle: &AppHandle) -> PathBuf {
 }
 
 /// 共享日志写入（供 loader / host_invoke 使用）。
+///
+/// 时间戳用本地时间：早期用 `Utc::now()`，比北京时间慢 8 小时，
+/// 排查「插件有没有在工作」时会系统性误判。与 `updater.rs` 的
+/// `UpdateLogger::log` 保持一致。
 pub fn push_log(log: &Arc<Mutex<RingLog>>, level: i32, message: &str) {
     use crate::plugin_host::abi::level_name;
-    let ts = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.3f");
+    let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
     let line = format!("[{}] [{}] {}", ts, level_name(level), message);
     if let Ok(mut guard) = log.lock() {
         guard.push(line);
