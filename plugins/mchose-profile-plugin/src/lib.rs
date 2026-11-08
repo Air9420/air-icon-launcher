@@ -321,7 +321,51 @@ fn get_slot_names(mouse: &hid::Mouse) -> [String; 3] {
     names
 }
 
+/// 最近一次成功切换到的槽位（本地缓存）。
+///
+/// 游戏运行时读不到当前槽位（ACE 把数据段过滤成 0），只能靠这个缓存推算下一个。
+/// 只要切换命令的 ACK 能拿到，缓存就是准的。
+/// **持久化到磁盘**：否则每次重启启动器都要先在桌面按一次热键才能建立缓存，
+/// 而用户往往是先开游戏再发现按不动。
+static LAST_KNOWN_SLOT: Mutex<Option<u8>> = Mutex::new(None);
+
+/// 槽位缓存文件：与 config.json 同目录
+fn slot_cache_path() -> std::path::PathBuf {
+    config_path().with_file_name("last-slot.json")
+}
+
+fn load_slot_cache() {
+    let Ok(text) = std::fs::read_to_string(slot_cache_path()) else {
+        return;
+    };
+    if let Ok(v) = serde_json::from_str::<u8>(text.trim()) {
+        if v <= 2 {
+            if let Ok(mut g) = LAST_KNOWN_SLOT.lock() {
+                *g = Some(v);
+            }
+            host_log(2, &format!("[slot] 已从磁盘恢复上次槽位: {v}"));
+        }
+    }
+}
+
+fn save_slot_cache(slot: u8) {
+    if let Ok(mut g) = LAST_KNOWN_SLOT.lock() {
+        *g = Some(slot);
+    }
+    let path = slot_cache_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&path, slot.to_string());
+}
+
 /// 执行一次切换：读当前 → 算下一个 → 切换 → 重读 → 推送
+///
+/// **游戏内降级（盲切）**：
+/// ACE 反作弊在游戏运行时会把这个 HID 接口的数据段过滤成全 0，
+/// 只放行帧头回显 —— 读命令返回 `[12, 67, 00, 00, ...]`，
+/// 但切换命令 `0x11 0x58` 的 ACK 仍然完整（`[11, 58, <idx>, ...]`）。
+/// 所以读不到当前槽位时，改用 `LAST_KNOWN_SLOT` 推算目标，直接发切换命令。
 ///
 /// 性能优化：
 /// - 槽名走缓存（30 秒）
@@ -332,13 +376,19 @@ fn do_switch(cfg: &Config, explicit_target: Option<u8>) -> Result<serde_json::Va
 
     // 连续快速触发时设备可能还在处理上一条命令，只回空帧。
     // 外层再兜一层重试，避免一次失败就整个切换失败。
-    let mut before = None;
+    let mut before: Option<hid::MouseProfile> = None;
+    let mut read_blocked = false;
     let mut last_err = String::new();
     for attempt in 0..3 {
-        match mouse.read_profile() {
-            Ok(p) => {
+        match mouse.try_read_profile() {
+            Ok(hid::ReadOutcome::Ok(p)) => {
                 before = Some(p);
                 break;
+            }
+            Ok(hid::ReadOutcome::NoData) => {
+                // 帧头回来了但数据被抹 → 再试一次，仍如此就走盲切
+                read_blocked = true;
+                std::thread::sleep(std::time::Duration::from_millis(80));
             }
             Err(e) => {
                 last_err = e;
@@ -346,11 +396,88 @@ fn do_switch(cfg: &Config, explicit_target: Option<u8>) -> Result<serde_json::Va
             }
         }
     }
-    let before = before.ok_or_else(|| {
-        let msg = format!("读取当前配置失败: {last_err}");
-        host_log(0, &msg);
-        msg
-    })?;
+
+    // ---- 盲切路径：读不到当前槽位 ----
+    if before.is_none() {
+        let cached = LAST_KNOWN_SLOT.lock().ok().and_then(|g| *g);
+        let Some(current) = cached.or(explicit_target) else {
+            // 从没成功读过，也没有缓存，也没有显式目标：只能如实报错
+            let msg = if read_blocked {
+                format!("读不到鼠标当前配置（数据被过滤），且无本地槽位缓存。请先在桌面按一次热键建立缓存")
+            } else {
+                format!("读取当前配置失败: {last_err}")
+            };
+            host_log(0, &msg);
+            return Err(msg);
+        };
+
+        let target = explicit_target.unwrap_or_else(|| next_slot(current, cfg));
+
+        // 关键：切换命令的 ACK 是通的，直接发
+        match mouse.switch_profile(target) {
+            Ok(()) => {
+                save_slot_cache(target);
+                host_log(
+                    1,
+                    &format!(
+                        "[switch] 读不到当前配置（数据被过滤），按本地缓存盲切: {current} → {target}"
+                    ),
+                );
+
+                // 名字和电量走缓存：读名称同样会被过滤，读电量也一样
+                let names = match NAME_CACHE.lock() {
+                    Ok(g) => g.as_ref().map(|(n, _)| n.clone()).unwrap_or_default(),
+                    Err(_) => Default::default(),
+                };
+                let names = if names.iter().all(|s| s.is_empty()) {
+                    // 缓存空就试一次实时读（可能刚好没被过滤）
+                    get_slot_names(&mouse)
+                } else {
+                    names
+                };
+
+                let battery = if cfg.show_battery {
+                    LAST_BATTERY.lock().ok().and_then(|g| g.clone())
+                } else {
+                    None
+                };
+
+                // 构造一个最小 profile 只用于生成 payload（DPI 未知就不显示）
+                let synthetic = hid::MouseProfile {
+                    profile_index: target,
+                    dpi_stages: [0; 6],
+                    dpi_stages_y: [0; 6],
+                    axis_y_enabled: false,
+                    dpi_count: 0,
+                    active_dpi_stage: 0,
+                    report_rate_hz: 0,
+                    debounce: 0,
+                    sleep: 0,
+                };
+                let payload = build_osd_payload(&synthetic, &names, battery, cfg);
+                let osd_result = push_osd(&cfg.osd_url, &payload);
+
+                return Ok(serde_json::json!({
+                    "from": current,
+                    "to": target,
+                    "name": payload.get("profile_name"),
+                    "battery": payload.get("battery"),
+                    "osd_pushed": osd_result.is_ok(),
+                    "osd_error": osd_result.err(),
+                    "blind": true,
+                }));
+            }
+            Err(e) => {
+                let msg = format!("盲切失败（目标 {target}）: {e}");
+                host_log(0, &msg);
+                return Err(msg);
+            }
+        }
+    }
+
+    let before = before.expect("上面已保证 Some");
+    // 读成功 → 刷新缓存，并让缓存成为「真相」
+    save_slot_cache(before.profile_index);
     let names = get_slot_names(&mouse);
 
     let target = match explicit_target {
@@ -361,6 +488,7 @@ fn do_switch(cfg: &Config, explicit_target: Option<u8>) -> Result<serde_json::Va
     let already = target == before.profile_index;
     if !already {
         mouse.switch_profile(target)?;
+        save_slot_cache(target);
         // 给固件一点时间让新配置生效；下面的重读循环会兜住未就绪的情况
         std::thread::sleep(std::time::Duration::from_millis(80));
     }
@@ -612,6 +740,7 @@ pub extern "C" fn air_plugin_init(host: *const AirHostVTable, _user_data: *mut c
         if !hotkey::is_running() {
             setup_hotkey(&cfg);
         }
+        load_slot_cache();
         return 0;
     }
 
@@ -628,6 +757,10 @@ pub extern "C" fn air_plugin_init(host: *const AirHostVTable, _user_data: *mut c
     }
     LIVE_INSTANCES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     host_log(2, &format!("air_mchose_profile initialized, config: {cfg:?}"));
+
+    // 恢复上次槽位：游戏内读不到当前槽位时靠它推算下一个，
+    // 否则每次重启都得先在桌面按一次热键才能建立缓存。
+    load_slot_cache();
 
     // 自动注册全局热键
     setup_hotkey(&cfg);
@@ -952,5 +1085,67 @@ pub extern "C" fn air_plugin_shutdown() {
     hotkey::stop();
     if let Ok(mut g) = STATE.lock() {
         *g = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg_pair() -> Config {
+        let mut c = Config::default();
+        c.mode = "pair".into();
+        c.pair = vec![1, 2];
+        c
+    }
+
+    fn cfg_cycle() -> Config {
+        let mut c = Config::default();
+        c.mode = "cycle".into();
+        c.active_slots = vec![0, 1, 2];
+        c
+    }
+
+    /// pair 模式在两个槽之间来回
+    #[test]
+    fn next_slot_pair_pingpong() {
+        let c = cfg_pair();
+        assert_eq!(next_slot(1, &c), 2);
+        assert_eq!(next_slot(2, &c), 1);
+    }
+
+    /// cycle 模式按列表循环
+    #[test]
+    fn next_slot_cycle_wraps() {
+        let c = cfg_cycle();
+        assert_eq!(next_slot(0, &c), 1);
+        assert_eq!(next_slot(1, &c), 2);
+        assert_eq!(next_slot(2, &c), 0);
+    }
+
+    /// 当前槽位不在启用列表里 → 落到第一个
+    #[test]
+    fn next_slot_unknown_current_falls_to_first() {
+        let c = cfg_pair();
+        assert_eq!(next_slot(0, &c), 1);
+    }
+
+    /// 空列表时保持不动（避免除零 / 越界）
+    #[test]
+    fn next_slot_empty_keeps_current() {
+        let mut c = cfg_cycle();
+        c.active_slots.clear();
+        assert_eq!(next_slot(2, &c), 2);
+    }
+
+    /// 盲切缓存：写入后能读回，且 next_slot 能据此推算
+    #[test]
+    fn blind_switch_cache_roundtrip() {
+        *LAST_KNOWN_SLOT.lock().unwrap() = Some(1);
+        let cached = LAST_KNOWN_SLOT.lock().unwrap().unwrap();
+        assert_eq!(cached, 1);
+        // 游戏内读不到当前槽位时，就是靠这个缓存推下一个
+        assert_eq!(next_slot(cached, &cfg_pair()), 2);
+        *LAST_KNOWN_SLOT.lock().unwrap() = None;
     }
 }

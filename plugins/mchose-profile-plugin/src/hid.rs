@@ -22,10 +22,20 @@ pub const USAGE_PAGE_CONFIG: u16 = 0xFF01;
 pub const USAGE_CONFIG: u16 = 0x0001;
 
 const RECV_RID: u8 = 0x11;
-/// 0x12 类命令的 payload 长度（不含 report id）
-const FRAME_63: usize = 63;
-/// 0x11 类命令的 payload 长度（不含 report id）
-const FRAME_19: usize = 19;
+
+/// 设备 `FeatureReportByteLength`（含 report id 的整帧长度）。
+///
+/// 这个值必须与 `HidP_GetCaps` 报告的一致。发短帧在桌面环境能被固件宽容，
+/// 但游戏运行时（ACE 接管内核 HID 校验）会直接 `ERROR_INVALID_PARAMETER(87)`。
+const FEATURE_REPORT_LEN: usize = 65;
+
+/// 0x12 类命令的 payload 长度（不含 report id）＝ 65 - 1
+const FRAME_63: usize = FEATURE_REPORT_LEN - 1;
+/// 0x11 类命令的 payload 长度（不含 report id）＝ 65 - 1
+///
+/// 历史上这里写 19，是因为协议文档只描述到第 19 字节。
+/// 但 `HidD_SetFeature` 要求整帧长度等于 caps，所以同样补到 64。
+const FRAME_19: usize = FEATURE_REPORT_LEN - 1;
 
 /// 轮询率索引 → Hz
 pub fn rate_hz(idx: u8) -> u32 {
@@ -62,6 +72,21 @@ pub struct MouseProfile {
 pub struct BatteryInfo {
     pub percent: u8,
     pub charging: bool,
+}
+
+/// 一次读配置的结果。
+///
+/// 关键区分：**传输成功但数据为空** ≠ 设备没连上。
+/// 游戏运行时 ACE 反作弊会把该 HID 接口的**数据段**过滤成全 0，
+/// 只放行帧头回显（`dec[0]=0x12, dec[1]=0x67`，后面全 0）。
+/// 此时写命令（0x11 0x58 切换）仍然有效，只有读拿不到内容。
+/// 上层据此降级为「盲切」：不读当前槽位，靠本地缓存推算目标。
+#[derive(Debug, Clone)]
+pub enum ReadOutcome {
+    /// 读到完整数据
+    Ok(MouseProfile),
+    /// 设备回了帧头但数据区全 0（被过滤 / 固件忙）
+    NoData,
 }
 
 pub struct Mouse {
@@ -105,9 +130,19 @@ impl Mouse {
     /// 发送并读回（XOR 还原后的响应）
     ///
     /// `send_rid` 决定命令通道：0x12 用 63 字节 payload，0x11 用 19 字节。
-    /// 返回的 `dec` 已 XOR 还原：`dec[0]` 是 0xED/0xEE，`dec[1]` 是命令码回显。
+    /// 返回的 `dec` 已 XOR 还原：`dec[0]` 是 report id，`dec[1]` 是命令码回显。
     ///
     /// 全程持锁，避免与热键线程并发导致响应串包。
+    ///
+    /// **帧长度必须等于设备声明的 `FeatureReportByteLength`（65）**：
+    /// 设备 caps 报的是 65 字节（含 report id），所以 payload 必须是 64 字节。
+    /// 发 64 字节整帧（payload 63）在普通桌面环境能被固件宽容接受，
+    /// 但**游戏运行时会失败** —— ACE 反作弊接管内核 HID 校验后，
+    /// `HidD_SetFeature` 对长度不符的帧直接返回 `ERROR_INVALID_PARAMETER(87)`，
+    /// 帧根本到不了设备。实测：
+    ///   payload 63（总长 64）→ r=0 err=87  ← 发送失败
+    ///   payload 64（总长 65）→ r=1 err=6   ← 发送成功
+    /// 这就是「游戏内按热键没反应、切出来才行」的真正原因。
     ///
     /// **重要**：设备偶尔不产生新响应，此时 `get_feature_report` 会返回
     /// **上一次写入的帧**（`buf[0]` 变成 0x11/0x12 而不是 0xED/0xEE）。
@@ -116,12 +151,14 @@ impl Mouse {
     fn xfer(&self, send_rid: u8, tokens: &[u8]) -> Result<Vec<u8>, String> {
         let _guard = DEV_LOCK.lock().map_err(|_| "设备锁中毒".to_string())?;
 
+        // payload 长度 = 设备 FeatureReportByteLength - 1（report id 占 1 字节）
         let len = if send_rid == 0x11 { FRAME_19 } else { FRAME_63 };
         let payload = Self::build_frame(tokens, len);
 
         let mut tx = Vec::with_capacity(len + 1);
         tx.push(send_rid);
         tx.extend_from_slice(&payload);
+        debug_assert_eq!(tx.len(), 65, "帧总长必须等于 FeatureReportByteLength");
 
         // 清掉可能残留的旧响应
         {
@@ -132,7 +169,7 @@ impl Mouse {
 
         self.dev
             .send_feature_report(&tx)
-            .map_err(|e| format!("发送失败: {e}"))?;
+            .map_err(|e| format!("发送失败（帧长 {} 字节）: {e}", tx.len()))?;
 
         // 设备响应很快（~40ms），但忙时会更久；轮询读到有效帧为止
         let mut last: Vec<u8> = Vec::new();
@@ -169,9 +206,23 @@ impl Mouse {
 
     /// 读板载配置（0x12 0x67）
     ///
-    /// 响应（XOR 还原后）：dec[0]=0xED, dec[1]=0x67(命令回显), dec[2..]=数据
+    /// 响应（XOR 还原后）：dec[0]=0x12, dec[1]=0x67(命令回显), dec[2..]=数据
     /// 注意：设备偶尔返回空帧，必须重试。
     pub fn read_profile(&self) -> Result<MouseProfile, String> {
+        match self.try_read_profile()? {
+            ReadOutcome::Ok(p) => Ok(p),
+            ReadOutcome::NoData => Err(
+                "鼠标无有效响应，请确认已连接。最后响应: [12, 67, 00, 00, 00, 00, 00, 00, 00, 00]"
+                    .into(),
+            ),
+        }
+    }
+
+    /// 读配置，但把「帧头有效、数据为空」单独区分出来。
+    ///
+    /// 这是判断「是否被游戏/反作弊过滤」的唯一可靠信号：
+    /// 帧头对得上说明设备活着、通道通着，只是内容被抹了。
+    pub fn try_read_profile(&self) -> Result<ReadOutcome, String> {
         let mut last = Vec::new();
         let mut last_err = String::new();
         // 实测约 15% 概率返回空帧，重试要够
@@ -185,13 +236,13 @@ impl Mouse {
                     continue;
                 }
             };
-            // 严格校验：必须是 0xED + 命令码 0x67 回显
+            // 严格校验：必须是 0x12 + 命令码 0x67 回显
             if dec.len() < 24 || dec[1] != 0x67 {
                 last = dec;
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 continue;
             }
-            // dec[0]=0xED, dec[1]=cmd echo, 数据从 dec[2] 开始
+            // dec[0]=0x12, dec[1]=cmd echo, 数据从 dec[2] 开始
             let body = &dec[2..];
             let nonzero = body.iter().filter(|&&b| b != 0).count();
             let idx = body[0];
@@ -233,7 +284,7 @@ impl Mouse {
 
                 let dpi_count = body[16].clamp(1, 6);
 
-                return Ok(MouseProfile {
+                return Ok(ReadOutcome::Ok(MouseProfile {
                     profile_index: idx,
                     dpi_stages,
                     dpi_stages_y,
@@ -244,11 +295,20 @@ impl Mouse {
                     report_rate_hz: rate_hz(rate_idx),
                     debounce: body[18],
                     sleep: body[19],
-                });
+                }));
             }
+            // 帧头对得上（dec[1]==0x67）但数据区几乎全 0：
+            // 这就是被游戏/反作弊过滤的特征，不是「设备没连」。
+            // 记下来，重试几次仍如此就如实上报 NoData。
             last = dec;
             std::thread::sleep(std::time::Duration::from_millis(60));
         }
+
+        // 收到过帧头回显 → 设备活着但数据被抹，报 NoData 而不是连接错误
+        if last.len() >= 2 && last[1] == 0x67 {
+            return Ok(ReadOutcome::NoData);
+        }
+
         if last.is_empty() && !last_err.is_empty() {
             return Err(format!("鼠标无有效响应: {last_err}"));
         }
@@ -387,5 +447,51 @@ impl Mouse {
             self.read_slot_name(1).unwrap_or_default(),
             self.read_slot_name(2).unwrap_or_default(),
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 帧总长必须等于设备 FeatureReportByteLength(65)。
+    ///
+    /// 回归 2026-11-08：帧长少 1 字节（64 而不是 65）在桌面环境能被固件宽容，
+    /// 但游戏运行时 ACE 接管内核 HID 校验后 `HidD_SetFeature` 直接返回
+    /// ERROR_INVALID_PARAMETER(87)，帧到不了设备 ——
+    /// 表现为「游戏内按热键没反应，切出游戏才行」。
+    #[test]
+    fn frame_length_matches_device_caps() {
+        assert_eq!(FEATURE_REPORT_LEN, 65);
+        for rid in [0x12u8, 0x11u8] {
+            let len = if rid == 0x11 { FRAME_19 } else { FRAME_63 };
+            let mut tx = Vec::with_capacity(len + 1);
+            tx.push(rid);
+            tx.extend(Mouse::build_frame(&[0x67], len));
+            assert_eq!(
+                tx.len(),
+                FEATURE_REPORT_LEN,
+                "report 0x{rid:02X} 的整帧长度必须是 {FEATURE_REPORT_LEN}"
+            );
+        }
+    }
+
+    /// build_frame 必须整体 XOR 0xFF，且长度严格等于 len
+    #[test]
+    fn build_frame_xor_and_length() {
+        let f = Mouse::build_frame(&[0x67, 0x02], 8);
+        assert_eq!(f.len(), 8);
+        assert_eq!(f[0], 0x67u8 ^ 0xFF);
+        assert_eq!(f[1], 0x02u8 ^ 0xFF);
+        assert_eq!(f[2], 0x00u8 ^ 0xFF); // 补位后 XOR
+    }
+
+    /// 轮询率索引映射
+    #[test]
+    fn rate_index_mapping() {
+        assert_eq!(rate_hz(0), 125);
+        assert_eq!(rate_hz(3), 1000);
+        assert_eq!(rate_hz(6), 8000);
+        assert_eq!(rate_hz(99), 1000); // 越界回退
     }
 }

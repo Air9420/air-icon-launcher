@@ -23,22 +23,37 @@
 接收：feature report 0x11，65 字节（buf[0]=report id 不 XOR），buf[1..] XOR 0xFF
 ```
 
-**三个必踩的坑**（都是实测踩出来的）：
+**四个必踩的坑**（都是实测踩出来的）：
 
 1. **payload 字节要 XOR 0xFF**。不取反只能读到回显。
-2. **payload 长度必须精确**：
-   - `0x12` 类命令 → payload **63 字节**
-   - `0x11` 类命令 → payload **19 字节**
+2. **整帧长度必须等于设备 `FeatureReportByteLength`（65）**：
+   - 设备 caps（`HidP_GetCaps`）报 `FeatureReportByteLength = 65`
+   - 所以 payload 一律 **64 字节**（65 - report id），`0x12` 和 `0x11` 类都一样
    - payload **不含** report id
 
-   多发一个字节，固件会判为非法帧——仍然回 ACK（回显），但**不执行也不返回数据**。
-   表现就是"命令成功但数据全 0"，极具迷惑性。
+   ⚠️ **2026-11-08 修正**：文档旧版写「`0x12` 类 63 字节、`0x11` 类 19 字节」，
+   那是「多一字节固件判非法」的早期结论。实际根因是**帧比 caps 短了 1 字节**：
+
+   | 帧总长 | `HidD_SetFeature` 结果 | 说明 |
+   |---|---|---|
+   | 64 | `r=0, err=87`（ERROR_INVALID_PARAMETER） | 桌面环境被固件宽容，游戏内直接失败 |
+   | 65 | `r=1, err=6` | 正常 |
+
+   这解释了「游戏内按热键没反应、切出游戏才行」：ACE 反作弊接管内核 HID
+   校验后对长度零容忍，短帧根本到不了设备。
 
 3. **响应帧头是 `0x12` / `0x11`，不是 `0xED` / `0xEE`**。
    `0xED = 0x12 ^ 0xFF`、`0xEE = 0x11 ^ 0xFF`，所以「全字节 XOR」的记法里
    帧头会写成 0xED/0xEE，但用 hidapi 读出来时 **`buf[0]` 是未取反的 report id**，
    只有 `buf[1..]` 需要 XOR。按 0xED/0xEE 校验会永远匹配不上，
    把正常响应误判成「设备无响应」。校验应写成 `dec[0] == send_rid`。
+
+4. **「帧头对、数据全 0」要区分两种情况**：
+   - 设备忙 / 刚上电 → 重试几次就能拿到数据
+   - 帧长度不符 → 永远拿不到数据（见第 2 条）
+
+   代码里用 `ReadOutcome::NoData` 区分「传输成功但无数据」与「连接失败」，
+   便于上层决定是重试、盲切还是报错。
 
 **读取重试的正确姿势**：设备偶尔不产生新响应，此时 `get_feature_report`
 会返回**上一次写入的帧**（`buf[0]` 仍是 0x11/0x12，但 `dec[1]` 是命令码本身）。
@@ -190,8 +205,8 @@ autoBoard_切换板载${productName},当前id:${curIndex}=>目标id:${configInde
 ### 字节取反（必须）
 
 ```python
-def build(cmd_tokens, length):
-    """length: 0x12 类=63，0x11 类=19；不含 report id"""
+def build(cmd_tokens, length=64):
+    """length 固定 64（= FeatureReportByteLength 65 - report id 1）；不含 report id"""
     body = (cmd_tokens + [0] * length)[:length]
     return bytes(b ^ 0xFF for b in body)
 

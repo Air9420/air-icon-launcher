@@ -1,11 +1,11 @@
 {
-  "version": "0.11.0",
-  "notes": "## v0.11.0\n\n### 新增\n\n- 插件热键改为四通道并联，解决无边框 / 独占全屏游戏内按快捷键无响应的问题（此前必须切出游戏才生效）：\n  - 低级键盘钩子 `WH_KEYBOARD_LL`\n  - 系统热键 `RegisterHotKey`\n  - `Raw Input`（`RIDEV_INPUTSINK`，设备级输入，与窗口焦点无关）\n  - `GetAsyncKeyState` 轮询兜底（30ms 间隔，反作弊基本拦不住）\n  - 四条通道共享 300ms 防抖，一次按键只切换一次；裸键（如 PgDn）默认不注册系统热键，避免吞掉其他程序的 PageDown\n- 插件热键日志与 `hotkey_status` 增加通道诊断：显示启用了哪几条通道、最近一次由哪条通道触发、各通道命中次数\n- 新增回归工具 `tools/host-sim`：不链接宿主代码的插件宿主时序模拟器，可复现「插件线程运行中卸载插件」并验证崩溃隔离不回退\n\n### 修复\n\n- 修复迈从插件热键切换配置时启动器闪退（`0xC0000005` 写入违例，崩在 `plugin_host::registry::push_log` 的互斥锁上）：\n  - 插件回调不再直接解引用 `user_data` 裸指针，改为查存活注册表，卸载后迟到的回调直接丢弃\n  - 插件卸载不再 unmap DLL 代码段（移入进程级退休区），避免插件自己的线程回来执行到不存在的代码\n  - 插件加载/卸载/启停/安装/卸载全部串行化，消除启动后台加载与插件页扫描同时初始化同一插件的竞态\n  - 插件调用与事件投递改为锁外执行，一次 5 秒的设备切换不再卡住整个插件面板\n  - 卸载插件时若目录被占用删不掉，排队到下次启动清理\n- 迈从插件改为 `panic = \"unwind\"` 并用 `catch_unwind` 包裹 ABI 入口：插件内部出错只返回错误信封，不再 abort 宿主进程\n- 迈从插件关闭时正确等待热键 worker 退出，重新注册热键不再残留旧 worker\n- 修复插件文件日志多线程并发写入产生的字节级交错乱行\n\n### 优化\n\n- 远程交叉编译脚本同步时排除 `plugins/*/target` 与 `tools/*/target`，同步体积从 GB 级降到 MB 级",
-  "pub_date": "2026-11-08T06:25:31.000Z",
+  "version": "0.11.1",
+  "notes": "## v0.11.1\n\n### 修复\n\n- 修复无边框 / 独占全屏游戏内按热键无响应（此前必须切出游戏才生效）：\n  HID feature report 帧长度比设备声明的 `FeatureReportByteLength`（65 字节）少了 1 字节。\n  桌面环境固件能宽容接受短帧，但游戏运行时 ACE 反作弊接管内核 HID 校验后，\n  `HidD_SetFeature` 对长度不符的帧直接返回 `ERROR_INVALID_PARAMETER(87)`，\n  帧根本到不了鼠标 —— 表现为「游戏内按 PgDn 没反应，Alt+Tab 出来就行」。\n  现在 `0x12` / `0x11` 两类命令的整帧长度统一为 65 字节。\n- 读配置新增「传输成功但数据为空」的区分（`ReadOutcome::NoData`），\n  不再把「帧头对得上、数据全 0」误报成「鼠标未连接」。\n- 读不到当前槽位时降级为盲切：靠本地槽位缓存推算目标，直接发切换命令。\n  槽位缓存持久化到 `plugin-data/com.air.mchose.profile/last-slot.json`，\n  重启启动器后无需先在桌面按一次热键建立缓存。\n\n### 优化\n\n- 热键日志标注触发来源（低级钩子 / 系统热键 / Raw Input / 按键轮询），\n  排查时能直接看出是哪条通道在起作用",
+  "pub_date": "2026-11-08T06:50:10.000Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbUt3NUd3RVF4cUJZa25PcTE5VWJsZWd6eTRaZmxHNWg1YW9vQzlCVTlHQ0RJcysxNWF3YS9TZ0dRTDhPYjRvUTJOUnY4N1lDdEtHVnNjbWpjcjFKT29SQUQydFNUNEFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MTE5MTEyCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC4xMS4wX3g2NC1zZXR1cC5uc2lzLnppcApvSWRPckw1N1prelJUZnAyUllvSnhyRzMza2lyeU5idnMvb2hhUTNLcWhNR2ZlOHJsT2xjZUt6RWFZa3ZCRHBZcFc1eitBSHQ5VlIzWmkrN1JKQkJCdz09Cg==",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.11.0/air-icon-launcher_0.11.0_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbUt3NUd3RVF4cUkzOVhVUzdMUkdrTmVFOHVvcDhhY2NlWTEvNGM0TjI0VnhQdXVHZWhsSlBjS2gwQWhuWHQ0OGY3ZUZ0MGVkQU9KZlhvVVd1QTFWbmdxVnpMYTRseUFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MTIwNTg2CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC4xMS4xX3g2NC1zZXR1cC5uc2lzLnppcApwUW1wZzdjVDMxVUFPT0xBVGFlUDNKYVRzWDZrUWZCMzRQQUhTYTB1cWw1bkloSTVxNUcyamlZelE3bEVCYVZJZEkrczV3ajlFemxNeGZQU3JLOUJCQT09Cg==",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.11.1/air-icon-launcher_0.11.1_x64-setup.nsis.zip"
     }
   }
 }
