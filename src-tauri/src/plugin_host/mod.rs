@@ -55,6 +55,65 @@ pub fn schedule_load_enabled_plugins(app: AppHandle) {
     });
 }
 
+/// 待删除的插件目录清单（卸载时 DLL 仍被映射导致删不掉）。
+fn pending_delete_path() -> PathBuf {
+    let app_data = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(app_data)
+        .join("air-icon-launcher")
+        .join("plugin-host")
+        .join("pending-delete.json")
+}
+
+/// 记录一个下次启动时要删除的目录。
+pub fn queue_pending_delete(dir: &Path) {
+    let path = pending_delete_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut list: Vec<String> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Vec<String>>(&t).ok())
+        .unwrap_or_default();
+    let entry = dir.to_string_lossy().to_string();
+    if !list.contains(&entry) {
+        list.push(entry);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(&list) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+/// 启动早期处理待删清单：此时新进程还没加载任何插件 DLL，文件不会被占用。
+pub fn flush_pending_deletes() {
+    let path = pending_delete_path();
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let list: Vec<String> = serde_json::from_str(&text).unwrap_or_default();
+    let base = plugin_base_directory();
+    let base_norm = std::fs::canonicalize(&base).unwrap_or(base);
+    let mut remain = Vec::new();
+    for entry in list {
+        let dir = PathBuf::from(&entry);
+        let dir_norm = std::fs::canonicalize(&dir).unwrap_or(dir.clone());
+        // 只删插件基目录内的路径，防止清单被篡改后误删用户文件
+        if !dir_norm.starts_with(&base_norm) || dir_norm == base_norm {
+            continue;
+        }
+        if !dir.exists() {
+            continue;
+        }
+        if std::fs::remove_dir_all(&dir).is_err() {
+            remain.push(entry);
+        }
+    }
+    if remain.is_empty() {
+        let _ = std::fs::remove_file(&path);
+    } else if let Ok(json) = serde_json::to_string_pretty(&remain) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
 /// 插件根目录：开发期优先 `<repo>/plugins`，否则 `%APPDATA%/air-icon-launcher/plugins`。
 ///
 /// 与旧 `plugins.rs` 的 `get_plugin_base_directory` 保持一致，便于共存。

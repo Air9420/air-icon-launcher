@@ -56,11 +56,25 @@ pub struct LoadedPlugin {
     pub enabled: bool,
     pub loaded: bool,
     pub last_error: Option<String>,
-    /// libloading 库句柄；unload 时 drop。
+    /// libloading 库句柄。
+    ///
+    /// **不可直接 drop**：drop 会 unmap 代码段，插件自己的线程（键盘钩子、
+    /// HID 轮询、HTTP 推送）仍在跑时立刻 AV。卸载必须走
+    /// `loader::unload_plugin` → `retire_library()`，把句柄移入进程级退休区。
     pub library: Option<libloading::Library>,
     pub fns: Option<PluginFns>,
     /// HostVTable + HostUserData（Send/Sync 包装，插件生命周期内保持有效）。
     pub abi_storage: Option<PluginAbiStorage>,
+}
+
+impl Drop for LoadedPlugin {
+    /// 安全网：任何路径下 `LoadedPlugin` 被丢弃时，库句柄都移入退休区而不是 unmap。
+    /// 插件线程可能还在执行 DLL 里的代码（低级键盘钩子无法被强制终止）。
+    fn drop(&mut self) {
+        if let Some(lib) = self.library.take() {
+            crate::plugin_host::loader::retire_library(lib);
+        }
+    }
 }
 
 impl LoadedPlugin {
@@ -271,6 +285,8 @@ pub fn init_plugin_host(handle: &AppHandle) {
     if let Some(parent) = enabled_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
+    // 此刻尚未加载任何插件 DLL，是清理上次「卸载但被占用」目录的唯一安全时机。
+    crate::plugin_host::flush_pending_deletes();
     let state = PluginHostState::new(plugin_base, enabled_path, handle.clone());
     handle.manage(state);
 }

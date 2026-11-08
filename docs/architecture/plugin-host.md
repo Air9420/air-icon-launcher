@@ -103,3 +103,55 @@ cargo test --no-default-features
 - `launcher.launch` 在无 AppHandle 时 open_path/open_url 仍走 system 层；capability 检查始终真实
 - host_invoke 返回字符串在插件卸载前累计保留（防 UAF），高频调用需后续引入共享分配器
 - 新代码统一 AppError
+
+## 生命周期与崩溃隔离（2026-11-08）
+
+事故背景：2026-11-07 21:49 用户在迈从插件热键切换配置时宿主闪退
+（`0xC0000005` 写入违例，`air-icon-launcher.exe+0xf2dcc`）。
+dump 显示崩溃点正是 `registry::push_log` 里的 `lock cmpxchg %cl,0x10(%rsi)`，
+调用方是插件自己的热键线程。
+
+三条不变式（改这块代码前必须守住）：
+
+1. **回调永不碰裸指针**
+   `host_log_cb` / `host_invoke_cb` 的 `user_data` 先经 `USERDATA_REGISTRY`
+   （`usize -> Weak<HostUserData>`）查活，拿到 `Arc` 才使用；查不到就静默丢弃。
+   插件线程的生命周期不受宿主控制，卸载后仍可能回调。
+
+2. **插件 DLL 永不 unmap**
+   `unload_plugin` 不 `drop(Library)`，而是 `retire_library()` 移入
+   `RETIRED_LIBRARIES`（进程级，直到退出）。
+   Windows 上 `LoadLibraryW` 只加引用计数，drop 会 unmap 代码段；
+   插件线程（低级键盘钩子 / HID 轮询 / HTTP 推送）无法强制终止，
+   代码段消失后它回来执行下一条指令就是 AV。
+   代价是每次 unload/reload 泄漏一个 DLL 映像（几百 KB），插件数量是个位数，可接受。
+
+3. **生命周期操作串行**
+   `load / unload / set_enabled / install / uninstall` 全部持 `LIFECYCLE_LOCK`。
+   启动后台 load 与前端 `plugin_host_list → scan` 会同时到达同一 id，
+   交错执行「unload 旧 → load 新」会把同一 DLL init 两次并互相释放状态。
+   `plugin_host_invoke` / `plugin_host_emit_event` **不持**该锁，
+   也不持 registry 锁执行插件代码（插件方法最坏阻塞 5 秒以上）。
+
+配套约束：
+
+- 插件 `Cargo.toml` 的 release profile 用 `panic = "unwind"`，
+  且 `air_plugin_invoke` / `air_plugin_on_event` 用 `catch_unwind` 包裹。
+  `panic = "abort"` 会让插件内部任何 panic 直接 abort 宿主进程。
+- `plugin_host_uninstall` 删目录失败（DLL 仍映射）时排队到
+  `plugin-host/pending-delete.json`，下次启动 `init_plugin_host` 里
+  `flush_pending_deletes()` 处理——那时新进程还没加载任何插件 DLL。
+
+回归验证：`tools/host-sim/`（宿主时序模拟器，不链接宿主代码，分钟级可跑）
+
+```powershell
+cd tools/host-sim
+cargo build
+# old：复现旧崩溃（exit -1073741819 / 0xC0000005）；new：修复后存活
+.\target\debug\host-sim.exe <插件dll> 200 old
+.\target\debug\host-sim.exe <插件dll> 150 new
+.\target\debug\host-sim.exe <插件dll> 0 reload   # 连续 unload/reload 三轮
+```
+
+`cargo test --lib` 里另有两条回归：
+`late_host_log_after_unload_is_dropped`、`userdata_registry_tracks_liveness`。

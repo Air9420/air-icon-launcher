@@ -79,6 +79,7 @@ if [ "$DO_SYNC" = 1 ]; then
       --exclude='./dist' --exclude='./.artifacts' --exclude='./.trae' \
       --exclude='./.codex' --exclude='./.superpowers' \
       --exclude='./src-tauri/target' --exclude='./src-tauri/target-*' \
+      --exclude='./plugins/*/target' --exclude='./tools/*/target' \
       --exclude='*.key' --exclude='.env.local' \
       . 2>/dev/null \
     | ssh -o BatchMode=yes "$HOST" "tar -xzf - -C '$REMOTE_DIR'"

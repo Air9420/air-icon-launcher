@@ -116,22 +116,38 @@ impl Default for Config {
 fn host_log(level: i32, msg: &str) {
     // 同时写文件，便于在宿主进程内排查（宿主的环形日志不易取出）
     debug_file_log(level, msg);
-    if let Ok(guard) = STATE.lock() {
-        if let Some(st) = guard.as_ref() {
-            if let Some(log_fn) = st.log_fn {
-                if st.user_data != 0 {
-                    if let Ok(c) = CString::new(msg) {
-                        log_fn(st.user_data as *mut c_void, level, c.as_ptr());
-                    }
-                }
+    // 先取出回调再放锁：回调里若间接再进 STATE（或宿主那边阻塞）
+    // 会与热键 worker 抢锁，长阻塞时表现为热键无响应。
+    let (log_fn, user_data) = match STATE.lock() {
+        Ok(g) => match g.as_ref() {
+            Some(st) => (st.log_fn, st.user_data),
+            None => (None, 0),
+        },
+        Err(_) => (None, 0),
+    };
+    if let Some(log_fn) = log_fn {
+        if user_data != 0 {
+            if let Ok(c) = CString::new(msg) {
+                log_fn(user_data as *mut c_void, level, c.as_ptr());
             }
         }
     }
 }
 
+/// 文件日志写锁。
+///
+/// 两个实例（宿主重复加载同一 DLL 时其实是同一份静态变量，但 worker 线程
+/// 与 UI 线程会并发写）同时 open+append，实测出现
+/// `[[1794019556.1591794019556.159] L2] L 2...` 这种字节级交错的烂行。
+static FILE_LOG_LOCK: Mutex<()> = Mutex::new(());
+
 /// 追加写入 %TEMP%/mchose-profile-plugin.log（超过 256KB 时截断重建）
 fn debug_file_log(level: i32, msg: &str) {
     use std::io::Write;
+    let _guard = match FILE_LOG_LOCK.lock() {
+        Ok(g) => g,
+        Err(_) => return,
+    };
     let path = std::env::temp_dir().join("mchose-profile-plugin.log");
     let too_big = std::fs::metadata(&path)
         .map(|m| m.len() > 256 * 1024)
@@ -508,9 +524,14 @@ fn setup_hotkey(cfg: &Config) {
         return;
     }
 
-    std::thread::spawn(move || {
+    // 上一轮 worker 若还在，先标记退出并等它结束，避免两个 worker 同时抢设备
+    hotkey::wait_worker_exit();
+
+    hotkey::mark_worker_alive();
+    let handle = std::thread::spawn(move || {
         while rx.recv().is_ok() {
-            host_log(2, "[hotkey] 触发切换");
+            let ch = hotkey::last_channel_name();
+            host_log(2, &format!("[hotkey] 触发切换（来源: {ch}）"));
             let cfg = match STATE.lock() {
                 Ok(g) => g.as_ref().map(|s| s.config.clone()).unwrap_or_default(),
                 Err(_) => Config::default(),
@@ -523,9 +544,19 @@ fn setup_hotkey(cfg: &Config) {
                 Err(e) => host_log(0, &format!("[hotkey] 切换失败: {e}")),
             }
         }
+        hotkey::mark_worker_dead();
+        host_log(2, "[hotkey] worker 退出");
     });
+    hotkey::store_worker(handle);
 
-    host_log(2, &format!("[hotkey] 已注册: {}", cfg.hotkey));
+    host_log(
+        2,
+        &format!(
+            "[hotkey] 已注册: {}（通道: {}）",
+            cfg.hotkey,
+            hotkey::active_channels().join(" + ")
+        ),
+    );
 }
 
 // ---------------------------------------------------------------- ABI
@@ -573,6 +604,14 @@ pub extern "C" fn air_plugin_init(host: *const AirHostVTable, _user_data: *mut c
         }
         LIVE_INSTANCES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         host_log(2, "[init] 重复加载同一实例，保留现有配置");
+        // 重复 init 也要保证热键可用：旧 worker 可能已在 unload 时停掉。
+        let cfg = match STATE.lock() {
+            Ok(g) => g.as_ref().map(|s| s.config.clone()).unwrap_or_default(),
+            Err(_) => Config::default(),
+        };
+        if !hotkey::is_running() {
+            setup_hotkey(&cfg);
+        }
         return 0;
     }
 
@@ -600,6 +639,32 @@ pub extern "C" fn air_plugin_invoke(
     method: *const c_char,
     args_json: *const c_char,
 ) -> *mut c_char {
+    // 跨 FFI 边界绝不能 unwind：panic 逃出 extern "C" 是 UB，宿主会直接崩。
+    // 统一在这里兜住，转成错误信封返回。
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        invoke_impl(method, args_json)
+    }));
+    match result {
+        Ok(ptr) => ptr,
+        Err(payload) => {
+            let msg = panic_message(&payload);
+            host_log(0, &format!("[invoke] panic: {msg}"));
+            err_envelope("PLUGIN_PANIC", &format!("插件内部 panic: {msg}")).into_raw()
+        }
+    }
+}
+
+fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "未知 panic".to_string()
+    }
+}
+
+fn invoke_impl(method: *const c_char, args_json: *const c_char) -> *mut c_char {
     if method.is_null() {
         return err_envelope("INVALID_INPUT", "method is null").into_raw();
     }
@@ -730,12 +795,18 @@ pub extern "C" fn air_plugin_invoke(
             Ok(serde_json::to_value(&new_cfg).unwrap_or_default())
         }
 
-        // 热键状态
-        "hotkey_status" => Ok(serde_json::json!({
-            "running": hotkey::is_running(),
-            "spec": cfg.hotkey,
-            "enabled": cfg.hotkey_enabled,
-        })),
+        // 热键状态 + 通道诊断
+        "hotkey_status" => {
+            let (h1, h2, h3, h4) = hotkey::channel_stats();
+            Ok(serde_json::json!({
+                "running": hotkey::is_running(),
+                "spec": cfg.hotkey,
+                "enabled": cfg.hotkey_enabled,
+                "channels": hotkey::active_channels(),
+                "hits": { "hook": h1, "hotkey": h2, "raw_input": h3, "poll": h4 },
+                "last_channel": hotkey::last_channel_name(),
+            }))
+        }
 
         // ---- 设置界面：读取全部配置项 ----
         "settings.get" => Ok(serde_json::to_value(&cfg).unwrap_or_default()),
@@ -845,10 +916,12 @@ pub extern "C" fn air_plugin_on_event(event_json: *const c_char) {
     if event_json.is_null() {
         return;
     }
-    let raw = unsafe { CStr::from_ptr(event_json) }
-        .to_string_lossy()
-        .into_owned();
-    host_log(1, &format!("on_event: {raw}"));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let raw = unsafe { CStr::from_ptr(event_json) }
+            .to_string_lossy()
+            .into_owned();
+        host_log(1, &format!("on_event: {raw}"));
+    }));
 }
 
 #[no_mangle]

@@ -91,24 +91,32 @@ pub fn run_autostart_hooks(app: &AppHandle) {
             continue;
         }
 
-        let result = {
+        // 先在锁内取出函数表，锁外执行：钩子可能长时间阻塞（HID / 网络），
+        // 持 registry 锁会让 UI 的 plugin_host_list 一起卡住。
+        let fns_and_id = {
             let reg = state.registry.lock();
             match reg {
                 Ok(g) => match g.get(&id) {
-                    Some(plugin) => crate::plugin_host::loader::invoke_plugin(
-                        plugin,
-                        AUTOSTART_HOOK_METHOD,
-                        &serde_json::json!({}),
-                    ),
-                    None => Err(crate::error::AppError::not_found(format!(
-                        "Plugin '{}' after load",
-                        id
-                    ))),
+                    Some(plugin) if plugin.loaded => plugin
+                        .fns
+                        .map(|fns| (fns, plugin.manifest.id.clone())),
+                    _ => None,
                 },
-                Err(_) => Err(crate::error::AppError::internal(
-                    "Plugin host registry lock poisoned",
-                )),
+                Err(_) => None,
             }
+        };
+
+        let result = match fns_and_id {
+            Some((fns, plugin_id)) => crate::plugin_host::loader::invoke_fns(
+                fns,
+                &plugin_id,
+                AUTOSTART_HOOK_METHOD,
+                &serde_json::json!({}),
+            ),
+            None => Err(crate::error::AppError::not_found(format!(
+                "Plugin '{}' after load",
+                id
+            ))),
         };
 
         match result {

@@ -198,7 +198,23 @@ pub fn load_plugin_for_hooks(
     load_plugin_inner(state, id)
 }
 
+/// 全局加载/卸载串行锁。
+///
+/// 启动时 `schedule_load_enabled_plugins`（后台线程）与前端
+/// `plugin_host_list → scan → load_enabled_plugins` 会同时进入同一 id 的 load，
+/// 交错执行「unload 旧 → load 新」会把同一 DLL init 两次、并释放对方刚建立的
+/// `HostUserData`。日志里出现同毫秒两条 `initialized` 就是这个竞态。
+/// 插件加载是低频操作，串行化的代价可以忽略。
+static LIFECYCLE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn load_plugin_inner(state: &State<'_, PluginHostState>, id: &str) -> AppResult<()> {
+    let _guard = LIFECYCLE_LOCK
+        .lock()
+        .map_err(|_| AppError::internal("Plugin lifecycle lock poisoned"))?;
+    load_plugin_locked(state, id)
+}
+
+fn load_plugin_locked(state: &State<'_, PluginHostState>, id: &str) -> AppResult<()> {
     {
         let missing = {
             let reg = state_registry(state)?;
@@ -252,6 +268,9 @@ fn load_plugin_inner(state: &State<'_, PluginHostState>, id: &str) -> AppResult<
 /// 卸载插件（保留 manifest 登记与 enabled 状态）。
 #[command]
 pub fn plugin_host_unload(state: State<'_, PluginHostState>, id: String) -> AppResult<()> {
+    let _guard = LIFECYCLE_LOCK
+        .lock()
+        .map_err(|_| AppError::internal("Plugin lifecycle lock poisoned"))?;
     let mut reg = state_registry(&state)?;
     let plugin = reg
         .get_mut(&id)
@@ -261,6 +280,11 @@ pub fn plugin_host_unload(state: State<'_, PluginHostState>, id: String) -> AppR
 }
 
 /// 调用插件方法。`args` 为任意 JSON。
+///
+/// 注意：**不持 LIFECYCLE_LOCK，也不持 registry 锁调用插件**。
+/// 插件方法可能长时间阻塞（迈从插件一次切换最坏 5 秒以上），持锁会让 UI 的
+/// 其它插件操作全部卡住。并发安全由 `HostUserData` 的 `Arc` + ABI 注册表 +
+/// 「退休库永不 unmap」共同保证。
 #[command]
 pub fn plugin_host_invoke(
     state: State<'_, PluginHostState>,
@@ -268,11 +292,30 @@ pub fn plugin_host_invoke(
     method: String,
     args: serde_json::Value,
 ) -> AppResult<serde_json::Value> {
-    let reg = state_registry(&state)?;
-    let plugin = reg
-        .get(&id)
-        .ok_or_else(|| AppError::not_found(format!("Plugin '{}'", id)))?;
-    loader::invoke_plugin(plugin, &method, &args)
+    let (fns, plugin_id) = {
+        let reg = state_registry(&state)?;
+        let plugin = reg
+            .get(&id)
+            .ok_or_else(|| AppError::not_found(format!("Plugin '{}'", id)))?;
+        if !plugin.loaded {
+            return Err(AppError::new(
+                "PLUGIN_NOT_LOADED",
+                format!("Plugin '{}' is not loaded", plugin.manifest.id),
+            ));
+        }
+        if !plugin.enabled {
+            return Err(AppError::new(
+                "PLUGIN_DISABLED",
+                format!("Plugin '{}' is disabled", plugin.manifest.id),
+            ));
+        }
+        let fns = plugin
+            .fns
+            .ok_or_else(|| AppError::internal("Plugin function table missing"))?;
+        (fns, plugin.manifest.id.clone())
+    };
+    // 锁已释放，插件在无锁状态下执行
+    loader::invoke_fns(fns, &plugin_id, &method, &args)
 }
 
 /// 启用/禁用插件（持久化）。启用时自动 load，禁用时若已加载则 unload。
@@ -282,6 +325,9 @@ pub fn plugin_host_set_enabled(
     id: String,
     enabled: bool,
 ) -> AppResult<()> {
+    let _guard = LIFECYCLE_LOCK
+        .lock()
+        .map_err(|_| AppError::internal("Plugin lifecycle lock poisoned"))?;
     {
         let mut reg = state_registry(&state)?;
         let plugin = reg
@@ -293,7 +339,8 @@ pub fn plugin_host_set_enabled(
         }
     }
     if enabled {
-        if let Err(err) = load_plugin_inner(&state, &id) {
+        // 已持 LIFECYCLE_LOCK，必须走 locked 版本，否则自死锁（std Mutex 不可重入）。
+        if let Err(err) = load_plugin_locked(&state, &id) {
             // load 失败：回滚 enabled，避免磁盘状态与前端开关不一致
             let mut reg = state_registry(&state)?;
             if let Some(plugin) = reg.get_mut(&id) {
@@ -310,6 +357,9 @@ pub fn plugin_host_set_enabled(
 /// 安装插件：`path` 为包含 manifest.json v2 的源目录，复制到 `plugins/<id>/`。
 #[command]
 pub fn plugin_host_install(state: State<'_, PluginHostState>, path: String) -> AppResult<PluginHostManifest> {
+    let _guard = LIFECYCLE_LOCK
+        .lock()
+        .map_err(|_| AppError::internal("Plugin lifecycle lock poisoned"))?;
     let source = PathBuf::from(&path);
     let manifest = install_plugin_dir(&source)?;
 
@@ -336,7 +386,7 @@ pub fn plugin_host_install(state: State<'_, PluginHostState>, path: String) -> A
         reg.persist_enabled()?;
     }
     // 安装默认 enabled → 立即 load，与「启用=已加载」一致。
-    if let Err(err) = load_plugin_inner(&state, &manifest.id) {
+    if let Err(err) = load_plugin_locked(&state, &manifest.id) {
         let mut reg = state_registry(&state)?;
         if let Some(p) = reg.get_mut(&manifest.id) {
             p.last_error = Some(format!("[{}] {}", err.code, err.message));
@@ -348,6 +398,9 @@ pub fn plugin_host_install(state: State<'_, PluginHostState>, path: String) -> A
 /// 卸载并删除插件目录。
 #[command]
 pub fn plugin_host_uninstall(state: State<'_, PluginHostState>, id: String) -> AppResult<()> {
+    let _guard = LIFECYCLE_LOCK
+        .lock()
+        .map_err(|_| AppError::internal("Plugin lifecycle lock poisoned"))?;
     let plugin_dir = {
         let mut reg = state_registry(&state)?;
         let dir = reg
@@ -367,9 +420,19 @@ pub fn plugin_host_uninstall(state: State<'_, PluginHostState>, id: String) -> A
     let dir_norm = std::fs::canonicalize(&plugin_dir).unwrap_or(plugin_dir.clone());
     if dir_norm.starts_with(&base_norm) && dir_norm != base_norm {
         if plugin_dir.exists() {
-            std::fs::remove_dir_all(&plugin_dir).map_err(|e| {
-                AppError::io_error(format!("remove plugin dir {:?}: {}", plugin_dir, e))
-            })?;
+            match std::fs::remove_dir_all(&plugin_dir) {
+                Ok(()) => {}
+                Err(e) => {
+                    // DLL 已退休（代码段仍映射），Windows 上文件被占用删不掉。
+                    // 记入待删清单，下次启动时再删，避免「卸载后目录还在」。
+                    crate::plugin_host::queue_pending_delete(&plugin_dir);
+                    log::info!(
+                        "[plugin-host] defer delete {:?}: {}（已排队到下次启动）",
+                        plugin_dir,
+                        e
+                    );
+                }
+            }
         }
     } else {
         return Err(AppError::invalid_input(
@@ -399,12 +462,24 @@ pub fn plugin_host_emit_event(
     id: String,
     event: serde_json::Value,
 ) -> AppResult<()> {
-    let reg = state_registry(&state)?;
-    let plugin = reg
-        .get(&id)
-        .ok_or_else(|| AppError::not_found(format!("Plugin '{}'", id)))?;
+    let on_event = {
+        let reg = state_registry(&state)?;
+        let plugin = reg
+            .get(&id)
+            .ok_or_else(|| AppError::not_found(format!("Plugin '{}'", id)))?;
+        if !plugin.loaded {
+            return Ok(());
+        }
+        plugin.fns.and_then(|fns| fns.on_event)
+    };
     let json = serde_json::to_string(&event)?;
-    loader::notify_plugin_event(plugin, &json)
+    // 锁外投递：插件的事件处理可能阻塞
+    if let Some(cb) = on_event {
+        let c = std::ffi::CString::new(json)
+            .map_err(|_| AppError::invalid_input("event contains NUL"))?;
+        unsafe { cb(c.as_ptr()) };
+    }
+    Ok(())
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> AppResult<()> {

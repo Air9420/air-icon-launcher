@@ -9,11 +9,65 @@ use crate::plugin_host::manifest::{
     parse_manifest_str, read_manifest_file, resolve_plugin_entry, PluginHostManifest,
 };
 use crate::plugin_host::registry::{push_log, LoadedPlugin, RingLog, LOG_RING_CAPACITY};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 use tauri::{AppHandle, Emitter, Manager};
+
+/// 存活 `HostUserData` 注册表：`user_data` 指针 → 弱引用。
+///
+/// 插件线程可能在宿主卸载插件后仍然活着（迈从插件的热键 worker 最坏要跑 5 秒），
+/// 此时它继续调 `host_log` / `host_invoke`，传进来的是已释放的指针。
+/// 直接 `&*(user_data as *const HostUserData)` 就是对野指针取引用，
+/// 实测崩在 `push_log` 里的 `Mutex` 上（`lock cmpxchg %cl,0x10(%rsi)`，0xC0000005）。
+/// 回调必须先查表，查不到就丢弃这次调用。
+static USERDATA_REGISTRY: LazyLock<Mutex<HashMap<usize, Weak<HostUserData>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn register_userdata(ud: &Arc<HostUserData>) -> usize {
+    let key = Arc::as_ptr(ud) as usize;
+    if let Ok(mut g) = USERDATA_REGISTRY.lock() {
+        g.insert(key, Arc::downgrade(ud));
+    }
+    key
+}
+
+fn unregister_userdata(key: usize) {
+    if let Ok(mut g) = USERDATA_REGISTRY.lock() {
+        g.remove(&key);
+    }
+}
+
+/// 指针 → 存活实例。返回 `Arc` 保证调用期间对象不会被别的线程释放。
+fn lookup_userdata(ptr: *mut c_void) -> Option<Arc<HostUserData>> {
+    if ptr.is_null() {
+        return None;
+    }
+    let key = ptr as usize;
+    let weak = USERDATA_REGISTRY.lock().ok()?.get(&key).cloned()?;
+    weak.upgrade()
+}
+
+/// 已卸载但**不释放**的插件 DLL。
+///
+/// Windows 上 `LoadLibraryW` 同一模块只加引用计数，drop `Library` 就会 unmap 代码段。
+/// 插件自己的线程（低级键盘钩子、HID 轮询、HTTP 推送）没有可强制终止的手段，
+/// 一旦代码段被 unmap，线程回来执行下一条指令就是 0xC0000005。
+/// 插件数量是个位数、单 DLL 几百 KB，进程内保留到退出是安全且可接受的代价。
+static RETIRED_LIBRARIES: LazyLock<Mutex<Vec<libloading::Library>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
+
+/// 把插件库移入退休区，永不 drop。
+pub fn retire_library(lib: libloading::Library) {
+    match RETIRED_LIBRARIES.lock() {
+        Ok(mut g) => g.push(lib),
+        Err(_) => {
+            // 锁中毒：宁可泄漏也不能让 Library drop
+            std::mem::forget(lib);
+        }
+    }
+}
 
 /// 持有跨 DLL 的 ABI 指针（AirHostVTable + HostUserData）。
 ///
@@ -21,20 +75,24 @@ use tauri::{AppHandle, Emitter, Manager};
 /// Mutex 注册表内使用，且 HostUserData 字段自身可跨线程。
 pub struct PluginAbiStorage {
     vtable: *mut AirHostVTable,
-    userdata: *mut HostUserData,
+    /// 与注册表共享的同一实例；`Arc` 保证回调期间对象存活。
+    userdata: Arc<HostUserData>,
+    /// 注册表 key（= 传给插件的 user_data 指针）。
+    userdata_key: usize,
 }
 
 unsafe impl Send for PluginAbiStorage {}
 unsafe impl Sync for PluginAbiStorage {}
 
 impl PluginAbiStorage {
-    pub fn from_boxes(vtable: Box<AirHostVTable>, userdata: Box<HostUserData>) -> Self {
-        let userdata_ptr = Box::into_raw(userdata);
+    pub fn from_boxes(vtable: Box<AirHostVTable>, userdata: Arc<HostUserData>) -> Self {
+        let userdata_key = register_userdata(&userdata);
         // vtable.user_data 在构造时已指向同一 HostUserData
         let vtable_ptr = Box::into_raw(vtable);
         Self {
             vtable: vtable_ptr,
-            userdata: userdata_ptr,
+            userdata,
+            userdata_key,
         }
     }
 
@@ -44,23 +102,21 @@ impl PluginAbiStorage {
     }
 
     pub fn userdata(&self) -> Option<&HostUserData> {
-        if self.userdata.is_null() {
-            None
-        } else {
-            Some(unsafe { &*self.userdata })
-        }
+        Some(&self.userdata)
     }
 }
 
 impl Drop for PluginAbiStorage {
     fn drop(&mut self) {
+        // 先从注册表摘除：之后任何迟到的 host_log / host_invoke 都会查不到而丢弃。
+        unregister_userdata(self.userdata_key);
         if !self.vtable.is_null() {
-            unsafe { drop(Box::from_raw(self.vtable)) };
+            // vtable 里只有函数指针和 user_data 数值，插件不会长期持有它；
+            // 但保险起见同样不立即释放，避免插件在 shutdown 后还读。
+            // 用 forget 而非回收：泄漏量 = 插件数 × sizeof(AirHostVTable)（48 字节）。
+            let vtable = unsafe { Box::from_raw(self.vtable) };
+            std::mem::forget(vtable);
             self.vtable = std::ptr::null_mut();
-        }
-        if !self.userdata.is_null() {
-            unsafe { drop(Box::from_raw(self.userdata)) };
-            self.userdata = std::ptr::null_mut();
         }
     }
 }
@@ -107,7 +163,10 @@ extern "C" fn host_log_cb(user_data: *mut c_void, level: i32, msg: *const c_char
     if user_data.is_null() || msg.is_null() {
         return;
     }
-    let ud = unsafe { &*(user_data as *const HostUserData) };
+    // 先确认实例还活着：插件线程可能在卸载后才回调。
+    let Some(ud) = lookup_userdata(user_data) else {
+        return;
+    };
     let text = unsafe { CStr::from_ptr(msg) }.to_string_lossy().into_owned();
     push_log(&ud.log, level, &text);
 }
@@ -120,7 +179,9 @@ extern "C" fn host_invoke_cb(
     if user_data.is_null() || method.is_null() {
         return std::ptr::null_mut();
     }
-    let ud = unsafe { &*(user_data as *const HostUserData) };
+    let Some(ud) = lookup_userdata(user_data) else {
+        return std::ptr::null_mut();
+    };
     let method = unsafe { CStr::from_ptr(method) }
         .to_string_lossy()
         .into_owned();
@@ -131,7 +192,7 @@ extern "C" fn host_invoke_cb(
         serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null)
     };
 
-    let envelope = match dispatch_host_invoke(ud, &method, &args_json) {
+    let envelope = match dispatch_host_invoke(&ud, &method, &args_json) {
         Ok(data) => InvokeEnvelope {
             ok: true,
             data: Some(data),
@@ -330,14 +391,14 @@ pub fn load_plugin_dll(
     let log = Arc::new(Mutex::new(RingLog::new(LOG_RING_CAPACITY)));
     let capabilities = capability::parse_capabilities(&manifest.capabilities);
 
-    let host_userdata = Box::new(HostUserData {
+    let host_userdata = Arc::new(HostUserData {
         plugin_id: manifest.id.clone(),
         capabilities,
         app,
         log: log.clone(),
         host_strings: Mutex::new(Vec::new()),
     });
-    let userdata_ptr = host_userdata.as_ref() as *const HostUserData as *mut c_void;
+    let userdata_ptr = Arc::as_ptr(&host_userdata) as *mut c_void;
 
     let vtable = Box::new(AirHostVTable {
         abi_version: AIR_PLUGIN_ABI_VERSION,
@@ -346,6 +407,11 @@ pub fn load_plugin_dll(
         host_invoke: host_invoke_cb,
     });
     let vtable_ptr = vtable.as_ref() as *const AirHostVTable;
+
+    // **必须在 init 之前注册**：插件会在 air_plugin_init 里就调 host_log
+    // （迈从插件打印 "initialized" 与热键注册结果）。注册晚了这些日志会被
+    // 回调当作「已卸载实例」丢弃。
+    let _ = register_userdata(&host_userdata);
 
     let library = unsafe { libloading::Library::new(&dll_path) }.map_err(|e| {
         AppError::new(
@@ -424,6 +490,10 @@ pub fn load_plugin_dll(
     // init
     let rc = unsafe { init_fn(vtable_ptr, userdata_ptr) };
     if rc != 0 {
+        // init 失败的插件也可能已经 spawn 了线程（迈从插件在 init 末尾注册热键）。
+        // 不能 drop Library（会 unmap），也不能留着注册表项（会指向即将释放的实例）。
+        unregister_userdata(userdata_ptr as usize);
+        retire_library(library);
         return Err(AppError::new(
             "PLUGIN_INIT_ERROR",
             format!("Plugin init returned {}", rc),
@@ -467,22 +537,30 @@ fn missing_sym(name: &str, e: libloading::Error) -> AppError {
     )
 }
 
-/// 卸载：shutdown → drop Library / vtable / userdata。
+/// 卸载：shutdown → 摘除 ABI 注册表 → 把 Library 移入退休区（不 unmap）。
 pub fn unload_plugin(plugin: &mut LoadedPlugin) -> AppResult<()> {
     if !plugin.loaded {
         return Ok(());
     }
     if let Some(fns) = plugin.fns.take() {
+        // shutdown 内插件应自行停止线程；但插件不保证做到（迈从插件的热键 worker
+        // 最坏要跑 5 秒以上），所以这里**不假设**线程已停。
         unsafe { (fns.shutdown)() };
     }
-    // 可选 on_event 不需要单独清理
-    plugin.library = None;
+    // 先摘注册表，再退库：顺序反了会给迟到的 host_log 留一个窗口。
     plugin.abi_storage = None;
+    if let Some(library) = plugin.library.take() {
+        retire_library(library);
+    }
     plugin.loaded = false;
     Ok(())
 }
 
 /// 调用插件 `air_plugin_invoke`。
+///
+/// 便利封装（内部持 registry 借用）；Tauri 命令路径用 `invoke_fns`，
+/// 因为它需要先释放锁再执行插件代码。
+#[allow(dead_code)]
 pub fn invoke_plugin(
     plugin: &LoadedPlugin,
     method: &str,
@@ -500,11 +578,24 @@ pub fn invoke_plugin(
             format!("Plugin '{}' is disabled", plugin.manifest.id),
         ));
     }
-
     let fns = plugin
         .fns
         .ok_or_else(|| AppError::internal("Plugin function table missing"))?;
+    invoke_fns(fns, &plugin.manifest.id, method, args)
+}
 
+/// 直接调用已取出的函数表。
+///
+/// 与 `invoke_plugin` 分开是为了让 `plugin_host_invoke` **先释放 registry 锁**
+/// 再执行插件方法：迈从插件一次切换最坏 5 秒以上，持锁会让 `plugin_host_list`
+/// 等所有 UI 侧调用全部阻塞，表现为界面卡死。
+/// 安全性由「退休库永不 unmap」保证：函数指针在进程生命周期内始终有效。
+pub fn invoke_fns(
+    fns: PluginFns,
+    plugin_id: &str,
+    method: &str,
+    args: &serde_json::Value,
+) -> AppResult<serde_json::Value> {
     let method_c = CString::new(method)
         .map_err(|_| AppError::invalid_input("method contains NUL"))?;
     let args_str = if args.is_null() {
@@ -519,7 +610,7 @@ pub fn invoke_plugin(
     if raw.is_null() {
         return Err(AppError::internal(format!(
             "Plugin '{}' invoke('{}') returned null",
-            plugin.manifest.id, method
+            plugin_id, method
         )));
     }
 
@@ -550,6 +641,7 @@ pub fn invoke_plugin(
 }
 
 /// 通知插件事件（可选符号）。
+#[allow(dead_code)]
 pub fn notify_plugin_event(plugin: &LoadedPlugin, event_json: &str) -> AppResult<()> {
     if !plugin.loaded {
         return Ok(());
@@ -602,6 +694,48 @@ mod tests {
         assert!(r.is_ok());
         let lines = ud.log.lock().unwrap().to_vec();
         assert!(lines.iter().any(|l| l.contains("hello host")));
+    }
+
+    /// 回归：插件线程在宿主卸载后仍回调 host_log，必须被静默丢弃。
+    /// 旧实现直接 `&*(user_data as *const HostUserData)`，实测崩在 push_log 的
+    /// Mutex 上（`lock cmpxchg %cl,0x10(%rsi)`，0xC0000005）。
+    #[test]
+    fn late_host_log_after_unload_is_dropped() {
+        let ud = Arc::new(make_ud(&[]));
+        let vtable = Box::new(AirHostVTable {
+            abi_version: AIR_PLUGIN_ABI_VERSION,
+            user_data: Arc::as_ptr(&ud) as *mut c_void,
+            log: host_log_cb,
+            host_invoke: host_invoke_cb,
+        });
+        let storage = PluginAbiStorage::from_boxes(vtable, ud.clone());
+        let raw_ptr = Arc::as_ptr(&ud) as *mut c_void;
+
+        // 卸载：注册表摘除
+        drop(storage);
+
+        // 插件线程迟到的回调：查表失败 → 直接返回，不 panic、不解引用
+        let msg = CString::new("late log").unwrap();
+        host_log_cb(raw_ptr, abi::LOG_INFO, msg.as_ptr());
+
+        let lines = ud.log.lock().unwrap().to_vec();
+        assert!(
+            !lines.iter().any(|l| l.contains("late log")),
+            "卸载后的日志必须被丢弃，实际写入: {lines:?}"
+        );
+    }
+
+    /// 回归：ABI 注册表按指针查活实例，重复 init 同一实例时不应互相覆盖。
+    #[test]
+    fn userdata_registry_tracks_liveness() {
+        let ud = Arc::new(make_ud(&["log"]));
+        let key = register_userdata(&ud);
+        assert_eq!(key, Arc::as_ptr(&ud) as usize);
+        assert!(lookup_userdata(key as *mut c_void).is_some());
+        unregister_userdata(key);
+        assert!(lookup_userdata(key as *mut c_void).is_none());
+        // 空指针永远查不到
+        assert!(lookup_userdata(std::ptr::null_mut()).is_none());
     }
 
     #[test]

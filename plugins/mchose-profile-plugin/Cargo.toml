@@ -17,10 +17,14 @@ hidapi = { version = "2", default-features = false }
 ureq = { version = "2", default-features = false, features = ["json"] }
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.54", features = ["Win32_Foundation", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi"] }
+windows = { version = "0.54", features = ["Win32_Foundation", "Win32_UI_Input", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi"] }
 
 [profile.release]
 lto = true
 opt-level = "s"
 strip = true
-panic = "abort"
+# 必须是 unwind：cdylib 里的 panic 若直接 abort，会连带杀掉宿主进程
+# （2026-11-07 21:49 的 0xC0000005 闪退就是这条链路放大的）。
+# 配合 lib.rs 里 air_plugin_invoke / on_event 的 catch_unwind，
+# 插件内部出错只返回错误信封，宿主继续存活。
+panic = "unwind"
