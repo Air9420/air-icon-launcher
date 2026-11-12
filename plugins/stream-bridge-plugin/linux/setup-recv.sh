@@ -45,6 +45,12 @@ write_sink_conf() {
 # Air Stream Bridge: OBS 采集用的虚拟 sink
 # 用 PipeWire 原生方式建，比 pactl load-module 可靠：
 # 后者在 pipewire 重启后就没了，OBS 里会突然找不到设备。
+#
+# node.pause-on-idle = false 是必须的：默认 sink 空闲会挂起，
+# 挂起时 cpal/ALSA 的输出流 poll 会报
+#   snd_pcm_poll_descriptors_revents failed with error 'Unknown errno (-5)'
+# 之后流不再投递回调，数据进了抖动缓冲却没人播放，
+# 表现就是「推流在跑但 OBS 电平不跳」。
 context.objects = [
     {   factory = adapter
         args = {
@@ -55,6 +61,8 @@ context.objects = [
             object.linger          = true
             audio.position         = [ FL FR ]
             monitor.channel-volumes = true
+            node.pause-on-idle     = false
+            session.suspend-timeout-seconds = 0
         }
     }
 ]

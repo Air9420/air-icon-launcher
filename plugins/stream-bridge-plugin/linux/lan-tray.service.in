@@ -1,0 +1,22 @@
+[Unit]
+Description=LAN 音频接收服务托盘管理器
+# 托盘必须有图形会话才起得来：绑到 graphical-session.target，
+# 这样开机进桌面后自动出现，注销时自动退出。
+After=graphical-session.target pipewire.service wireplumber.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# systemd 用户管理器通常已带这些变量，但显式写一遍更稳：
+# 换显示管理器 / 换会话类型时不会因环境缺失而图标不出现。
+Environment=XDG_RUNTIME_DIR=/run/user/__UID__
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/__UID__/bus
+Environment=DISPLAY=__DISPLAY__
+Environment=WAYLAND_DISPLAY=__WAYLAND__
+ExecStart=/usr/bin/python3 __TRAY_PY__
+Restart=on-failure
+RestartSec=5
+Nice=-5
+
+[Install]
+WantedBy=graphical-session.target

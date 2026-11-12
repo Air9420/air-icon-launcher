@@ -11,6 +11,8 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::time::Duration;
 #[cfg(target_os = "windows")]
 use windows::Win32::Foundation::HWND;
@@ -186,7 +188,10 @@ fn current_apps_folder_target_for_windows_apps_path(path: &str) -> Option<String
         return Some(target.clone());
     }
 
+    // 宿主是 GUI 子系统进程，spawn 控制台程序（powershell）时若不带
+    // CREATE_NO_WINDOW，Windows 会新分配一个控制台窗口——用户会看到黑框一闪。
     let output = Command::new("powershell")
+        .creation_flags(0x08000000)
         .args([
             "-NoProfile",
             "-Command",

@@ -84,6 +84,23 @@ wpctl status | sed -n '/Streams:/,/Video/p'
 这台主机实际是 `192.168.31.254`，写成别的地址会表现为
 「服务在跑、端口在听、但一个包都不收」。留空最稳。
 
+**4. CONFIG 包必须周期性重发，不能只发一次。**
+CONFIG 携带线上采样率，接收端靠它设置抖动缓冲的重采样比。
+副机接收端如果在推流中途重启（systemd `Restart=always`、点托盘「重启」、
+pipewire 抖动都会触发），它就永远收不到开头那一次 CONFIG，
+只能退回默认 48000 播放。而线上若是 44100，音高会被整体拉高 8.8%
+（约 1.5 个半音）——听感就是「小黄人」。
+
+现在发送端每秒重发一次 CONFIG，成本 26 字节。验证中道重启后能收到 10 次。
+
+**5. `audio_rate` 要和设备混音格式一致，否则双重线性插值。**
+这台机器的 MCHOSE 耳机混音格式是 `48000 Hz / 8 ch`。若把 `audio_rate`
+设成 44100，发送端要先 48000→44100、接收端再 44100→48000，
+两次线性插值叠加上去音质会明显发闷。设成 48000 就是零重采样。
+
+实测：注入 440 Hz 正弦波，`audio_rate=44100` 时接收端应出 478.9 Hz
+（即被拉高 8.8%）；`audio_rate=48000` 时出 440.4 Hz（+0.1%，测量精度极限）。
+
 #### 延迟与稳定性的取舍
 
 PipeWire 的默认回调块是 512 帧（10.7 ms），抖动缓冲的下限被它抬高，
@@ -98,6 +115,62 @@ PipeWire 的默认回调块是 512 帧（10.7 ms），抖动缓冲的下限被�
 pactl load-module module-null-sink sink_name=lanaudio rate=48000
 PIPEWIRE_NODE=lanaudio lan-audio-recv --bind 0.0.0.0:47800 --device PulseAudio
 ```
+
+#### 托盘管理器（推荐）
+
+两路接收服务装好后，装一个托盘常驻，之后开关/重启不用敲命令：
+
+```bash
+./linux/setup-tray.sh install    # 装托盘 + 开机自启（不需要 sudo）
+./linux/setup-tray.sh status
+./linux/setup-tray.sh uninstall
+```
+
+依赖全部是 Ubuntu 自带的：`python3-gi`、`gir1.2-ayatanaappindicator3-0.1`、
+GNOME 的 `ubuntu-appindicators@ubuntu.com` 扩展。脚本会自己检查并提示。
+
+托盘菜单：
+
+```
+● 主声音 (LAN-Audio)  :47800
+    启动 / 停止 / 重启
+● 麦克风 (LAN-Mic)  :47801
+    启动 / 停止 / 重启
+─────────────
+重启全部服务
+重启 OBS（重建音频采集流）
+─────────────
+虚拟 sink：lanaudio=有  lanmic=有
+查看日志
+退出托盘
+```
+
+图标三态：绿=两路都在跑，黄=只跑了一路，红=都停了。每 5 秒轮询一次，
+外部用 `systemctl` 改状态也能反映到图标上。
+
+**为什么要「重启 OBS」这一项**：改动 pipewire 配置后 `systemctl --user restart pipewire`
+会让 OBS 的音频采集流全部断开，`wpctl status` 里 OBS 的 stream 直接消失，
+表现为「服务在跑、sink 也有，但 OBS 电平不动」。重启 OBS 才会重连。
+
+**Wayland 会话下启动 OBS 必须去掉 `DISPLAY`**：这台副机是纯 Wayland
+（`loginctl show-session` → `Type=wayland`），`/tmp/.X11-unix/X0` 那份 socket
+没有对应的 X server 在监听。带 `DISPLAY=:0` 启动 flatpak OBS 会直接崩：
+
+```
+qt.qpa.xcb: could not connect to display
+This application failed to start because no Qt platform plugin could be initialized.
+```
+
+托盘里的 `launch_env()` 在有 `WAYLAND_DISPLAY` 时会主动 `pop("DISPLAY")`
+并设 `QT_QPA_PLATFORM=wayland`。
+
+**「查看日志」是内建 GTK 窗口，不依赖外部终端**：这台机器 `gnome-terminal` 没装，
+`x-terminal-emulator` 指向 `ptyxis`，行为不一致。托盘直接开一个
+`Gtk.TextView` + 后台线程 `journalctl -f`，可以切换「全部 / 仅主声音 / 仅麦克风」。
+
+**开机自启**：托盘是 `WantedBy=graphical-session.target` 的用户服务，登录桌面就起；
+接收端是 `WantedBy=default.target`，配合 `loginctl enable-linger` 在没人登录时也收流。
+两者都 enabled 之后，重启 Linux 不需要手动执行任何命令。
 
 ## 二、隐私虚化
 

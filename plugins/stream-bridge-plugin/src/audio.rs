@@ -191,7 +191,19 @@ mod imp {
     }
 
     /// 把 "chrome.exe" / "chrome" / "12345" 解析成 PID。
+    ///
+    /// 用 `CreateToolhelp32Snapshot` 而不是 `tasklist`：插件跑在 GUI 子系统的
+    /// 宿主进程里，`Command::output()` 没带 `CREATE_NO_WINDOW` 时 Windows 会给
+    /// 控制台子进程新开一个控制台窗口——用户点一下按钮就闪一个黑框。
+    /// 走 Toolhelp 快照完全在进程内完成，没有任何子进程。
+    /// （宿主 `process_monitor.rs` 用的是同一套 API。）
     fn resolve_pid(target: &str) -> Result<u32, String> {
+        use windows::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+            TH32CS_SNAPPROCESS,
+        };
+
         let t = target.trim();
         if t.is_empty() {
             return Err("进程环回需要指定进程名或 PID".into());
@@ -200,29 +212,37 @@ mod imp {
             return Ok(pid);
         }
         let want = t.to_ascii_lowercase();
-        let want = want.trim_end_matches(".exe");
+        let want = want.trim_end_matches(".exe").to_string();
 
-        // 用 tasklist 枚举：不引额外 crate，且能拿到完整映像名
-        let out = std::process::Command::new("tasklist")
-            .args(["/FO", "CSV", "/NH"])
-            .output()
-            .map_err(|e| format!("执行 tasklist 失败: {e}"))?;
-        let text = String::from_utf8_lossy(&out.stdout);
-        for line in text.lines() {
-            let cols: Vec<&str> = line.split("\",\"").collect();
-            if cols.len() < 2 {
-                continue;
-            }
-            let name = cols[0].trim_matches('"').to_ascii_lowercase();
-            let name = name.trim_end_matches(".exe");
-            if name == want {
-                let pid_str = cols[1].trim_matches('"');
-                if let Ok(pid) = pid_str.parse::<u32>() {
-                    return Ok(pid);
-                }
-            }
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
+            .map_err(|e| format!("枚举进程快照失败: {e}"))?;
+        if snapshot == INVALID_HANDLE_VALUE {
+            return Err("枚举进程快照失败: 无效句柄".into());
         }
-        Err(format!("找不到进程 '{target}'（用完整进程名，如 chrome.exe）"))
+
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+
+        let mut found: Option<u32> = None;
+        let mut ok = unsafe { Process32FirstW(snapshot, &mut entry) }.is_ok();
+        while ok {
+            let len = entry
+                .szExeFile
+                .iter()
+                .position(|c| *c == 0)
+                .unwrap_or(entry.szExeFile.len());
+            let name = String::from_utf16_lossy(&entry.szExeFile[..len]).to_ascii_lowercase();
+            if name.trim_end_matches(".exe") == want {
+                found = Some(entry.th32ProcessID);
+                break;
+            }
+            ok = unsafe { Process32NextW(snapshot, &mut entry) }.is_ok();
+        }
+        let _ = unsafe { CloseHandle(snapshot) };
+
+        found.ok_or_else(|| format!("找不到进程 '{target}'（用完整进程名，如 chrome.exe）"))
     }
 
     impl Capture {
@@ -590,6 +610,12 @@ pub fn run_push(
 
         if last_stat.elapsed().as_secs_f64() >= 1.0 {
             last_stat = Instant::now();
+            // 周期性重发 CONFIG：副机接收端如果在我们推流中途重启（systemd
+            // Restart=always、点托盘「重启」、pipewire 抖动都会触发），
+            // 它就永远收不到开头发的那一次 CONFIG，只能退回默认 48000 播放。
+            // 而线上是 44100，于是音高被整体拉高 8.8%（约 1.5 个半音）——
+            // 听感就是「小黄人」。每秒补发一次，成本 26 字节。
+            sock.send(&wire::config_packet(cfg.rate)).ok();
             if !lag_ring.is_empty() {
                 lag_ring.sort_unstable();
                 let p50 = lag_ring[lag_ring.len() / 2] as f64 / 1000.0;
