@@ -1,11 +1,11 @@
 {
-  "version": "0.12.0",
-  "notes": "## v0.12.0\n\n### 新增\n- **直播推流桥插件**：把本机声音低延迟推到局域网 Linux 主机，供副机 OBS 使用\n  - 播放设备环回：抓「耳朵听到的声音」，实测 200 包/秒、零丢包、抖动 p50 0.06 ms\n  - 麦克风推流：独立端口与线程，可与主路并发\n  - 单程序音频：只抓指定进程的声音（Windows 10 2004+）\n- **隐私虚化**：前台窗口离开全屏时自动让副机 OBS 模糊采集画面\n  - 全屏判定复用宿主的 `is_fullscreen_app_running` 语义（四边严格相等）\n  - 优先 Composite Blur 高斯模糊，未安装时退回内置 scale_filter\n\n### 插件宿主\n- 设置项支持 `optionsFrom` 动态候选项：音频设备、麦克风、进程列表由插件实时枚举，\n  不再需要手工复制设备名；下拉旁带「刷新」按钮\n- 命令按钮按 id 前缀自动分组，三列等宽网格，不再挤成一行\n\n### 修复\n- 插件 `settings.set` 返回包装对象导致界面回退，改为返回扁平配置\n- 增益精度：`audio_gain` 从 f32 改 f64，1.1 不再变成 1.100000023841858\n- 命令分组把内部 id（如 `mchose.profile`）当标题暴露的问题\n",
-  "pub_date": "2026-11-12T12:10:14.000Z",
+  "version": "0.12.1",
+  "notes": "## v0.12.1\n\n### 修复\n- 修复麦克风推流声音变尖（音高被拉高约 1.5 个半音）的问题：CONFIG 包改为每秒重发，副机接收端中途重启后也能拿到正确的采样率\n- 采样率默认值由 44100 改为 48000，与设备混音格式一致，消除双重线性插值造成的音质损失\n- 修复点击「开始推声音」「开始推麦克风」时弹出的控制台黑框：插件进程查找改用进程快照，不再启动 tasklist 子进程\n- 修复宿主启动 Windows 商店应用时的同源黑框\n- PipeWire 虚拟 sink 关闭自动挂起，修复 OBS 电平不跳动\n\n### 新增\n- 副机托盘管理器：可分别启停/重启主音频与麦克风服务，一键重启全部、重启 OBS、查看实时日志\n- 托盘支持开机自启（systemd 用户服务 + graphical-session.target）",
+  "pub_date": "2026-11-12T15:04:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbUt3NUd3RVF4cVA3WDA4WFJRbUk0ZGxuUS9kc1kzT1FOek83dGZRSW1NVTB5WjEzWGExQkNJMzJtU242VEJaMUEwRXBJWjNYRE1XZ1FEcTIxN21lS2kxeUdTVXE3YkFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDg1NDAyCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC4xMi4wX3g2NC1zZXR1cC5uc2lzLnppcApDd1kxYTZ5cHBoaUoyODIycFg5OEtjTUlmSGo4eEY1d0dmVFplU3FiYjZKWDdIYjJKUnBwWjUzdXhIVUdqbElDbFN5ajZzVmUwdk9LQ3cyUUdOaDhEdz09Cg==",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.12.0/air-icon-launcher_0.12.0_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbUt3NUd3RVF4cUNaTVlldWpPV25Qd1phV21aYWQrZEVRbDJPNnJ1YndxN0xaR1NwZ0wrbTdlY2dNSXNWMzlla2V1UDVMVlhCQjBUSG8vNUpacEJjMDg1c3VST21IUHdRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDk1ODM5CWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC4xMi4xX3g2NC1zZXR1cC5uc2lzLnppcApsK0VJaEJhUmVpMTFKVDJNY0V5NVJRaHNEV3lwUUdFbXJnVGRuNDdiTm0za1BTYmZYQjdPYTFiNUxMQVJQSW1maUMzMUFEMEJ0eDVlMHV0eFViNGtDUT09Cg==",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.12.1/air-icon-launcher_0.12.1_x64-setup.nsis.zip"
     }
   }
 }
