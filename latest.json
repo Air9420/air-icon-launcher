@@ -1,11 +1,11 @@
 {
-  "version": "0.11.2",
-  "notes": "## v0.11.2\n\n### 修复\n\n- **修复三角洲等 ACE 游戏内热键彻底失效**（根因是权限级别不对等，不是热键通道不够多）。\n  ACE 把游戏进程托管为高完整性级别（受保护进程），Windows 的 UIPI 规定低完整性进程\n  收不到高完整性进程的输入，因此启动器以普通权限运行时，\n  `WH_KEYBOARD_LL` / `RegisterHotKey` / Raw Input / `GetAsyncKeyState`\n  四条通道全部被拦。现在启动器可一键提权重启，四条通道恢复。\n- 插件文件日志时间戳改为本地时间（此前写 Unix 秒 UTC，比北京时间慢 8 小时，\n  排查时容易误判成插件没工作）。\n- 插件宿主 UI 里的插件日志同步改为本地时间。\n- 修复迈从插件 `read_battery` 的文档测试无法编译的问题。\n\n### 新增\n\n- 设置 → 窗口 → 权限：显示当前是否以管理员身份运行，并提供\n  「立即以管理员重启」按钮与「每次启动自动请求管理员权限」开关。\n  后者写入 HKCU 兼容性标记，随时可取消，不影响开发调试。\n- 提权重启会透传原命令行参数（`--autostart` 等启动模式不丢失），\n  并与单实例机制配合，避免新旧实例同时抢鼠标设备。\n\n### 优化\n\n- 插件热键注册日志标注触发来源（低级钩子 / 系统热键 / Raw Input / 按键轮询），\n  排查时能直接看出是哪条通道在起作用。\n\n### 文档\n\n- `docs/architecture/mchose-mouse-protocol.md` 新增「输入侧的第二道门槛：UIPI 权限对等」，\n  含四通道对照表与判定方法，避免把「游戏内失效」一律归因到 HID 帧长。\n- 新增 `docs/handover/mchose-hotkey-fix-handover.md` 完整排查交接记录。\n\n### 说明\n\n- `src-tauri/Cargo.toml` 显式声明 `custom-protocol` feature。\n  裸 `cargo build --release` 缺这个 feature 时，tauri 的 build.rs 会把产物判成\n  dev 模式去加载 `localhost:1420`，导致打开后显示「无法访问此网页」。",
-  "pub_date": "2026-11-08T12:13:00.000Z",
+  "version": "0.12.0",
+  "notes": "## v0.12.0\n\n### 新增\n- **直播推流桥插件**：把本机声音低延迟推到局域网 Linux 主机，供副机 OBS 使用\n  - 播放设备环回：抓「耳朵听到的声音」，实测 200 包/秒、零丢包、抖动 p50 0.06 ms\n  - 麦克风推流：独立端口与线程，可与主路并发\n  - 单程序音频：只抓指定进程的声音（Windows 10 2004+）\n- **隐私虚化**：前台窗口离开全屏时自动让副机 OBS 模糊采集画面\n  - 全屏判定复用宿主的 `is_fullscreen_app_running` 语义（四边严格相等）\n  - 优先 Composite Blur 高斯模糊，未安装时退回内置 scale_filter\n\n### 插件宿主\n- 设置项支持 `optionsFrom` 动态候选项：音频设备、麦克风、进程列表由插件实时枚举，\n  不再需要手工复制设备名；下拉旁带「刷新」按钮\n- 命令按钮按 id 前缀自动分组，三列等宽网格，不再挤成一行\n\n### 修复\n- 插件 `settings.set` 返回包装对象导致界面回退，改为返回扁平配置\n- 增益精度：`audio_gain` 从 f32 改 f64，1.1 不再变成 1.100000023841858\n- 命令分组把内部 id（如 `mchose.profile`）当标题暴露的问题\n",
+  "pub_date": "2026-11-12T12:10:14.000Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbUt3NUd3RVF4cURZdVgzRmxpVG9lY2didlFOVzN0ck5ZVEJRNDFYVG9zWjFTWllOQnFia0NFM245bURwTldjY2ZGNkw4K2pFMkxaRUphVmp3WWtQT2VlazBGbVFQY2dRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MTQwMDEwCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC4xMS4yX3g2NC1zZXR1cC5uc2lzLnppcApRZjI2NHhiT1FoTzUyM2p6Ykw5SCtFUGNKWjhVWG82VVM5OEJaTTlHUzJNb1VPalFOMnUwNm9RVkdzN0JhUHF3Z21lNTRTQzhESmlPc0NsK2szVytCdz09Cg==",
-      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.11.2/air-icon-launcher_0.11.2_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbUt3NUd3RVF4cVA3WDA4WFJRbUk0ZGxuUS9kc1kzT1FOek83dGZRSW1NVTB5WjEzWGExQkNJMzJtU242VEJaMUEwRXBJWjNYRE1XZ1FEcTIxN21lS2kxeUdTVXE3YkFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDg1NDAyCWZpbGU6YWlyLWljb24tbGF1bmNoZXJfMC4xMi4wX3g2NC1zZXR1cC5uc2lzLnppcApDd1kxYTZ5cHBoaUoyODIycFg5OEtjTUlmSGo4eEY1d0dmVFplU3FiYjZKWDdIYjJKUnBwWjUzdXhIVUdqbElDbFN5ajZzVmUwdk9LQ3cyUUdOaDhEdz09Cg==",
+      "url": "https://github.com/Air9420/air-icon-launcher/releases/download/v0.12.0/air-icon-launcher_0.12.0_x64-setup.nsis.zip"
     }
   }
 }

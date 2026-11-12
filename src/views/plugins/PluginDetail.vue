@@ -6,6 +6,7 @@ import type {
   PluginHostCommandContribute,
   PluginHostRuntimeInfo,
   PluginHostSettingField,
+  PluginHostSettingOption,
 } from "../../types/plugin-host";
 import { showToast } from "../../composables/useGlobalToast";
 import { useConfirmDialog } from "../../composables/useConfirmDialog";
@@ -38,6 +39,73 @@ const settingFields = computed<PluginHostSettingField[]>(
 const commands = computed<PluginHostCommandContribute[]>(
   () => plugin.value?.contributes?.commands ?? [],
 );
+
+/**
+ * 按命令 id 前缀分组。
+ *
+ * 分两级：
+ * 1. 先按**第一段**分组（`proxy` / `stream` / `mchose`）。
+ * 2. 只有当某个第一段下的命令足够多、且子前缀足够分散时，才按前两段细分
+ *    （`stream.audio` / `stream.mic` ...）。
+ *
+ * 这条规则是为了避免「每个命令各成一组」：
+ * 像 `proxy.disable` 和 `proxy.status` 只有两段，若直接按前两段取 key，
+ * 会得到两个不同的组，各自一个单按钮 grid，视觉上就是上下两行——
+ * 那正是之前「按钮变成两行」的原因。
+ *
+ * 另外：只有一个组、或命令本来就少时，不显示组标题，
+ * 绝不把 `mchose.profile` 这种内部 id 当文案暴露给用户。
+ */
+const commandGroups = computed(() => {
+  const knownTitles: Record<string, string> = {
+    "stream.audio": "声音推流",
+    "stream.mic": "麦克风推流",
+    "stream.privacy": "隐私虚化",
+    "stream.obs": "OBS 连接",
+  };
+
+  // 第一级：按第一段分桶
+  const buckets = new Map<string, PluginHostCommandContribute[]>();
+  for (const cmd of commands.value) {
+    const head = cmd.id.split(".")[0] || "其他";
+    const list = buckets.get(head) ?? [];
+    list.push(cmd);
+    buckets.set(head, list);
+  }
+
+  // 第二级：命令多的桶再按前两段细分
+  const groups: Array<{ key: string; commands: PluginHostCommandContribute[] }> = [];
+  for (const [head, list] of buckets) {
+    const subPrefixes = new Set(
+      list.map((c) => {
+        const p = c.id.split(".");
+        return p.length >= 2 ? `${p[0]}.${p[1]}` : p[0];
+      }),
+    );
+    // 细分条件：至少 4 个命令，且子前缀不止一个
+    if (list.length >= 4 && subPrefixes.size > 1) {
+      const sub = new Map<string, PluginHostCommandContribute[]>();
+      for (const cmd of list) {
+        const p = cmd.id.split(".");
+        const key = p.length >= 2 ? `${p[0]}.${p[1]}` : p[0];
+        const arr = sub.get(key) ?? [];
+        arr.push(cmd);
+        sub.set(key, arr);
+      }
+      for (const [key, arr] of sub) groups.push({ key, commands: arr });
+    } else {
+      groups.push({ key: head, commands: list });
+    }
+  }
+
+  // 只有一个组时没必要显示标题
+  const needTitles = groups.length > 1;
+  return groups.map((g) => ({
+    key: g.key,
+    title: needTitles ? (knownTitles[g.key] ?? "") : "",
+    commands: g.commands,
+  }));
+});
 
 onMounted(async () => {
   if (!host) return;
@@ -166,6 +234,10 @@ async function loadSettings() {
     settings.value = r.value as Record<string, unknown>;
     settingsLoaded.value = true;
   }
+  // 设置读到后再拉动态候选项
+  for (const field of settingFields.value) {
+    if (field.options_from) void loadDynamicOptions(field);
+  }
 }
 
 async function saveSetting(key: string, value: unknown) {
@@ -192,9 +264,96 @@ async function saveSetting(key: string, value: unknown) {
 
 /* ---- 设置控件 ---- */
 
+/**
+ * 动态候选项缓存：field.key → 候选项数组。
+ *
+ * manifest 的 `options` 是静态 JSON，写不了「这台机器上有哪些音频设备」。
+ * 声明 `optionsFrom` 后，前端渲染下拉前调用插件那个 method 取候选，
+ * 避免让人手工复制设备名。
+ */
+const dynamicOptions = ref<Record<string, PluginHostSettingOption[]>>({});
+const dynamicOptionsLoading = ref<Record<string, boolean>>({});
+
+function optionsOf(field: PluginHostSettingField): PluginHostSettingOption[] {
+  return dynamicOptions.value[field.key] ?? field.options ?? [];
+}
+
+function isLoadingOptions(field: PluginHostSettingField): boolean {
+  return dynamicOptionsLoading.value[field.key] === true;
+}
+
+/** 把插件返回值规整成候选项；数组和 `{options: []}` 两种形状都接受。 */
+function normalizeOptions(raw: unknown): PluginHostSettingOption[] {
+  if (Array.isArray(raw)) {
+    return raw
+      .map((item) => {
+        if (item && typeof item === "object") {
+          const o = item as Record<string, unknown>;
+          if ("value" in o) {
+            return { value: o.value, label: (o.label as string) ?? String(o.value) };
+          }
+        }
+        return { value: item, label: String(item) };
+      })
+      .filter((o) => o.value !== undefined);
+  }
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    for (const key of ["options", "devices", "items", "values"]) {
+      if (Array.isArray(obj[key])) return normalizeOptions(obj[key]);
+    }
+  }
+  return [];
+}
+
+async function loadDynamicOptions(field: PluginHostSettingField) {
+  const method = field.options_from;
+  if (!method || dynamicOptions.value[field.key]) return;
+  const h = requireHost();
+  if (!h) return;
+
+  dynamicOptionsLoading.value = { ...dynamicOptionsLoading.value, [field.key]: true };
+  try {
+    const r = await h.invoke(props.pluginId, method, {});
+    if (!r.ok) return;
+    dynamicOptions.value = {
+      ...dynamicOptions.value,
+      [field.key]: normalizeOptions(r.value),
+    };
+  } finally {
+    dynamicOptionsLoading.value = { ...dynamicOptionsLoading.value, [field.key]: false };
+  }
+}
+
+/** 重新读取某字段的动态候选项（下拉旁的刷新按钮用）。 */
+async function refreshDynamicOptions(field: PluginHostSettingField) {
+  const next = { ...dynamicOptions.value };
+  delete next[field.key];
+  dynamicOptions.value = next;
+  await loadDynamicOptions(field);
+}
+
 function valueOf(field: PluginHostSettingField): unknown {
   if (field.key in settings.value) return settings.value[field.key];
   return field.default;
+}
+
+/**
+ * 下拉当前应选中的值。
+ *
+ * 历史配置里可能存的是「名称片段」（如 `MCHOSE`），而选项 value 是完整设备名。
+ * 精确匹配不到时，找唯一一个包含它的选项，避免下拉显示空白。
+ */
+function selectedValueOf(field: PluginHostSettingField): string {
+  const cur = asText(valueOf(field));
+  const opts = optionsOf(field);
+  if (opts.some((o) => String(o.value) === cur)) return cur;
+  if (!cur) return "";
+  const partial = opts.filter((o) => {
+    const v = String(o.value).toLowerCase();
+    return v.includes(cur.toLowerCase());
+  });
+  return partial.length === 1 ? String(partial[0].value) : cur;
 }
 
 function asText(v: unknown): string {
@@ -220,7 +379,7 @@ function onBool(field: PluginHostSettingField, ev: Event) {
 
 function onSelect(field: PluginHostSettingField, ev: Event) {
   const el = ev.target as HTMLSelectElement;
-  const opt = (field.options ?? []).find((o) => String(o.value) === el.value);
+  const opt = optionsOf(field).find((o) => String(o.value) === el.value);
   void saveSetting(field.key, opt ? opt.value : el.value);
 }
 
@@ -362,18 +521,29 @@ function goBack() {
         <!-- 操作 -->
         <section v-if="commands.length" class="block">
           <div class="block-title">操作</div>
-          <div class="btn-grid">
-            <button
-              v-for="cmd in commands"
-              :key="cmd.id"
-              class="btn"
-              type="button"
-              :title="cmd.method || cmd.id"
-              :disabled="busy || !plugin.loaded"
-              @click="onInvoke(cmd)"
-            >
-              {{ cmd.title || cmd.id }}
-            </button>
+          <div
+            v-for="group in commandGroups"
+            :key="group.key"
+            class="cmd-group"
+          >
+            <div v-if="group.title" class="cmd-group-title">{{ group.title }}</div>
+            <!--
+              三列等宽网格：每行最多三个，不足三个也按三等分占位，
+              这样按钮宽度始终一致，不会因为行内数量不同而忽宽忽窄。
+            -->
+            <div class="btn-grid">
+              <button
+                v-for="cmd in group.commands"
+                :key="cmd.id"
+                class="btn"
+                type="button"
+                :title="cmd.method || cmd.id"
+                :disabled="busy || !plugin.loaded"
+                @click="onInvoke(cmd)"
+              >
+                {{ cmd.title || cmd.id }}
+              </button>
+            </div>
           </div>
           <div v-if="!plugin.loaded" class="block-hint">启用插件后可用</div>
         </section>
@@ -442,25 +612,47 @@ function goBack() {
                   <span class="slider"></span>
                 </label>
 
-                <select
-                  v-else-if="field.type === 'select'"
-                  class="field field-select"
-                  :disabled="busy"
-                  @change="onSelect(field, $event)"
-                >
-                  <option
-                    v-for="opt in field.options ?? []"
-                    :key="String(opt.value)"
-                    :value="String(opt.value)"
-                    :selected="String(opt.value) === asText(valueOf(field))"
+                <div v-else-if="field.type === 'select'" class="select-row">
+                  <select
+                    class="field field-select"
+                    :disabled="busy || isLoadingOptions(field)"
+                    @change="onSelect(field, $event)"
                   >
-                    {{ opt.label || String(opt.value) }}
-                  </option>
-                </select>
+                    <option v-if="isLoadingOptions(field)" value="" disabled selected>
+                      读取中…
+                    </option>
+                    <option
+                      v-else-if="optionsOf(field).length === 0"
+                      value=""
+                      disabled
+                      selected
+                    >
+                      无可选项
+                    </option>
+                    <option
+                      v-for="opt in optionsOf(field)"
+                      :key="String(opt.value)"
+                      :value="String(opt.value)"
+                      :selected="String(opt.value) === selectedValueOf(field)"
+                    >
+                      {{ opt.label || String(opt.value) }}
+                    </option>
+                  </select>
+                  <button
+                    v-if="field.options_from"
+                    class="btn btn-sm btn-refresh"
+                    type="button"
+                    :disabled="busy || isLoadingOptions(field)"
+                    title="重新读取候选项（插拔设备后用）"
+                    @click="refreshDynamicOptions(field)"
+                  >
+                    刷新
+                  </button>
+                </div>
 
                 <div v-else-if="field.type === 'multiselect'" class="chips">
                   <label
-                    v-for="opt in field.options ?? []"
+                    v-for="opt in optionsOf(field)"
                     :key="String(opt.value)"
                     class="chip"
                     :class="{ on: isChecked(field, opt.value) }"
@@ -696,10 +888,38 @@ function goBack() {
   background: rgba(255, 107, 107, 0.1);
 }
 
+/* 操作按钮：三列等宽网格 */
+.cmd-group {
+  margin-bottom: 12px;
+}
+
+.cmd-group:last-child {
+  margin-bottom: 0;
+}
+
+.cmd-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.45));
+  letter-spacing: 0.4px;
+  margin: 0 0 6px 2px;
+  text-transform: none;
+}
+
 .btn-grid {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  /* 三列等宽：每行最多 3 个，不足 3 个时按钮仍占 1/3 宽，不会撑满整行 */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 7px;
+}
+
+.btn-grid .btn {
+  width: 100%;
+  min-width: 0;
+  /* 按钮文字过长时截断，避免把网格撑破 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 设置 */
@@ -775,6 +995,20 @@ function goBack() {
 .field-select {
   width: 185px;
   cursor: pointer;
+  /* 设备名可能很长，给下拉留出可读宽度 */
+  max-width: 320px;
+  text-overflow: ellipsis;
+}
+
+/* 下拉 + 刷新按钮 */
+.select-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.btn-refresh {
+  flex: 0 0 auto;
 }
 
 /* 热键录制按钮 */

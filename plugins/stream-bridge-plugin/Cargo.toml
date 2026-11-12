@@ -1,0 +1,40 @@
+[package]
+name = "air_stream_bridge"
+version = "0.1.0"
+edition = "2021"
+description = "Air Icon Launcher plugin: LAN audio push + OBS privacy blur"
+license = "MIT"
+publish = false
+
+[lib]
+name = "air_stream_bridge"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+socket2 = "0.6"
+sha2 = "0.10"
+base64 = "0.22"
+tungstenite = "0.28"
+
+[target.'cfg(windows)'.dependencies]
+wasapi = "0.27"
+windows-core = "0.62"
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_System_Threading",
+  "Win32_System_SystemInformation",
+  "Win32_Media_Audio",
+  "Win32_System_Com",
+  "Win32_System_Variant",
+  "Win32_System_LibraryLoader",
+] }
+
+[profile.release]
+lto = true
+opt-level = "s"
+strip = true
+panic = "unwind"

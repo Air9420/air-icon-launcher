@@ -1,0 +1,276 @@
+{
+  "manifest_version": 2,
+  "id": "com.air.stream.bridge",
+  "name": "直播推流桥（声音 + 隐私虚化）",
+  "version": "0.1.0",
+  "runtime": "rust",
+  "entry": "air_stream_bridge.dll",
+  "description": "把本机默认播放设备的音频低延迟推送到副机 OBS，并按前台窗口是否全屏通知 OBS 虚化画面保护隐私。",
+  "author": "Air",
+  "capabilities": [
+    "log",
+    "events.emit"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "stream.audio.start",
+        "title": "开始推声音",
+        "method": "audio_start"
+      },
+      {
+        "id": "stream.audio.stop",
+        "title": "停止推声音",
+        "method": "audio_stop"
+      },
+      {
+        "id": "stream.audio.status",
+        "title": "声音状态",
+        "method": "audio_status"
+      },
+      {
+        "id": "stream.mic.start",
+        "title": "开始推麦克风",
+        "method": "mic_start"
+      },
+      {
+        "id": "stream.mic.stop",
+        "title": "停止推麦克风",
+        "method": "mic_stop"
+      },
+      {
+        "id": "stream.mic.status",
+        "title": "麦克风状态",
+        "method": "mic_status"
+      },
+      {
+        "id": "stream.privacy.start",
+        "title": "开始隐私监视",
+        "method": "privacy_start"
+      },
+      {
+        "id": "stream.privacy.stop",
+        "title": "停止隐私监视",
+        "method": "privacy_stop"
+      },
+      {
+        "id": "stream.privacy.status",
+        "title": "前台窗口判定",
+        "method": "privacy_status"
+      },
+      {
+        "id": "stream.obs.probe",
+        "title": "探测 OBS",
+        "method": "obs_probe"
+      },
+      {
+        "id": "stream.obs.blur",
+        "title": "手动虚化",
+        "method": "obs_blur"
+      },
+      {
+        "id": "stream.obs.list",
+        "title": "列出 OBS 源",
+        "method": "obs_list"
+      }
+    ],
+    "menus": [],
+    "settings": [
+      {
+        "key": "audio_enabled",
+        "title": "随启动自动推流",
+        "type": "bool",
+        "description": "插件加载后立刻开始把声音推到副机",
+        "default": false
+      },
+      {
+        "key": "audio_dest",
+        "title": "副机接收地址",
+        "type": "text",
+        "description": "副机 IP:端口，副机端 lan-audio-recv 默认监听 47800",
+        "default": "192.168.31.66:47800"
+      },
+      {
+        "key": "audio_device",
+        "title": "采集的播放设备",
+        "type": "select",
+        "description": "列出这台机器上所有播放端点，标出系统默认那个。默认设备常是采集卡的 HDMI 音频（里面没有声音）。",
+        "default": "迈从 (MCHOSE V9 Turbo+)",
+        "optionsFrom": "audio_devices"
+      },
+      {
+        "key": "audio_process",
+        "title": "单程序音频的进程名",
+        "type": "select",
+        "description": "仅当上面选「单程序音频」时生效。列出当前有窗口的进程，选一个即可。",
+        "default": "",
+        "optionsFrom": "audio_processes"
+      },
+      {
+        "key": "audio_rate",
+        "title": "采样率",
+        "type": "number",
+        "description": "线上采样率，与混音格式一致时零重采样，延迟最低",
+        "default": 48000
+      },
+      {
+        "key": "audio_frames_per_packet",
+        "title": "每包帧数",
+        "type": "number",
+        "description": "240 帧 = 5 ms，单包在 MTU 内不分片；调小降延迟但增包量",
+        "default": 240
+      },
+      {
+        "key": "audio_period_ms",
+        "title": "设备周期（ms）",
+        "type": "number",
+        "description": "0 = 用端点允许的最小值（你的设备约 3 ms）",
+        "default": 0
+      },
+      {
+        "key": "audio_keepalive",
+        "title": "空闲补静音",
+        "type": "bool",
+        "description": "无声时继续发静音包，副机时间轴不断，恢复播放不爆音",
+        "default": true
+      },
+      {
+        "key": "audio_gain",
+        "title": "增益",
+        "type": "number",
+        "description": "1.0 = 原样，范围 0 ~ 4",
+        "default": 1.0
+      },
+      {
+        "key": "mic_enabled",
+        "title": "随启动推送麦克风",
+        "type": "bool",
+        "description": "插件加载后立刻把麦克风推到副机",
+        "default": false
+      },
+      {
+        "key": "mic_dest",
+        "title": "麦克风接收地址",
+        "type": "text",
+        "description": "与主路分开的端口，副机再起一个 lan-audio-recv 监听它",
+        "default": "192.168.31.66:47801"
+      },
+      {
+        "key": "mic_device",
+        "title": "麦克风设备",
+        "type": "select",
+        "description": "列出这台机器上所有麦克风端点，标出系统默认那个。",
+        "default": "",
+        "optionsFrom": "mic_devices"
+      },
+      {
+        "key": "mic_gain",
+        "title": "麦克风增益",
+        "type": "number",
+        "description": "1.0 = 原样，范围 0 ~ 4",
+        "default": 1.0
+      },
+      {
+        "key": "mic_keepalive",
+        "title": "麦克风空闲补静音",
+        "type": "bool",
+        "description": "没说话时继续发静音包，副机时间轴不断",
+        "default": true
+      },
+      {
+        "key": "privacy_enabled",
+        "title": "启用隐私虚化",
+        "type": "bool",
+        "description": "前台窗口离开全屏时通知 OBS 虚化画面",
+        "default": true
+      },
+      {
+        "key": "privacy_poll_ms",
+        "title": "判定周期（ms）",
+        "type": "number",
+        "description": "越小响应越快，200 ms 够用",
+        "default": 200
+      },
+      {
+        "key": "privacy_debounce_ms",
+        "title": "状态去抖（ms）",
+        "type": "number",
+        "description": "状态需稳定这么久才下发，避免切窗口瞬间反复虚化",
+        "default": 500
+      },
+      {
+        "key": "privacy_fail_safe",
+        "title": "启动即虚化",
+        "type": "bool",
+        "description": "插件加载时先按非全屏处理，等首次判定通过再放开",
+        "default": true
+      },
+      {
+        "key": "privacy_allowlist",
+        "title": "额外放行的进程",
+        "type": "text",
+        "description": "逗号分隔，进程名不带 .exe 也可。这些进程在前台时不虚化",
+        "default": "obs64,obs32"
+      },
+      {
+        "key": "obs_url",
+        "title": "OBS WebSocket 地址",
+        "type": "text",
+        "description": "副机 OBS 的 obs-websocket 5.x 地址，如 ws://192.168.31.66:4455",
+        "default": "ws://192.168.31.66:4455"
+      },
+      {
+        "key": "obs_password",
+        "title": "OBS WebSocket 密码",
+        "type": "text",
+        "description": "OBS 工具 → WebSocket 服务器设置里的密码；未开启认证则留空",
+        "default": ""
+      },
+      {
+        "key": "obs_mode",
+        "title": "虚化方式",
+        "type": "select",
+        "description": "blur = 把采集画面缩到极小再放大，得到整屏模糊（推荐）；scene = 切到专用隐私场景",
+        "default": "blur",
+        "options": [
+          {
+            "value": "blur",
+            "label": "整屏模糊（推荐）"
+          },
+          {
+            "value": "scene",
+            "label": "切换隐私场景"
+          }
+        ]
+      },
+      {
+        "key": "obs_source",
+        "title": "采集源名称",
+        "type": "text",
+        "description": "滤镜模式下要加模糊的源名，即 OBS 输入源列表里的名字，如「视频采集设备 (V4L2)」",
+        "default": "视频采集设备 (V4L2)"
+      },
+      {
+        "key": "obs_filter",
+        "title": "模糊滤镜名称",
+        "type": "text",
+        "description": "滤镜名，插件会按这个名字在采集源上创建 scale_filter 并开关它",
+        "default": "隐私虚化"
+      },
+      {
+        "key": "obs_privacy_scene",
+        "title": "隐私场景名称",
+        "type": "text",
+        "description": "scene 模式：非全屏时切到的场景名；transform 模式：留空则用当前场景",
+        "default": "隐私"
+      },
+      {
+        "key": "obs_normal_scene",
+        "title": "回切场景名称",
+        "type": "text",
+        "description": "仅 scene 模式使用：留空则自动记住进入隐私前的场景",
+        "default": ""
+      }
+    ]
+  }
+}

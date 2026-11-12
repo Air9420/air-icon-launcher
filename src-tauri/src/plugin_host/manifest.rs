@@ -58,6 +58,19 @@ pub struct PluginHostSettingField {
     /// `select` / `multiselect` 的候选项
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<PluginHostSettingOption>,
+    /// 动态候选项来源：插件的一个 invoke method。
+    ///
+    /// 用于候选项随机器变化的场景（音频设备列表、麦克风列表等）——
+    /// 这些值没法写进静态 manifest，而让人手工复制粘贴设备名最容易出错。
+    ///
+    /// 前端在渲染下拉前调用它，接受两种返回形状：
+    /// - `[{ "value": "...", "label": "..." }, ...]`
+    /// - `{ "options": [...] }`
+    ///
+    /// 同时接受 `optionsFrom`（manifest 里习惯写驼峰，和其他字段的
+    /// `manifest_version` / `description` 风格一致）。
+    #[serde(default, alias = "optionsFrom", skip_serializing_if = "Option::is_none")]
+    pub options_from: Option<String>,
 }
 
 fn default_setting_type() -> String {

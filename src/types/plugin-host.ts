@@ -30,6 +30,11 @@ export interface PluginHostSettingField {
   type?: string;
   default?: unknown;
   options?: PluginHostSettingOption[];
+  /**
+   * 动态候选项来源：插件的一个 invoke method。
+   * 渲染下拉前调用它拿候选项，用于随机器变化的值（如音频设备列表）。
+   */
+  options_from?: string;
 }
 
 export interface PluginHostContributes {
